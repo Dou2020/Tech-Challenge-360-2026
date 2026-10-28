@@ -1,0 +1,125 @@
+# Levanta ShopCart con Docker.
+#
+#   cp .env.example .env
+#   docker compose up -d                          # SQL Server, Redis y creación de la base
+#   docker compose --profile app up -d --build    # además backend y frontend
+#
+# Ver la sección "Inicializar y ejecutar el proyecto" del README.
+
+name: shopcart
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Define MSSQL_SA_PASSWORD en .env}
+    ports:
+      - "${SQL_PORT:-1433}:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -b -Q 'SELECT 1' -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Crea la base ejecutando Database/scripts en orden y termina.
+  # Si la base ya existe la conserva, salvo que DB_RESET=true.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      DB_SERVER: sqlserver
+      DB_USER: sa
+      DB_PASSWORD: ${MSSQL_SA_PASSWORD:?Define MSSQL_SA_PASSWORD en .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+      DB_NAME: ${DB_NAME:-ShopCart}
+      APP_DB_LOGIN: ${APP_DB_LOGIN:-shopcart_app}
+      DB_RESET: ${DB_RESET:-false}
+    volumes:
+      - ./Database:/database:ro
+    entrypoint: ["bash", "/database/docker-init.sh"]
+    restart: "no"
+
+  # Sesiones (refresh tokens), revocación de access tokens, bloqueo de login,
+  # rate limiting y caché. No guarda datos de negocio.
+  # AOF para no perder sesiones al reiniciar; noeviction para no expulsar sesiones.
+  redis:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    profiles: ["app"]
+    build: ./Backend
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DB_SERVER: sqlserver
+      DB_PORT: "1433"
+      DB_NAME: ${DB_NAME:-ShopCart}
+      DB_USER: ${APP_DB_LOGIN:-shopcart_app}
+      DB_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+      DB_ENCRYPT: "true"
+      DB_TRUST_SERVER_CERTIFICATE: "true"
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Define JWT_ACCESS_SECRET en .env}
+      JWT_ACCESS_EXPIRES_IN: 15m
+      REFRESH_TOKEN_DAYS: "7"
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      RESERVAS_JOB_INTERVAL_MS: "60000"
+      REDIS_URL: redis://redis:6379
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_TTL_REPORTES_SEG: ${CACHE_TTL_REPORTES_SEG:-300}
+      CACHE_TTL_CATALOGO_SEG: ${CACHE_TTL_CATALOGO_SEG:-600}
+      LOGIN_MAX_INTENTOS: ${LOGIN_MAX_INTENTOS:-5}
+      LOGIN_BLOQUEO_MIN: ${LOGIN_BLOQUEO_MIN:-15}
+    ports:
+      - "${BACKEND_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  frontend:
+    profiles: ["app"]
+    build: ./Frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+
+volumes:
+  sqlserver-data:
+  redis-data:

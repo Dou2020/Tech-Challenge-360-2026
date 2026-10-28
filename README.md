@@ -28,6 +28,7 @@ Plataforma web de ventas con catálogo, carrito de compras, cupones, checkout, g
 | Acceso a datos | Solo stored procedures, invocados con `mssql` y parámetros tipados |
 | Validación | `zod` (body, query, params y variables de entorno) |
 | Autenticación | Access token JWT de corta duración y refresh token con rotación en cookie `httpOnly` |
+| Redis | Redis 7.4: sesiones, revocación de tokens, bloqueo de login, rate limiting y caché. No guarda datos de negocio |
 | Frontend (Fase 2) | React 18 o superior con TypeScript |
 
 ---
@@ -38,8 +39,10 @@ Plataforma web de ventas con catálogo, carrito de compras, cupones, checkout, g
 ShopCart/
 ├── Backend/        # API REST en Node.js + TypeScript (Fase 1)
 │   └── API.md      # Referencia de todos los endpoints
-├── Database/       # Scripts SQL versionados y numerados
+├── Database/       # Scripts SQL versionados y numerados, y docker-init.sh que los ejecuta
 ├── Frontend/       # Aplicación React (Fase 2)
+├── docker-compose.yml
+├── .env.example    # Variables de docker compose
 └── README.md
 ```
 
@@ -62,6 +65,8 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `cors` | 2.8 | CORS con origen explícito y `credentials: true` para la cookie de refresh |
 | `cookie-parser` | 1.4 | Lectura de la cookie del refresh token |
 | `express-rate-limit` | 8.7 | Límite de intentos en login y registro (extra opcional) |
+| `redis` | 5 | Cliente oficial de Redis (node-redis): sesiones, revocación, bloqueo de login y caché |
+| `rate-limit-redis` | 4 | Guarda los contadores de `express-rate-limit` en Redis: sobreviven reinicios y se comparten entre instancias |
 | `pino`, `pino-http` | 10.4 / 11.0 | Logs en JSON con un `requestId` por petición |
 | `swagger-ui-express`, `yaml` | 5.0 / 2.9 | Sirven `openapi.yaml` en `/api/docs` |
 
@@ -88,7 +93,7 @@ No se necesitan:
 | `vitest` | 5.0 | Runner de pruebas unitarias y de integración; ejecuta TypeScript sin compilar y simula módulos con `vi.mock` |
 | `@vitest/coverage-v8` | 5.0 | Reporte de cobertura |
 | `supertest`, `@types/supertest` | 7.3 / 7.2 | Peticiones HTTP contra la app Express sin abrir un puerto |
-| `testcontainers`, `@testcontainers/mssqlserver` | 12.2 | Levantan un SQL Server desechable en Docker para las pruebas de integración, donde se ejecutan los scripts de `Database/` |
+| `testcontainers`, `@testcontainers/mssqlserver`, `@testcontainers/redis` | 12.2 | Levantan un SQL Server y un Redis desechables en Docker para las pruebas de integración; en SQL Server se ejecutan los scripts de `Database/` |
 
 ### Frontend (Fase 2)
 
@@ -109,7 +114,46 @@ No se necesitan:
 
 ## Inicializar y ejecutar el proyecto
 
-Estos pasos levantan el proyecto en una máquina limpia.
+Hay dos formas de levantar el proyecto en una máquina limpia: con **Docker Compose** (solo requiere Docker) o **manual** (Node y sqlcmd instalados en la máquina).
+
+### Opción rápida: Docker Compose
+
+Requisito: Docker con Docker Compose v2 (`docker compose version`).
+
+```bash
+cp .env.example .env          # ajusta contraseñas y JWT_ACCESS_SECRET
+docker compose up -d          # SQL Server + creación de la base
+docker compose logs -f db-init
+```
+
+`db-init` espera a que SQL Server esté listo, ejecuta `Database/scripts` en orden y termina. Cuando muestra *Base de datos ShopCart creada correctamente.*, la base está lista en `localhost:1433`.
+
+Con el backend y el frontend implementados, se levantan junto con la base usando el perfil `app`:
+
+```bash
+docker compose --profile app up -d --build
+```
+
+| Servicio | Perfil | Puerto | Descripción |
+| :--- | :--- | :--- | :--- |
+| `sqlserver` | — | `SQL_PORT` (1433) | SQL Server 2022 Developer, datos en el volumen `sqlserver-data` |
+| `db-init` | — | — | Crea la base si no existe y termina |
+| `redis` | — | `REDIS_PORT` (6379) | Redis 7.4 con persistencia AOF, datos en el volumen `redis-data` |
+| `backend` | `app` | `BACKEND_PORT` (4000) | API; arranca cuando `db-init` terminó bien |
+| `frontend` | `app` | `FRONTEND_PORT` (8080) | Sitio servido por nginx; reenvía `/api` al backend |
+
+Comandos útiles:
+
+| Comando | Para |
+| :--- | :--- |
+| `docker compose ps` | Ver el estado de los servicios |
+| `DB_RESET=true docker compose run --rm db-init` | Borrar y volver a crear la base con los datos iniciales |
+| `docker compose down` | Detener todo y conservar los datos |
+| `docker compose down -v` | Detener todo y borrar el volumen de la base |
+
+`docker compose up` no borra la base en cada arranque: `db-init` la crea solo si no existe. En equipos con Apple Silicon, la imagen de SQL Server corre emulada (`platform: linux/amd64`).
+
+### Opción manual
 
 ### 1. Requisitos previos
 
@@ -118,6 +162,7 @@ Estos pasos levantan el proyecto en una máquina limpia.
 | Node.js | 24 LTS (definida en `Backend/.nvmrc`) | `node -v` |
 | npm | La que trae Node 24 | `npm -v` |
 | SQL Server | 2019 o superior (local o en Docker) | — |
+| Redis | 7.4 o superior; lo más simple es `docker compose up -d redis` | `redis-cli ping` |
 | sqlcmd | `mssql-tools18` o el `sqlcmd` (go) | `sqlcmd -?` |
 | Docker | Para levantar SQL Server sin instalarlo y para las pruebas de integración | `docker -v` |
 
@@ -145,7 +190,7 @@ Espera unos segundos a que el servidor arranque (`docker logs -f shopcart-sql` m
 
 ### 3. Crear la base de datos
 
-El script `Database/ejecutar_scripts.sh` ejecuta en orden todos los archivos de `Database/scripts/`: crea la base `ShopCart`, sus tablas, índices, triggers, funciones, vistas, stored procedures, el usuario de la aplicación y los datos semilla.
+El script `Database/docker-init.sh` (el mismo que usa docker compose) ejecuta en orden todos los archivos de `Database/scripts/`: crea la base `ShopCart`, sus tablas, índices, triggers, funciones, vistas, stored procedures, el usuario de la aplicación y los datos semilla.
 
 ```bash
 cd Database
@@ -153,7 +198,7 @@ DB_SERVER=localhost,1433 \
 DB_USER=sa \
 DB_PASSWORD='ShopCart#Local2026' \
 APP_DB_PASSWORD='ShopCartApp#2026' \
-./ejecutar_scripts.sh
+./docker-init.sh
 ```
 
 | Variable | Uso |
@@ -161,8 +206,10 @@ APP_DB_PASSWORD='ShopCartApp#2026' \
 | `DB_SERVER` | Servidor y puerto (`host,puerto`) |
 | `DB_USER`, `DB_PASSWORD` | Usuario administrador con el que se crean los objetos |
 | `APP_DB_PASSWORD` | Contraseña del login `shopcart_app` que usará el backend |
+| `DB_NAME` | Opcional; nombre de la base (por defecto `ShopCart`) |
+| `DB_RESET` | Opcional; `true` para borrar y volver a crear la base aunque ya exista |
 
-> El script `001_crear_base_datos.sql` **elimina y vuelve a crear** la base `ShopCart`. Ejecutarlo de nuevo deja la base en su estado inicial con los datos semilla.
+> Si la base ya existe, el script la conserva y no hace nada. Con `DB_RESET=true`, `001_crear_base_datos.sql` **la elimina y la vuelve a crear** en su estado inicial con los datos semilla.
 
 Si no tienes `sqlcmd` instalado, puedes ejecutarlo dentro del contenedor:
 
@@ -171,7 +218,7 @@ docker cp Database shopcart-sql:/tmp/Database
 docker exec -it \
   -e DB_SERVER=localhost -e DB_USER=sa \
   -e DB_PASSWORD='ShopCart#Local2026' -e APP_DB_PASSWORD='ShopCartApp#2026' \
-  shopcart-sql bash /tmp/Database/ejecutar_scripts.sh
+  shopcart-sql bash /tmp/Database/docker-init.sh
 ```
 
 ### 4. Configurar el backend
@@ -200,6 +247,12 @@ Edita `.env` con los datos de tu entorno:
 | `REFRESH_TOKEN_DAYS` | `7` | Vigencia del refresh token |
 | `CORS_ORIGIN` | `http://localhost:5173` | Origen permitido del frontend |
 | `RESERVAS_JOB_INTERVAL_MS` | `60000` | Cada cuánto se liberan las reservas vencidas |
+| `REDIS_URL` | `redis://localhost:6379` | Conexión a Redis |
+| `CACHE_ENABLED` | `true` | `false` desactiva la caché (las sesiones siguen en Redis) |
+| `CACHE_TTL_REPORTES_SEG` | `300` | Vigencia de la caché de reportes |
+| `CACHE_TTL_CATALOGO_SEG` | `600` | Vigencia de la caché del catálogo público |
+| `LOGIN_MAX_INTENTOS` | `5` | Intentos fallidos antes de bloquear la cuenta |
+| `LOGIN_BLOQUEO_MIN` | `15` | Minutos de bloqueo tras superar los intentos |
 
 Para generar un secreto:
 
@@ -255,6 +308,8 @@ Cupones de prueba: `BIENVENIDA10` (10 % sobre todo el carrito) y `VERANO25` (Q25
 | `self-signed certificate` al conectar | En local, `DB_TRUST_SERVER_CERTIFICATE=true` |
 | `Login failed for user 'shopcart_app'` | `DB_PASSWORD` del `.env` no coincide con `APP_DB_PASSWORD` usado en el paso 3 |
 | `ECONNREFUSED 127.0.0.1:1433` | SQL Server no está corriendo o aún está arrancando |
+| Login y rutas autenticadas responden `503 SERVICIO_NO_DISPONIBLE` | Redis no responde; revisa `docker compose ps redis`. El catálogo público sigue funcionando sin caché |
+| `Bind for 127.0.0.1:6379 failed: port is already allocated` | Otro Redis usa ese puerto; cambia `REDIS_PORT` en `.env` (y `REDIS_URL` si corres el backend fuera de Docker) |
 | El servidor no inicia y lista variables | Falta o es inválida una variable del `.env` |
 
 ---
@@ -270,21 +325,25 @@ Backend/
 │   ├── server.ts                 # Arranque del servidor, del job de reservas y cierre ordenado del pool
 │   ├── config/
 │   │   ├── env.ts                # Variables de entorno validadas con zod
-│   │   └── database.ts           # Pool de conexiones mssql
+│   │   ├── database.ts           # Pool de conexiones mssql
+│   │   └── redis.ts              # Cliente de Redis con reconexión automática
 │   ├── db/
 │   │   ├── executeSp.ts          # Único punto de ejecución de stored procedures
 │   │   └── sqlErrorMapper.ts     # Traduce THROW 50xxx de SQL Server a errores HTTP
 │   ├── middlewares/
-│   │   ├── authenticate.ts       # Verifica el access token (401 si expiró o no es válido)
+│   │   ├── authenticate.ts       # Verifica el access token y que no esté revocado en Redis (401)
 │   │   ├── authorize.ts          # Control por rol (403 si no tiene permiso)
 │   │   ├── validate.ts           # Valida body/query/params con un esquema zod
 │   │   ├── idempotencyKey.ts     # Exige el header Idempotency-Key en el pago
 │   │   ├── guestCart.ts          # Lee el header X-Cart-Token del carrito de invitado
-│   │   ├── rateLimit.ts          # Límite de intentos en login y registro (extra)
+│   │   ├── rateLimit.ts          # Límite por IP en login y registro, con store en Redis (extra)
 │   │   ├── errorHandler.ts       # Manejo centralizado de errores
 │   │   └── notFound.ts
 │   ├── modules/
 │   │   ├── auth/                 # Registro, login, refresh con rotación, logout
+│   │   │   ├── sesiones.store.ts   # Sesiones en Redis y script Lua de rotación atómica
+│   │   │   ├── revocacion.store.ts # Lista de access tokens revocados
+│   │   │   └── intentos.store.ts   # Contador de intentos fallidos y bloqueo temporal
 │   │   ├── perfil/               # Datos y contraseña del propio usuario
 │   │   ├── usuarios/             # Gestión y desactivación de usuarios (Administrador)
 │   │   ├── direcciones/          # Direcciones de entrega del cliente
@@ -301,6 +360,7 @@ Backend/
 │   ├── jobs/
 │   │   └── liberarReservas.job.ts  # Ejecuta SP_Inventario_LiberarReservasVencidas periódicamente
 │   ├── shared/
+│   │   ├── cache/                # cache.ts (getOrSet, invalidar) y claves.ts (claves y namespaces)
 │   │   ├── errors/               # AppError y catálogo de códigos de error
 │   │   ├── utils/                # Paginación, respuestas, montos
 │   │   └── types/express.d.ts    # Extensión de Request (usuario autenticado, token de carrito)
@@ -312,6 +372,7 @@ Backend/
 │   ├── helpers/
 │   └── setup/
 ├── API.md                        # Referencia de endpoints
+├── Dockerfile                    # Imagen multi-stage (node:24-bookworm-slim) para docker compose
 ├── .env.example
 ├── .nvmrc                        # 24
 ├── .prettierrc
@@ -352,6 +413,54 @@ Request → helmet/cors → authenticate → authorize(roles) → validate(schem
 ```
 
 **Regla:** el backend no contiene consultas SQL. Todo el acceso a datos pasa por `executeSp`, que solo acepta el nombre del SP y parámetros tipados. Además, el login `shopcart_app` solo tiene permiso `EXECUTE`: aunque alguien intentara ejecutar SQL directo, la base lo rechazaría.
+
+### Redis
+
+Redis guarda las sesiones, la revocación de tokens, el bloqueo de login, los contadores de rate limiting y la caché. **SQL Server sigue siendo la única fuente de verdad del negocio**: existencias, reservas, idempotencia del pago, cupones, pedidos y bitácora nunca pasan por Redis.
+
+Todas las claves llevan el prefijo `shopcart:`.
+
+| Uso | Claves | TTL |
+| :--- | :--- | :--- |
+| Sesión (refresh token) | `sesion:token:{sha256 del token}` → `{idUsuario, familia}`; `sesion:familia:{familia}` → `{idUsuario, tokenActual}`; `sesion:usuario:{idUsuario}` → familias activas del usuario | 7 días |
+| Revocar un access token | `auth:revocado:jti:{jti}` (logout) | Vida restante del token (≤ 15 min) |
+| Revocar todos los tokens de un usuario | `auth:revocado-desde:{idUsuario}` = fecha; se rechazan los tokens emitidos antes (desactivación, cambio de contraseña o de rol) | 15 min |
+| Bloqueo por intentos | `auth:intentos:{correo}`; con `LOGIN_MAX_INTENTOS` fallos → `429 CUENTA_BLOQUEADA` con `Retry-After`; se borra al iniciar sesión bien | `LOGIN_BLOQUEO_MIN` |
+| Rate limit por IP | Store de `rate-limit-redis` en login y registro (10 por IP cada 15 min) | 15 min |
+| Caché del usuario | `usuario:{id}` → rol, estado, nombre y correo; la usan `refresh` y `/me` | 15 min |
+| Caché de reportes | `reportes:v{n}:{endpoint}:{hash de filtros}` | `CACHE_TTL_REPORTES_SEG` |
+| Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:producto:{id}` (sin existencia) | `CACHE_TTL_CATALOGO_SEG` |
+| Métodos de envío y configuración | `checkout:metodos-envio`, `configuracion` | 1 h |
+
+**Sesiones y tokens:**
+- El access token JWT lleva `jti` (identificador único) y `sid` (familia de la sesión). `authenticate` verifica la firma y luego consulta en Redis si el `jti` fue revocado o si el token es anterior a `revocado-desde` del usuario.
+- La rotación del refresh token es un **script Lua atómico**: si el token presentado es el `tokenActual` de su familia, emite uno nuevo y lo reemplaza; si no lo es (alguien reutilizó un token ya rotado), borra la familia completa y responde `401 REFRESH_INVALIDO`. Dos peticiones simultáneas con el mismo token no pueden rotarlo dos veces.
+- Logout revoca el `jti` actual y borra la familia. Desactivar un usuario, cambiar su contraseña o su rol borra todas sus familias y fija `revocado-desde`.
+
+**Caché:**
+- Patrón *cache-aside*: el servicio llama `cache.getOrSet(clave, ttl, () => repositorio.consultar())`.
+- **Invalidación por versión**: cada namespace (`reportes`, `catalogo`) tiene un contador. Invalidar es `INCR shopcart:reportes:version`; las claves anteriores dejan de leerse y expiran solas. Es atómico y no necesita recorrer claves.
+- Se invalida en el servicio **después** de que el SP confirmó la transacción, nunca antes:
+
+| Namespace | Se invalida al |
+| :--- | :--- |
+| `reportes` | Crear, cancelar o cambiar de estado un pedido, y registrar una devolución |
+| `catalogo` | Crear, modificar o desactivar categorías, productos, variantes, precios o imágenes |
+| `usuario:{id}` | Actualizar perfil, rol o estado del usuario |
+| `configuracion` | `PUT /api/configuracion/:clave` |
+
+- La existencia disponible **nunca** se cachea: el detalle de producto combina los datos cacheados con la existencia leída de la base en cada petición.
+- Las respuestas cacheadas llevan el header `X-Cache: HIT` o `X-Cache: MISS`.
+
+**Si Redis falla:**
+
+| Función | Comportamiento |
+| :--- | :--- |
+| Sesiones, revocación y bloqueo de login | *Fail-closed*: login, refresh y rutas autenticadas responden `503 SERVICIO_NO_DISPONIBLE` (no se puede verificar si un token fue revocado) |
+| Caché | *Fail-open*: se registra el error y se lee de la base |
+| `GET /api/health` | Reporta `redis: "down"` |
+
+**Configuración del servidor** (en `docker-compose.yml`): persistencia AOF (`appendonly yes`, `appendfsync everysec`) para no perder sesiones al reiniciar, y `maxmemory 256mb` con `maxmemory-policy noeviction` para que Redis nunca expulse sesiones. Si la memoria se llena, fallan las escrituras de caché (que es fail-open) y no las sesiones existentes.
 
 ### Pruebas
 
@@ -396,6 +505,18 @@ Casos de integración ligados a los criterios de aceptación:
 | RF-08 | Los reportes excluyen pedidos cancelados y descuentan devoluciones |
 | RF-09 | Un `UPDATE` o `DELETE` sobre la bitácora falla |
 
+Casos de integración de Redis:
+
+| Caso | Resultado esperado |
+| :--- | :--- |
+| 5 logins fallidos seguidos con el mismo correo | El sexto responde `429 CUENTA_BLOQUEADA`, aun con la contraseña correcta |
+| Logout y luego una petición con el mismo access token | `401` de inmediato, sin esperar a que el token expire |
+| Reutilizar un refresh token ya rotado | `401 REFRESH_INVALIDO` y la sesión completa queda revocada |
+| Dos refresh simultáneos con el mismo token | Solo uno obtiene un token nuevo |
+| Desactivar un usuario con sesión abierta | Su access token y su refresh token dejan de funcionar |
+| Consultar un reporte dos veces, cancelar un pedido y consultarlo otra vez | `MISS`, `HIT` y luego `MISS` con el dato actualizado |
+| Redis detenido | Las rutas autenticadas responden `503`; el catálogo público responde sin caché |
+
 Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `TEST_DB_USER` y `TEST_DB_PASSWORD`), se usa ese SQL Server en lugar del contenedor; los scripts recrean la base `ShopCart_Test` antes de correr.
 
 ---
@@ -408,7 +529,7 @@ Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `
 Database/
 ├── scripts/
 │   ├── 001_crear_base_datos.sql     # Elimina y crea la base (collation Modern_Spanish_100_CI_AI, READ_COMMITTED_SNAPSHOT)
-│   ├── 002_tablas.sql               # 29 tablas con PK, FK, UNIQUE, NOT NULL, CHECK y DEFAULT
+│   ├── 002_tablas.sql               # 28 tablas con PK, FK, UNIQUE, NOT NULL, CHECK y DEFAULT
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; transiciones de estado válidas
 │   ├── 005_funciones.sql            # Funciones tipo tabla (FU_)                                   (pendiente)
@@ -424,10 +545,10 @@ Database/
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
 │   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y pedidos de ejemplo  (pendiente)
-└── ejecutar_scripts.sh              # Ejecuta los scripts en orden con sqlcmd
+└── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose) y la opción manual
 ```
 
-Ejecutar `ejecutar_scripts.sh` siempre produce la misma base desde cero. Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, así las pruebas pueden crear `ShopCart_Test` con los mismos scripts (`DB_NAME=ShopCart_Test`).
+`docker-init.sh` crea la base solo si no existe; con `DB_RESET=true` siempre produce la misma base desde cero. Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, así las pruebas pueden crear `ShopCart_Test` con los mismos scripts (`DB_NAME=ShopCart_Test`).
 
 Datos que crea `085_datos_catalogos.sql`:
 
@@ -462,7 +583,7 @@ Datos que crea `085_datos_catalogos.sql`:
 
 | Módulo | Tablas | Propósito |
 | :--- | :--- | :--- |
-| Seguridad | `Rol`, `Usuario`, `RefreshToken`, `Direccion` | Usuarios, roles, sesiones con refresh token rotado y direcciones de entrega |
+| Seguridad | `Rol`, `Usuario`, `Direccion` | Usuarios, roles y direcciones de entrega (las sesiones viven en Redis) |
 | Catálogo | `Categoria`, `Producto`, `ProductoImagen`, `Atributo`, `ValorAtributo`, `Variante`, `VarianteValorAtributo` | Productos con variantes vendibles (SKU, precio y existencia propios) |
 | Inventario | `TipoMovimientoInventario`, `MovimientoInventario`, `ReservaExistencia` | Kardex de entradas, salidas y ajustes; reservas temporales del checkout |
 | Carrito | `Carrito`, `CarritoDetalle` | Carrito de cliente o de invitado (por token) |
@@ -577,18 +698,6 @@ package "Seguridad" {
     * Activo : BIT
     * FechaCreacion : DATETIME2
     FechaModificacion : DATETIME2
-  }
-
-  entity RefreshToken {
-    * IDRefreshToken : INT <<PK>>
-    --
-    * IDUsuario : INT <<FK>>
-    * TokenHash : CHAR(64) <<UQ>>
-    * FamiliaToken : UNIQUEIDENTIFIER
-    * FechaExpiracion : DATETIME2
-    FechaRevocacion : DATETIME2
-    IDRefreshTokenReemplazo : INT <<FK>>
-    * FechaCreacion : DATETIME2
   }
 
   entity Direccion {
@@ -912,8 +1021,6 @@ package "Auditoria" {
 ' ============ Relaciones ============
 Rol ||--o{ Usuario
 Rol ||--o{ TransicionEstadoPedido
-Usuario ||--o{ RefreshToken
-RefreshToken |o--o| RefreshToken : reemplazado por
 Usuario ||--o{ Direccion
 
 Categoria ||--o{ Producto
