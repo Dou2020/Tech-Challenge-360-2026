@@ -29,6 +29,7 @@ services:
 
   # Crea la base ejecutando Database/scripts en orden y termina.
   # Si la base ya existe la conserva, salvo que DB_RESET=true.
+  # Con DB_PRUEBAS=true ejecuta además Database/pruebas (restricciones de integridad).
   db-init:
     image: mcr.microsoft.com/mssql/server:2022-latest
     platform: linux/amd64
@@ -43,6 +44,7 @@ services:
       DB_NAME: ${DB_NAME:-ShopCart}
       APP_DB_LOGIN: ${APP_DB_LOGIN:-shopcart_app}
       DB_RESET: ${DB_RESET:-false}
+      DB_PRUEBAS: ${DB_PRUEBAS:-false}
     volumes:
       - ./Database:/database:ro
     entrypoint: ["bash", "/database/docker-init.sh"]

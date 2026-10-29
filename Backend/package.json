@@ -1,13 +1,61 @@
 {
-  "name": "backend",
+  "name": "shopcart-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "description": "API REST de ShopCart (Tech Challenge 360)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file-if-exists=.env dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "argon2": "0.45.1",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.6",
+    "express": "5.3.0",
+    "express-rate-limit": "8.7.1",
+    "helmet": "8.3.0",
+    "jsonwebtoken": "9.0.3",
+    "mssql": "12.7.13",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
+    "rate-limit-redis": "6.0.2",
+    "redis": "6.3.0",
+    "swagger-ui-express": "5.0.1",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testcontainers/mssqlserver": "12.2.1",
+    "@testcontainers/redis": "12.2.1",
+    "@types/cookie-parser": "1.4.10",
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6",
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/mssql": "12.3.0",
+    "@types/node": "24.19.2",
+    "@types/supertest": "7.2.1",
+    "@types/swagger-ui-express": "4.1.8",
+    "@vitest/coverage-v8": "5.0.5",
+    "eslint": "10.13.0",
+    "prettier": "3.9.10",
+    "supertest": "7.3.1",
+    "testcontainers": "12.2.1",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.0.5"
+  }
 }

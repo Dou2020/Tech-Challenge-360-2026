@@ -59,7 +59,9 @@ CREATE TABLE dbo.Direccion (
     Referencias        NVARCHAR(300)     NULL,
     Activo             BIT               NOT NULL CONSTRAINT DF_Direccion_Activo DEFAULT (1),
     CONSTRAINT PK_Direccion PRIMARY KEY (IDDireccion),
-    CONSTRAINT FK_Direccion_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario)
+    CONSTRAINT FK_Direccion_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
+    -- Destino de la FK compuesta de Pedido: la dirección del pedido es del mismo cliente.
+    CONSTRAINT UQ_Direccion_IDDireccion_IDUsuario UNIQUE (IDDireccion, IDUsuario)
 );
 GO
 
@@ -115,7 +117,9 @@ CREATE TABLE dbo.ValorAtributo (
     Valor           NVARCHAR(50)      NOT NULL,
     CONSTRAINT PK_ValorAtributo PRIMARY KEY (IDValorAtributo),
     CONSTRAINT FK_ValorAtributo_Atributo FOREIGN KEY (IDAtributo) REFERENCES dbo.Atributo (IDAtributo),
-    CONSTRAINT UQ_ValorAtributo_IDAtributo_Valor UNIQUE (IDAtributo, Valor)
+    CONSTRAINT UQ_ValorAtributo_IDAtributo_Valor UNIQUE (IDAtributo, Valor),
+    -- Destino de la FK compuesta de VarianteValorAtributo.
+    CONSTRAINT UQ_ValorAtributo_IDAtributo_IDValorAtributo UNIQUE (IDAtributo, IDValorAtributo)
 );
 GO
 
@@ -141,11 +145,14 @@ GO
 CREATE TABLE dbo.VarianteValorAtributo (
     IDVarianteValorAtributo INT IDENTITY(1,1) NOT NULL,
     IDVariante              INT               NOT NULL,
+    IDAtributo              INT               NOT NULL,  -- repetido del valor para limitar la variante a un valor por atributo
     IDValorAtributo         INT               NOT NULL,
     CONSTRAINT PK_VarianteValorAtributo PRIMARY KEY (IDVarianteValorAtributo),
     CONSTRAINT FK_VarianteValorAtributo_Variante FOREIGN KEY (IDVariante) REFERENCES dbo.Variante (IDVariante),
-    CONSTRAINT FK_VarianteValorAtributo_ValorAtributo FOREIGN KEY (IDValorAtributo) REFERENCES dbo.ValorAtributo (IDValorAtributo),
-    CONSTRAINT UQ_VarianteValorAtributo_IDVariante_IDValorAtributo UNIQUE (IDVariante, IDValorAtributo)
+    -- La FK compuesta garantiza que IDAtributo sea el atributo del valor.
+    CONSTRAINT FK_VarianteValorAtributo_ValorAtributo FOREIGN KEY (IDAtributo, IDValorAtributo) REFERENCES dbo.ValorAtributo (IDAtributo, IDValorAtributo),
+    -- Una talla y un color por variante, nunca dos tallas.
+    CONSTRAINT UQ_VarianteValorAtributo_IDVariante_IDAtributo UNIQUE (IDVariante, IDAtributo)
 );
 GO
 
@@ -197,7 +204,9 @@ CREATE TABLE dbo.Carrito (
     CONSTRAINT FK_Carrito_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
     CONSTRAINT FK_Carrito_Cupon FOREIGN KEY (IDCupon) REFERENCES dbo.Cupon (IDCupon),
     CONSTRAINT CK_Carrito_Estado CHECK (Estado IN (N'ACTIVO', N'CONVERTIDO', N'FUSIONADO')),
-    CONSTRAINT CK_Carrito_Duenio CHECK (IDUsuario IS NOT NULL OR TokenInvitado IS NOT NULL)
+    CONSTRAINT CK_Carrito_Duenio CHECK (IDUsuario IS NOT NULL OR TokenInvitado IS NOT NULL),
+    -- El límite de usos por cliente necesita saber quién es: un invitado no aplica cupones.
+    CONSTRAINT CK_Carrito_Cupon CHECK (IDCupon IS NULL OR IDUsuario IS NOT NULL)
 );
 GO
 
@@ -251,7 +260,8 @@ CREATE TABLE dbo.TransicionEstadoPedido (
     CONSTRAINT FK_TransicionEstadoPedido_EstadoOrigen FOREIGN KEY (IDEstadoOrigen) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
     CONSTRAINT FK_TransicionEstadoPedido_EstadoDestino FOREIGN KEY (IDEstadoDestino) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
     CONSTRAINT FK_TransicionEstadoPedido_Rol FOREIGN KEY (IDRol) REFERENCES dbo.Rol (IDRol),
-    CONSTRAINT UQ_TransicionEstadoPedido_Origen_Destino_Rol UNIQUE (IDEstadoOrigen, IDEstadoDestino, IDRol)
+    CONSTRAINT UQ_TransicionEstadoPedido_IDEstadoOrigen_IDEstadoDestino_IDRol UNIQUE (IDEstadoOrigen, IDEstadoDestino, IDRol),
+    CONSTRAINT CK_TransicionEstadoPedido_Estados CHECK (IDEstadoOrigen <> IDEstadoDestino)
 );
 GO
 
@@ -275,13 +285,18 @@ CREATE TABLE dbo.Pedido (
     CONSTRAINT PK_Pedido PRIMARY KEY (IDPedido),
     CONSTRAINT FK_Pedido_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
     CONSTRAINT FK_Pedido_EstadoPedido FOREIGN KEY (IDEstadoPedido) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
-    CONSTRAINT FK_Pedido_Direccion FOREIGN KEY (IDDireccion) REFERENCES dbo.Direccion (IDDireccion),
+    -- La dirección de entrega es del mismo cliente del pedido.
+    CONSTRAINT FK_Pedido_Direccion FOREIGN KEY (IDDireccion, IDUsuario) REFERENCES dbo.Direccion (IDDireccion, IDUsuario),
     CONSTRAINT FK_Pedido_MetodoEnvio FOREIGN KEY (IDMetodoEnvio) REFERENCES dbo.MetodoEnvio (IDMetodoEnvio),
     CONSTRAINT FK_Pedido_Cupon FOREIGN KEY (IDCupon) REFERENCES dbo.Cupon (IDCupon),
     CONSTRAINT UQ_Pedido_NumeroPedido UNIQUE (NumeroPedido),
     CONSTRAINT UQ_Pedido_ClaveIdempotencia UNIQUE (ClaveIdempotencia),
+    -- Destino de la FK compuesta de UsoCupon: el uso es del mismo cliente y cupón del pedido.
+    CONSTRAINT UQ_Pedido_IDPedido_IDUsuario_IDCupon UNIQUE (IDPedido, IDUsuario, IDCupon),
     CONSTRAINT CK_Pedido_Montos CHECK (Subtotal >= 0 AND Descuento >= 0 AND CostoEnvio >= 0 AND MontoIVA >= 0),
     CONSTRAINT CK_Pedido_Descuento CHECK (Descuento <= Subtotal),
+    -- El único descuento del pedido es el del cupón.
+    CONSTRAINT CK_Pedido_DescuentoSinCupon CHECK (IDCupon IS NOT NULL OR Descuento = 0),
     CONSTRAINT CK_Pedido_Total CHECK (Total >= 0 AND Total = Subtotal - Descuento + CostoEnvio),
     CONSTRAINT CK_Pedido_MontoIVA CHECK (MontoIVA <= Total)
 );
@@ -304,6 +319,8 @@ CREATE TABLE dbo.PedidoDetalle (
     CONSTRAINT FK_PedidoDetalle_Pedido FOREIGN KEY (IDPedido) REFERENCES dbo.Pedido (IDPedido),
     CONSTRAINT FK_PedidoDetalle_Variante FOREIGN KEY (IDVariante) REFERENCES dbo.Variante (IDVariante),
     CONSTRAINT UQ_PedidoDetalle_IDPedido_IDVariante UNIQUE (IDPedido, IDVariante),
+    -- Destino de la FK compuesta de DevolucionDetalle: la línea devuelta es del mismo pedido.
+    CONSTRAINT UQ_PedidoDetalle_IDPedidoDetalle_IDPedido UNIQUE (IDPedidoDetalle, IDPedido),
     CONSTRAINT CK_PedidoDetalle_Cantidad CHECK (Cantidad > 0),
     CONSTRAINT CK_PedidoDetalle_PrecioUnitario CHECK (PrecioUnitario > 0),
     CONSTRAINT CK_PedidoDetalle_DescuentoLinea CHECK (DescuentoLinea BETWEEN 0 AND PrecioUnitario * Cantidad),
@@ -324,6 +341,8 @@ CREATE TABLE dbo.Pago (
     CONSTRAINT FK_Pago_Pedido FOREIGN KEY (IDPedido) REFERENCES dbo.Pedido (IDPedido),
     CONSTRAINT UQ_Pago_IDPedido UNIQUE (IDPedido),
     CONSTRAINT CK_Pago_Monto CHECK (Monto >= 0),
+    -- Pago simulado con tarjeta (ver Backend/API.md).
+    CONSTRAINT CK_Pago_MetodoPago CHECK (MetodoPago IN (N'TARJETA')),
     CONSTRAINT CK_Pago_Estado CHECK (Estado IN (N'APROBADO', N'REEMBOLSADO_PARCIAL', N'REEMBOLSADO'))
 );
 GO
@@ -340,7 +359,8 @@ CREATE TABLE dbo.HistorialEstadoPedido (
     CONSTRAINT FK_HistorialEstadoPedido_Pedido FOREIGN KEY (IDPedido) REFERENCES dbo.Pedido (IDPedido),
     CONSTRAINT FK_HistorialEstadoPedido_EstadoAnterior FOREIGN KEY (IDEstadoAnterior) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
     CONSTRAINT FK_HistorialEstadoPedido_EstadoNuevo FOREIGN KEY (IDEstadoNuevo) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
-    CONSTRAINT FK_HistorialEstadoPedido_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario)
+    CONSTRAINT FK_HistorialEstadoPedido_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
+    CONSTRAINT CK_HistorialEstadoPedido_Estados CHECK (IDEstadoAnterior IS NULL OR IDEstadoAnterior <> IDEstadoNuevo)
 );
 GO
 
@@ -355,6 +375,8 @@ CREATE TABLE dbo.Devolucion (
     CONSTRAINT PK_Devolucion PRIMARY KEY (IDDevolucion),
     CONSTRAINT FK_Devolucion_Pedido FOREIGN KEY (IDPedido) REFERENCES dbo.Pedido (IDPedido),
     CONSTRAINT FK_Devolucion_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
+    -- Destino de las FK compuestas de DevolucionDetalle y MovimientoInventario.
+    CONSTRAINT UQ_Devolucion_IDDevolucion_IDPedido UNIQUE (IDDevolucion, IDPedido),
     CONSTRAINT CK_Devolucion_Tipo CHECK (Tipo IN (N'TOTAL', N'PARCIAL')),
     CONSTRAINT CK_Devolucion_Motivo CHECK (LEN(TRIM(Motivo)) > 0),
     CONSTRAINT CK_Devolucion_MontoReembolso CHECK (MontoReembolso >= 0)
@@ -364,31 +386,33 @@ GO
 CREATE TABLE dbo.DevolucionDetalle (
     IDDevolucionDetalle INT IDENTITY(1,1) NOT NULL,
     IDDevolucion        INT               NOT NULL,
+    IDPedido            INT               NOT NULL,  -- repetido de la devolución para exigir que la línea sea del mismo pedido
     IDPedidoDetalle     INT               NOT NULL,
     Cantidad            INT               NOT NULL,
     MontoReembolso      DECIMAL(12,2)     NOT NULL,
     CONSTRAINT PK_DevolucionDetalle PRIMARY KEY (IDDevolucionDetalle),
-    CONSTRAINT FK_DevolucionDetalle_Devolucion FOREIGN KEY (IDDevolucion) REFERENCES dbo.Devolucion (IDDevolucion),
-    CONSTRAINT FK_DevolucionDetalle_PedidoDetalle FOREIGN KEY (IDPedidoDetalle) REFERENCES dbo.PedidoDetalle (IDPedidoDetalle),
+    CONSTRAINT FK_DevolucionDetalle_Devolucion FOREIGN KEY (IDDevolucion, IDPedido) REFERENCES dbo.Devolucion (IDDevolucion, IDPedido),
+    CONSTRAINT FK_DevolucionDetalle_PedidoDetalle FOREIGN KEY (IDPedidoDetalle, IDPedido) REFERENCES dbo.PedidoDetalle (IDPedidoDetalle, IDPedido),
     CONSTRAINT UQ_DevolucionDetalle_IDDevolucion_IDPedidoDetalle UNIQUE (IDDevolucion, IDPedidoDetalle),
     CONSTRAINT CK_DevolucionDetalle_Cantidad CHECK (Cantidad > 0),
     CONSTRAINT CK_DevolucionDetalle_MontoReembolso CHECK (MontoReembolso >= 0)
 );
 GO
 
+-- Usos que cuentan contra los límites del cupón; cancelar el pedido borra su uso.
+-- El cupón aplicado y el monto descontado quedan en Pedido (IDCupon, Descuento).
 CREATE TABLE dbo.UsoCupon (
-    IDUsoCupon     INT IDENTITY(1,1) NOT NULL,
-    IDCupon        INT               NOT NULL,
-    IDUsuario      INT               NOT NULL,
-    IDPedido       INT               NOT NULL,
-    MontoDescuento DECIMAL(12,2)     NOT NULL,
-    Fecha          DATETIME2(3)      NOT NULL CONSTRAINT DF_UsoCupon_Fecha DEFAULT (SYSUTCDATETIME()),
+    IDUsoCupon INT IDENTITY(1,1) NOT NULL,
+    IDCupon    INT               NOT NULL,
+    IDUsuario  INT               NOT NULL,  -- repetido del pedido para contar los usos por cliente sin unir con Pedido
+    IDPedido   INT               NOT NULL,
+    Fecha      DATETIME2(3)      NOT NULL CONSTRAINT DF_UsoCupon_Fecha DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT PK_UsoCupon PRIMARY KEY (IDUsoCupon),
     CONSTRAINT FK_UsoCupon_Cupon FOREIGN KEY (IDCupon) REFERENCES dbo.Cupon (IDCupon),
     CONSTRAINT FK_UsoCupon_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
-    CONSTRAINT FK_UsoCupon_Pedido FOREIGN KEY (IDPedido) REFERENCES dbo.Pedido (IDPedido),
-    CONSTRAINT UQ_UsoCupon_IDPedido UNIQUE (IDPedido),  -- solo un cupón por pedido
-    CONSTRAINT CK_UsoCupon_MontoDescuento CHECK (MontoDescuento >= 0)
+    -- El uso coincide con el cliente y el cupón del pedido.
+    CONSTRAINT FK_UsoCupon_Pedido FOREIGN KEY (IDPedido, IDUsuario, IDCupon) REFERENCES dbo.Pedido (IDPedido, IDUsuario, IDCupon),
+    CONSTRAINT UQ_UsoCupon_IDPedido UNIQUE (IDPedido)  -- solo un cupón por pedido
 );
 GO
 
@@ -403,6 +427,8 @@ CREATE TABLE dbo.TipoMovimientoInventario (
     Signo                      SMALLINT          NOT NULL,  -- +1 entrada, -1 salida
     CONSTRAINT PK_TipoMovimientoInventario PRIMARY KEY (IDTipoMovimientoInventario),
     CONSTRAINT UQ_TipoMovimientoInventario_Codigo UNIQUE (Codigo),
+    -- Destino de la FK compuesta de MovimientoInventario.
+    CONSTRAINT UQ_TipoMovimientoInventario_IDTipoMovimientoInventario_Signo UNIQUE (IDTipoMovimientoInventario, Signo),
     CONSTRAINT CK_TipoMovimientoInventario_Signo CHECK (Signo IN (-1, 1))
 );
 GO
@@ -412,6 +438,7 @@ CREATE TABLE dbo.MovimientoInventario (
     IDMovimientoInventario     BIGINT IDENTITY(1,1) NOT NULL,
     IDVariante                 INT                  NOT NULL,
     IDTipoMovimientoInventario INT                  NOT NULL,
+    Signo                      SMALLINT             NOT NULL,  -- repetido del tipo para que el CHECK valide la dirección del cambio
     IDUsuario                  INT                  NOT NULL,
     IDPedido                   INT                  NULL,
     IDDevolucion               INT                  NULL,
@@ -422,12 +449,16 @@ CREATE TABLE dbo.MovimientoInventario (
     Fecha                      DATETIME2(3)         NOT NULL CONSTRAINT DF_MovimientoInventario_Fecha DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT PK_MovimientoInventario PRIMARY KEY (IDMovimientoInventario),
     CONSTRAINT FK_MovimientoInventario_Variante FOREIGN KEY (IDVariante) REFERENCES dbo.Variante (IDVariante),
-    CONSTRAINT FK_MovimientoInventario_TipoMovimientoInventario FOREIGN KEY (IDTipoMovimientoInventario) REFERENCES dbo.TipoMovimientoInventario (IDTipoMovimientoInventario),
+    -- La FK compuesta garantiza que Signo sea el del tipo.
+    CONSTRAINT FK_MovimientoInventario_TipoMovimientoInventario FOREIGN KEY (IDTipoMovimientoInventario, Signo) REFERENCES dbo.TipoMovimientoInventario (IDTipoMovimientoInventario, Signo),
     CONSTRAINT FK_MovimientoInventario_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
     CONSTRAINT FK_MovimientoInventario_Pedido FOREIGN KEY (IDPedido) REFERENCES dbo.Pedido (IDPedido),
-    CONSTRAINT FK_MovimientoInventario_Devolucion FOREIGN KEY (IDDevolucion) REFERENCES dbo.Devolucion (IDDevolucion),
+    -- Un movimiento por devolución lleva también el pedido de esa devolución.
+    CONSTRAINT FK_MovimientoInventario_Devolucion FOREIGN KEY (IDDevolucion, IDPedido) REFERENCES dbo.Devolucion (IDDevolucion, IDPedido),
+    CONSTRAINT CK_MovimientoInventario_Devolucion CHECK (IDDevolucion IS NULL OR IDPedido IS NOT NULL),
     CONSTRAINT CK_MovimientoInventario_Cantidad CHECK (Cantidad > 0),
-    CONSTRAINT CK_MovimientoInventario_Existencias CHECK (ExistenciaAnterior >= 0 AND ExistenciaNueva >= 0),
+    -- La existencia cambia exactamente en la cantidad del movimiento y en la dirección de su tipo.
+    CONSTRAINT CK_MovimientoInventario_Existencias CHECK (ExistenciaAnterior >= 0 AND ExistenciaNueva >= 0 AND ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad),
     CONSTRAINT CK_MovimientoInventario_Motivo CHECK (LEN(TRIM(Motivo)) > 0)
 );
 GO

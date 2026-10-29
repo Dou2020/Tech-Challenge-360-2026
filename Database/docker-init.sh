@@ -4,6 +4,8 @@
 #
 # Si la base ya existe la conserva (así `docker compose up` no borra los datos en cada arranque);
 # con DB_RESET=true la elimina y la vuelve a crear desde cero.
+# Con DB_PRUEBAS=true ejecuta además pruebas/*.sql, que comprueban las restricciones de integridad
+# y no dejan datos.
 #
 # Uso manual:
 #   DB_SERVER=localhost,1433 DB_USER=sa DB_PASSWORD='...' APP_DB_PASSWORD='...' ./docker-init.sh
@@ -16,6 +18,7 @@
 #   DB_NAME          (opcional)  nombre de la base; por defecto ShopCart
 #   APP_DB_LOGIN     (opcional)  login de la aplicación; por defecto shopcart_app
 #   DB_RESET         (opcional)  true para recrear la base aunque exista; por defecto false
+#   DB_PRUEBAS       (opcional)  true para ejecutar pruebas/*.sql al terminar; por defecto false
 
 set -euo pipefail
 
@@ -34,6 +37,7 @@ fi
 DB_NAME="${DB_NAME:-ShopCart}"
 APP_DB_LOGIN="${APP_DB_LOGIN:-shopcart_app}"
 DB_RESET="${DB_RESET:-false}"
+DB_PRUEBAS="${DB_PRUEBAS:-false}"
 
 SQLCMD="$(command -v sqlcmd || true)"
 for candidato in /opt/mssql-tools18/bin/sqlcmd /opt/mssql-tools/bin/sqlcmd; do
@@ -55,22 +59,39 @@ if (( ${#scripts[@]} == 0 )); then
   exit 1
 fi
 
+ejecutar() {
+  echo "-> $(basename "$1")"
+  "$SQLCMD" -S "$DB_SERVER" -U "$DB_USER" -P "$DB_PASSWORD" -C -b -I \
+    -v DbName="$DB_NAME" AppLogin="$APP_DB_LOGIN" AppPassword="$APP_DB_PASSWORD" \
+    -i "$1"
+}
+
 existe="$("$SQLCMD" -S "$DB_SERVER" -U "$DB_USER" -P "$DB_PASSWORD" -C -b -h -1 -W \
   -Q "SET NOCOUNT ON; SELECT CASE WHEN DB_ID(N'$DB_NAME') IS NULL THEN 0 ELSE 1 END;" | tr -d '[:space:]')"
 
 if [[ "$existe" == "1" && "$DB_RESET" != "true" ]]; then
   echo "La base $DB_NAME ya existe; se conserva. Usa DB_RESET=true para recrearla."
-  exit 0
+else
+  echo "Servidor: $DB_SERVER | Base: $DB_NAME | Login de la aplicación: $APP_DB_LOGIN"
+
+  # 001_crear_base_datos.sql elimina la base si existe y la crea de nuevo.
+  for script in "${scripts[@]}"; do
+    ejecutar "$script"
+  done
+
+  echo "Base de datos $DB_NAME creada correctamente."
 fi
 
-echo "Servidor: $DB_SERVER | Base: $DB_NAME | Login de la aplicación: $APP_DB_LOGIN"
+if [[ "$DB_PRUEBAS" == "true" ]]; then
+  pruebas=("$DIRECTORIO"/pruebas/*.sql)
+  if (( ${#pruebas[@]} == 0 )); then
+    echo "Error: no hay pruebas en $DIRECTORIO/pruebas" >&2
+    exit 1
+  fi
 
-# 001_crear_base_datos.sql elimina la base si existe y la crea de nuevo.
-for script in "${scripts[@]}"; do
-  echo "-> $(basename "$script")"
-  "$SQLCMD" -S "$DB_SERVER" -U "$DB_USER" -P "$DB_PASSWORD" -C -b -I \
-    -v DbName="$DB_NAME" AppLogin="$APP_DB_LOGIN" AppPassword="$APP_DB_PASSWORD" \
-    -i "$script"
-done
+  for prueba in "${pruebas[@]}"; do
+    ejecutar "$prueba"
+  done
 
-echo "Base de datos $DB_NAME creada correctamente."
+  echo "Pruebas de la base $DB_NAME correctas."
+fi

@@ -1,0 +1,68 @@
+openapi: 3.1.0
+info:
+  title: ShopCart API
+  version: 1.0.0
+  description: |
+    API REST de ShopCart. La referencia completa de endpoints, accesos por rol,
+    stored procedures y códigos de error está en Backend/API.md.
+servers:
+  - url: /api
+tags:
+  - name: Sistema
+paths:
+  /health:
+    get:
+      tags: [Sistema]
+      summary: Estado del servicio y de sus dependencias
+      responses:
+        '200':
+          description: SQL Server responde (Redis puede estar caído → status "degradado")
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EstadoSistema' }
+        '503':
+          description: SQL Server no responde
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EstadoSistema' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    EstadoSistema:
+      type: object
+      required: [status, sqlServer, redis, timestamp]
+      properties:
+        status: { type: string, enum: [ok, degradado, caido] }
+        sqlServer: { type: string, enum: [up, down] }
+        redis: { type: string, enum: [up, down] }
+        timestamp: { type: string, format: date-time }
+    Error:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDACION }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+        requestId: { type: string }
+    Page:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items: { type: array, items: {} }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }

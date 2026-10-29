@@ -58,6 +58,8 @@ CREATE INDEX IX_MovimientoInventario_IDPedido ON dbo.MovimientoInventario (IDPed
 CREATE INDEX IX_ReservaExistencia_FechaExpiracion ON dbo.ReservaExistencia (FechaExpiracion) INCLUDE (IDVariante, Cantidad) WHERE Estado = N'ACTIVA';
 CREATE INDEX IX_ReservaExistencia_IDCarrito ON dbo.ReservaExistencia (IDCarrito, Estado);
 CREATE INDEX IX_ReservaExistencia_IDVariante ON dbo.ReservaExistencia (IDVariante) WHERE Estado = N'ACTIVA';
+-- Una sola reserva activa por línea del carrito: repetir el checkout no aparta dos veces.
+CREATE UNIQUE INDEX UX_ReservaExistencia_IDCarrito_IDVariante ON dbo.ReservaExistencia (IDCarrito, IDVariante) WHERE Estado = N'ACTIVA';
 GO
 
 /* Auditoría */

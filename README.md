@@ -39,7 +39,7 @@ Plataforma web de ventas con catálogo, carrito de compras, cupones, checkout, g
 ShopCart/
 ├── Backend/        # API REST en Node.js + TypeScript (Fase 1)
 │   └── API.md      # Referencia de todos los endpoints
-├── Database/       # Scripts SQL versionados y numerados, y docker-init.sh que los ejecuta
+├── Database/       # Scripts SQL numerados, pruebas de integridad y docker-init.sh que los ejecuta
 ├── Frontend/       # Aplicación React (Fase 2)
 ├── docker-compose.yml
 ├── .env.example    # Variables de docker compose
@@ -65,8 +65,8 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `cors` | 2.8 | CORS con origen explícito y `credentials: true` para la cookie de refresh |
 | `cookie-parser` | 1.4 | Lectura de la cookie del refresh token |
 | `express-rate-limit` | 8.7 | Límite de intentos en login y registro (extra opcional) |
-| `redis` | 5 | Cliente oficial de Redis (node-redis): sesiones, revocación, bloqueo de login y caché |
-| `rate-limit-redis` | 4 | Guarda los contadores de `express-rate-limit` en Redis: sobreviven reinicios y se comparten entre instancias |
+| `redis` | 6.3 | Cliente oficial de Redis (node-redis): sesiones, revocación, bloqueo de login y caché |
+| `rate-limit-redis` | 6.0 | Guarda los contadores de `express-rate-limit` en Redis: sobreviven reinicios y se comparten entre instancias |
 | `pino`, `pino-http` | 10.4 / 11.0 | Logs en JSON con un `requestId` por petición |
 | `swagger-ui-express`, `yaml` | 5.0 / 2.9 | Sirven `openapi.yaml` en `/api/docs` |
 
@@ -148,6 +148,7 @@ Comandos útiles:
 | :--- | :--- |
 | `docker compose ps` | Ver el estado de los servicios |
 | `DB_RESET=true docker compose run --rm db-init` | Borrar y volver a crear la base con los datos iniciales |
+| `DB_PRUEBAS=true docker compose run --rm db-init` | Ejecutar las pruebas de integridad de la base (`Database/pruebas`); no deja datos |
 | `docker compose down` | Detener todo y conservar los datos |
 | `docker compose down -v` | Detener todo y borrar el volumen de la base |
 
@@ -208,8 +209,9 @@ APP_DB_PASSWORD='ShopCartApp#2026' \
 | `APP_DB_PASSWORD` | Contraseña del login `shopcart_app` que usará el backend |
 | `DB_NAME` | Opcional; nombre de la base (por defecto `ShopCart`) |
 | `DB_RESET` | Opcional; `true` para borrar y volver a crear la base aunque ya exista |
+| `DB_PRUEBAS` | Opcional; `true` para ejecutar `Database/pruebas` al terminar. Comprueba que la base rechace los datos que rompen las reglas y no deja filas |
 
-> Si la base ya existe, el script la conserva y no hace nada. Con `DB_RESET=true`, `001_crear_base_datos.sql` **la elimina y la vuelve a crear** en su estado inicial con los datos semilla.
+> Si la base ya existe, el script la conserva (con `DB_PRUEBAS=true` solo ejecuta las pruebas). Con `DB_RESET=true`, `001_crear_base_datos.sql` **la elimina y la vuelve a crear** en su estado inicial con los datos semilla.
 
 Si no tienes `sqlcmd` instalado, puedes ejecutarlo dentro del contenedor:
 
@@ -239,7 +241,7 @@ Edita `.env` con los datos de tu entorno:
 | `DB_PORT` | `1433` | Puerto de SQL Server |
 | `DB_NAME` | `ShopCart` | Nombre de la base |
 | `DB_USER` | `shopcart_app` | Login de la aplicación (solo tiene permiso `EXECUTE`) |
-| `DB_PASSWORD` | `ShopCartApp#2026` | Debe coincidir con `APP_DB_PASSWORD` del paso 3 |
+| `DB_PASSWORD` | `'ShopCartApp#2026'` | Debe coincidir con `APP_DB_PASSWORD` del paso 3. **Entre comillas**: sin ellas, Node toma lo que sigue a `#` como comentario |
 | `DB_ENCRYPT` | `true` | Cifrado de la conexión |
 | `DB_TRUST_SERVER_CERTIFICATE` | `true` | `true` solo en local (certificado autofirmado) |
 | `JWT_ACCESS_SECRET` | *(cadena aleatoria de 64+ caracteres)* | Firma de los access tokens |
@@ -271,8 +273,8 @@ npm run dev
 | Script | Descripción |
 | :--- | :--- |
 | `npm run dev` | Servidor en modo desarrollo con recarga automática (`tsx watch --env-file=.env src/server.ts`) |
-| `npm run build` | Compila TypeScript a `dist/` |
-| `npm start` | Ejecuta la versión compilada (`node --env-file=.env dist/server.js`) |
+| `npm run build` | Compila TypeScript a `dist/` (`tsconfig.build.json`) |
+| `npm start` | Ejecuta la versión compilada (`node --env-file-if-exists=.env dist/server.js`; en Docker las variables vienen de compose) |
 | `npm run typecheck` | Verifica tipos sin compilar |
 | `npm run lint` | Revisa el código con ESLint |
 | `npm run format` | Formatea el código con Prettier |
@@ -325,6 +327,7 @@ Backend/
 │   ├── server.ts                 # Arranque del servidor, del job de reservas y cierre ordenado del pool
 │   ├── config/
 │   │   ├── env.ts                # Variables de entorno validadas con zod
+│   │   ├── logger.ts             # Logger pino (JSON); oculta Authorization y cookies
 │   │   ├── database.ts           # Pool de conexiones mssql
 │   │   └── redis.ts              # Cliente de Redis con reconexión automática
 │   ├── db/
@@ -363,7 +366,7 @@ Backend/
 │   │   ├── cache/                # cache.ts (getOrSet, invalidar) y claves.ts (claves y namespaces)
 │   │   ├── errors/               # AppError y catálogo de códigos de error
 │   │   ├── utils/                # Paginación, respuestas, montos
-│   │   └── types/express.d.ts    # Extensión de Request (usuario autenticado, token de carrito)
+│   │   └── types/                # Extensiones de tipos de Express (usuario autenticado, token de carrito)
 │   └── docs/
 │       └── openapi.yaml          # Especificación OpenAPI servida en /api/docs
 ├── tests/                        # Ver "Pruebas"
@@ -379,7 +382,8 @@ Backend/
 ├── package.json
 ├── eslint.config.js
 ├── vitest.config.ts              # Proyectos de prueba: unit e integration
-└── tsconfig.json                 # "strict": true
+├── tsconfig.json                 # "strict": true, ESM (NodeNext); incluye src y tests
+└── tsconfig.build.json           # Compilación a dist/ (solo src)
 ```
 
 Cada módulo sigue la misma estructura:
@@ -483,27 +487,28 @@ Backend/tests/
 │   └── bitacora.test.ts
 ├── helpers/                      # Datos de prueba, login por rol y cliente HTTP autenticado
 └── setup/
-    └── globalSetup.ts            # Levanta el contenedor, ejecuta los scripts de Database/ y expone la conexión
+    └── globalSetup.ts            # Levanta el contenedor, crea la base con Database/, corre Database/pruebas y expone la conexión
 ```
 
 | Tipo | Qué prueba | Base de datos |
 | :--- | :--- | :--- |
 | Unitarias | Reglas de los servicios (validación y cálculo de cupones, transiciones de estado, armado de respuestas), `sqlErrorMapper` y los middlewares `authorize`, `validate` e `idempotencyKey` | No; los repositorios se simulan |
 | Integración | Los criterios de aceptación de punta a punta: petición HTTP → servicio → SP → SQL Server | Sí; SQL Server en Docker con los scripts y datos semilla |
+| Base de datos | Que cada restricción rechace los datos que rompen su regla, aunque no se pase por un SP: FK compuestas, `CHECK`, índices únicos y triggers (38 casos) | Sí; `Database/pruebas/integridad.sql`, que `globalSetup` ejecuta antes de la suite de integración |
 
 Casos de integración ligados a los criterios de aceptación:
 
 | Requisito | Caso |
 | :--- | :--- |
-| RF-01 | Token expirado → 401; rol sin permiso → 403; un cliente pide el pedido, carrito o dirección de otro → 404 |
-| RF-02 | Cambiar el precio de una variante no altera el total de un pedido ya creado |
+| RF-01 | Token expirado → 401; rol sin permiso → 403; un cliente pide el pedido, carrito o dirección de otro → 404; un cliente inicia el checkout con la dirección de otro → 404 |
+| RF-02 | Cambiar el precio de una variante no altera el total de un pedido ya creado; una variante con dos valores del mismo atributo → 400 |
 | RF-03 | La existencia coincide con la suma del kardex; un ajuste sin motivo o que deja negativo se rechaza |
 | RF-04 | No se puede agregar más cantidad que la disponible |
 | RF-05 | Cupón vencido, agotado o sin el mínimo se rechaza con su código; con usos en paralelo nunca se supera el límite total |
 | RF-06 | Dos clientes pagan la última unidad al mismo tiempo → un `201` y un `409 STOCK_INSUFICIENTE`; dos pagos con la misma `Idempotency-Key` → un solo pedido y un solo cobro |
-| RF-07 | Transición no permitida → 409; devolver más de lo vendido → 422; una reserva vencida se libera al correr el job |
+| RF-07 | Transición no permitida → 409; devolver más de lo vendido → 422; devolver una línea de otro pedido → 400; una reserva vencida se libera al correr el job |
 | RF-08 | Los reportes excluyen pedidos cancelados y descuentan devoluciones |
-| RF-09 | Un `UPDATE` o `DELETE` sobre la bitácora falla |
+| RF-09 | Un `UPDATE` o `DELETE` sobre la bitácora falla (lo prueba `Database/pruebas/integridad.sql`, porque ninguna ruta escribe en la bitácora) |
 
 Casos de integración de Redis:
 
@@ -517,7 +522,7 @@ Casos de integración de Redis:
 | Consultar un reporte dos veces, cancelar un pedido y consultarlo otra vez | `MISS`, `HIT` y luego `MISS` con el dato actualizado |
 | Redis detenido | Las rutas autenticadas responden `503`; el catálogo público responde sin caché |
 
-Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `TEST_DB_USER` y `TEST_DB_PASSWORD`), se usa ese SQL Server en lugar del contenedor; los scripts recrean la base `ShopCart_Test` antes de correr.
+Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `TEST_DB_USER` y `TEST_DB_PASSWORD`), se usa ese SQL Server en lugar del contenedor; los scripts recrean la base `ShopCart_Test` antes de correr. En los dos casos `globalSetup` ejecuta `docker-init.sh` con `DB_PRUEBAS=true`: si una restricción de integridad deja de funcionar, la suite falla antes de empezar.
 
 ---
 
@@ -529,9 +534,9 @@ Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `
 Database/
 ├── scripts/
 │   ├── 001_crear_base_datos.sql     # Elimina y crea la base (collation Modern_Spanish_100_CI_AI, READ_COMMITTED_SNAPSHOT)
-│   ├── 002_tablas.sql               # 28 tablas con PK, FK, UNIQUE, NOT NULL, CHECK y DEFAULT
+│   ├── 002_tablas.sql               # 28 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
-│   ├── 004_triggers.sql             # Bitácora y kardex inmutables; transiciones de estado válidas
+│   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
 │   ├── 005_funciones.sql            # Funciones tipo tabla (FU_)                                   (pendiente)
 │   ├── 006_vistas.sql               # Vistas (VW_)                                                (pendiente)
 │   ├── 007_sp_auth.sql              # SPs de autenticación, perfil y usuarios                     (pendiente)
@@ -545,10 +550,12 @@ Database/
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
 │   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y pedidos de ejemplo  (pendiente)
-└── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose) y la opción manual
+├── pruebas/
+│   └── integridad.sql               # Intenta romper cada regla de integridad y verifica qué restricción lo impide; no deja datos
+└── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose), la opción manual y las pruebas del backend
 ```
 
-`docker-init.sh` crea la base solo si no existe; con `DB_RESET=true` siempre produce la misma base desde cero. Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, así las pruebas pueden crear `ShopCart_Test` con los mismos scripts (`DB_NAME=ShopCart_Test`).
+`docker-init.sh` crea la base solo si no existe; con `DB_RESET=true` siempre produce la misma base desde cero. Con `DB_PRUEBAS=true` ejecuta además `pruebas/*.sql`: cada prueba trabaja dentro de una transacción que deshace al final y termina con error si un caso no da lo esperado. Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, así las pruebas pueden crear `ShopCart_Test` con los mismos scripts (`DB_NAME=ShopCart_Test`).
 
 Datos que crea `085_datos_catalogos.sql`:
 
@@ -578,6 +585,7 @@ Datos que crea `085_datos_catalogos.sql`:
 - Montos en `DECIMAL(12,2)`, cantidades en `INT`. No se usa `FLOAT` ni `REAL`.
 - Fechas en `DATETIME2` (UTC).
 - Todos los objetos se crean con scripts escritos a mano; no se usa ORM.
+- Excepción a la regla de las FK: cuando una tabla tiene dos FK a la misma tabla, cada una lleva el nombre de su rol. Ejemplos: `TransicionEstadoPedido.IDEstadoOrigen`/`IDEstadoDestino` y `HistorialEstadoPedido.IDEstadoAnterior`/`IDEstadoNuevo`, que referencian `EstadoPedido.IDEstadoPedido`.
 
 ### Tablas por módulo
 
@@ -591,22 +599,164 @@ Datos que crea `085_datos_catalogos.sql`:
 | Pedidos | `MetodoEnvio`, `EstadoPedido`, `TransicionEstadoPedido`, `Pedido`, `PedidoDetalle`, `Pago`, `HistorialEstadoPedido`, `Devolucion`, `DevolucionDetalle` | Pedidos con precios congelados, ciclo de vida, pagos y devoluciones |
 | Auditoría | `Bitacora`, `Configuracion` | Bitácora inmutable y parámetros del sistema |
 
+### Ciclo de vida del pedido
+
+Los estados y las transiciones permitidas están en `EstadoPedido` y `TransicionEstadoPedido` (`085_datos_catalogos.sql`); cada flecha indica qué roles pueden ejecutarla. El SP valida la transición y el rol, y el trigger `TR_Pedidos_ValidarTransicion` rechaza en la base cualquier otra transición y cualquier pedido que no nazca en `PAGADO`.
+
+```plantuml
+@startuml ShopCart_EstadosPedido
+hide empty description
+[*] --> PAGADO : pago aprobado
+PAGADO --> EN_PREPARACION : Operador, Administrador
+PAGADO --> CANCELADO : Cliente, Operador, Administrador
+EN_PREPARACION --> DESPACHADO : Operador, Administrador
+EN_PREPARACION --> CANCELADO : Cliente, Operador, Administrador
+DESPACHADO --> ENTREGADO : Operador, Administrador
+ENTREGADO --> DEVUELTO_PARCIAL : Operador, Administrador
+ENTREGADO --> DEVUELTO : Operador, Administrador
+DEVUELTO_PARCIAL --> DEVUELTO : Operador, Administrador
+CANCELADO --> [*]
+DEVUELTO --> [*]
+@enduml
+```
+
+- El pedido nace en `PAGADO` cuando se aprueba el pago simulado; antes de eso solo existen el carrito y su reserva.
+- Cancelar, solo antes del despacho, reintegra la existencia con movimientos `CANCELACION` en el kardex y libera el uso del cupón.
+- Las devoluciones se registran por línea sobre pedidos entregados (`ENTREGADO` o `DEVUELTO_PARCIAL`). El pedido pasa a `DEVUELTO` cuando ya no queda nada por devolver; otra devolución parcial sobre un pedido en `DEVUELTO_PARCIAL` no cambia el estado ni escribe historial.
+- Cada cambio de estado inserta una fila en `HistorialEstadoPedido` con el usuario, la fecha y hora, el estado anterior y el nuevo.
+
 ### Reglas de integridad en la base
 
 | Regla | Cómo se garantiza |
 | :--- | :--- |
 | Sin existencia negativa ni sobreventa | `CHECK (ExistenciaReservada BETWEEN 0 AND ExistenciaFisica)` en `Variante`; la reserva y el pedido bloquean la fila con `UPDLOCK, ROWLOCK` dentro de la transacción |
-| Kardex consistente | Todo cambio de existencia inserta un `MovimientoInventario` con existencia anterior y nueva; `CHECK (ExistenciaNueva >= 0)`; el trigger `TR_Inventario_ImpedirCambiosKardex` impide editar o borrar movimientos |
+| Una reserva activa por línea | Índice único filtrado `UX_ReservaExistencia_IDCarrito_IDVariante` (`WHERE Estado = 'ACTIVA'`): repetir el checkout no aparta dos veces |
+| Kardex consistente | Todo cambio de existencia inserta un `MovimientoInventario` con existencia anterior y nueva; un `CHECK` exige que no sean negativas y que `ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad`, con el `Signo` del tipo copiado por una FK compuesta, así que una salida nunca suma existencia; el trigger `TR_Inventario_ImpedirCambiosKardex` impide editar o borrar movimientos |
 | Pedido sin duplicados | `UNIQUE (ClaveIdempotencia)` en `Pedido`; `HuellaSolicitud` (SHA-256 del carrito) detecta la misma clave con otro contenido |
 | Precio congelado | `PedidoDetalle` guarda SKU, nombre, precio y descuento del momento de la compra |
+| Dirección del propio cliente | FK compuesta `(IDDireccion, IDUsuario)` de `Pedido` a `Direccion` |
+| Un valor por atributo | `VarianteValorAtributo` repite `IDAtributo`, con FK compuesta a `ValorAtributo` y `UNIQUE (IDVariante, IDAtributo)`: una variante no puede ser talla S y talla M a la vez |
 | Un cupón por pedido | `UNIQUE (IDPedido)` en `UsoCupon` |
+| Uso de cupón coherente | FK compuesta `(IDPedido, IDUsuario, IDCupon)` de `UsoCupon` a `Pedido`: el uso es del cliente y del cupón del pedido |
+| Cupón solo con sesión | `CHECK (IDCupon IS NULL OR IDUsuario IS NOT NULL)` en `Carrito`: un invitado no aplica cupones |
 | Límite de usos del cupón | `UPDATE … SET UsosActuales += 1 WHERE UsosActuales < LimiteUsosTotal` atómico, más `CHECK (UsosActuales <= LimiteUsosTotal)` |
-| Montos coherentes | `CHECK (Total >= 0 AND Total = Subtotal - Descuento + CostoEnvio)` en `Pedido`; `CHECK (Subtotal = PrecioUnitario * Cantidad - DescuentoLinea)` en `PedidoDetalle` |
-| Transiciones de estado válidas | Los SPs validan la transición y el rol en `TransicionEstadoPedido`; además, el trigger `TR_Pedidos_ValidarTransicion` rechaza cualquier cambio de estado no registrado aunque no pase por un SP |
+| Límite de usos por cliente | El `UPDATE` condicional sobre `Cupon` bloquea la fila del cupón y el SP cuenta los usos del cliente después, en la misma transacción: dos pagos simultáneos del mismo cliente se serializan |
+| Montos coherentes | `CHECK (Total >= 0 AND Total = Subtotal - Descuento + CostoEnvio)` y `CHECK (IDCupon IS NOT NULL OR Descuento = 0)` en `Pedido`; `CHECK (Subtotal = PrecioUnitario * Cantidad - DescuentoLinea)` en `PedidoDetalle` |
+| Pago simulado con tarjeta | `CHECK (MetodoPago IN ('TARJETA'))` en `Pago` |
+| Transiciones de estado válidas | Los SPs validan la transición y el rol en `TransicionEstadoPedido`; además, el trigger `TR_Pedidos_ValidarTransicion` rechaza un pedido que no nazca en `PAGADO` y cualquier cambio de estado no registrado, aunque no pase por un SP. Un `CHECK` impide transiciones e historial de un estado a sí mismo |
 | Un carrito activo por cliente | Índice único filtrado `UX_Carrito_IDUsuario_Activo` |
 | Devoluciones acotadas | `CHECK (CantidadDevuelta BETWEEN 0 AND Cantidad)` en `PedidoDetalle` |
+| Devolución de su propio pedido | `DevolucionDetalle` repite `IDPedido`, con FK compuestas a `Devolucion` y a `PedidoDetalle`: una devolución solo incluye líneas de su pedido. En el kardex, `(IDDevolucion, IDPedido)` apunta a esa misma devolución |
 | Carrito con dueño | `CHECK (IDUsuario IS NOT NULL OR TokenInvitado IS NOT NULL)` en `Carrito` |
 | Bitácora inmutable | Trigger `TR_Bitacora_ImpedirCambios` (`INSTEAD OF UPDATE, DELETE`) y `DENY UPDATE, DELETE` al login de la aplicación |
+
+`Database/pruebas/integridad.sql` intenta romper cada una de estas reglas sin pasar por los SPs y comprueba qué restricción lo impide.
+
+### Normalización
+
+De las 28 tablas, 22 están en BCNF: en cada una, todo determinante es una clave, ya sea la PK o una clave natural declarada con `UNIQUE` (`Usuario.Correo`, `Variante.SKU`, `CarritoDetalle (IDCarrito, IDVariante)`…). Las otras seis tienen dependencias aceptadas a propósito, que se explican abajo:
+
+| Tabla | Forma normal | Dependencia que la rompe | Se explica en |
+| :--- | :--- | :--- | :--- |
+| `Pedido` | 2FN | `IDDireccion → IDUsuario`; `Subtotal, Descuento, CostoEnvio → Total` | Columnas repetidas; Totales derivados |
+| `PedidoDetalle` | 2FN | `PrecioUnitario, Cantidad, DescuentoLinea → Subtotal` | Totales derivados |
+| `VarianteValorAtributo` | 3FN | `IDValorAtributo → IDAtributo` | Columnas repetidas |
+| `DevolucionDetalle` | 1FN | `IDDevolucion → IDPedido`, que depende de una parte de la clave `(IDDevolucion, IDPedidoDetalle)` | Columnas repetidas |
+| `MovimientoInventario` | 2FN | `IDTipoMovimientoInventario → Signo`; `ExistenciaAnterior, Signo, Cantidad → ExistenciaNueva`; `IDDevolucion → IDPedido` | Columnas repetidas; Saldos y contadores |
+| `Direccion` | 2FN | `CodigoPostal → Municipio, Departamento` | Otras dependencias aceptadas |
+
+Las formas normales se evalúan con todas las claves candidatas, no solo con la PK: como cada tabla tiene una PK sustituta (`ID` + tabla), mirar solo la PK haría pasar la 2FN a cualquier tabla.
+
+Los saldos, contadores y totales que se calculan con filas de otras tablas (`Variante.ExistenciaFisica`, `Cupon.UsosActuales`, `Pedido.Subtotal`…) no rompen ninguna forma normal, porque las formas normales solo miran dependencias dentro de una tabla. Son redundancia controlada.
+
+Un dominio va en una tabla de catálogo cuando tiene atributos propios o reglas que la base consulta. Por ejemplo, `EstadoPedido` tiene `EsFinal` y sus transiciones, y `TipoMovimientoInventario` tiene `Signo`. Los dominios cortos y fijos sin atributos se validan con `CHECK`: `Carrito.Estado`, `Pago.Estado`, `Pago.MetodoPago`, `ReservaExistencia.Estado`, `Cupon.TipoDescuento`, `Devolucion.Tipo` y `Bitacora.Accion`.
+
+Algunas columnas repiten o derivan datos a propósito. Las tablas siguientes dicen para qué sirve cada una y cómo se mantiene consistente.
+
+#### Copias históricas
+
+No son redundancia: guardan el dato tal como estaba al momento de la compra, que es un hecho distinto del dato vigente. El SKU y los valores de atributo se editan con `PUT /api/variantes/:id` y el precio con `PATCH /api/variantes/:id/precio`, así que dos pedidos de la misma variante pueden guardar datos distintos: dentro de `PedidoDetalle` no existe `IDVariante → SKU`, y la clave `(IDPedido, IDVariante)` no tiene dependencias parciales.
+
+| Columna | Copia de | Motivo |
+| :--- | :--- | :--- |
+| `PedidoDetalle.SKU`, `NombreProducto`, `DescripcionVariante`, `PrecioUnitario` | `Variante`, `Producto`, `ValorAtributo` | Precio congelado: un cambio posterior en el catálogo no altera el pedido |
+| `Pedido.DireccionEntrega` | `Direccion` | La dirección puede editarse o darse de baja y el pedido conserva a dónde se envió. Se guarda como texto formateado porque solo se muestra; ningún reporte filtra por ella |
+| `Pedido.CostoEnvio` | `MetodoEnvio.Costo` | El costo del método de envío puede cambiar |
+| `Pedido.MontoIVA` | `Configuracion.PorcentajeIVA` | Desglose calculado con la tasa vigente al pagar |
+
+#### Saldos y contadores
+
+Evitan sumar el historial en cada lectura y, sobre todo, dan una sola fila que se puede bloquear y proteger con `CHECK` bajo concurrencia. Un `COUNT` o `SUM` seguido de un `INSERT` no impide que dos transacciones simultáneas pasen la misma validación.
+
+| Columna | Equivale a | Para qué | Quién la mantiene |
+| :--- | :--- | :--- | :--- |
+| `Variante.ExistenciaFisica` | Suma de `MovimientoInventario.Cantidad` × `Signo` | Leer la existencia sin recorrer el kardex; `CHECK (ExistenciaFisica >= 0)` | Todo SP que inserta un movimiento actualiza la existencia en la misma transacción |
+| `Variante.ExistenciaReservada` | Suma de `ReservaExistencia.Cantidad` con `Estado = 'ACTIVA'` | `CHECK (ExistenciaReservada BETWEEN 0 AND ExistenciaFisica)` impide la sobreventa | `SP_Inventario_ReservarExistencia`, `SP_Inventario_LiberarReserva`, `SP_Inventario_LiberarReservasVencidas`, `SP_Pedidos_CrearPedido` |
+| `Cupon.UsosActuales` | Filas de `UsoCupon` del cupón | `UPDATE … WHERE UsosActuales < LimiteUsosTotal` respeta el límite total aunque dos clientes paguen a la vez | `SP_Pedidos_CrearPedido` suma; `SP_Pedidos_Cancelar` resta |
+| `PedidoDetalle.CantidadDevuelta` | Suma de `DevolucionDetalle.Cantidad` de la línea | `CHECK (CantidadDevuelta BETWEEN 0 AND Cantidad)` impide devolver más de lo vendido, también con dos devoluciones simultáneas | `SP_Pedidos_RegistrarDevolucion` |
+| `MovimientoInventario.ExistenciaAnterior`, `ExistenciaNueva` | Saldo acumulado del kardex | Leer el kardex sin recalcular el saldo línea por línea | Se escriben una sola vez; `CHECK (ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad)` exige que cambien en la cantidad y en la dirección del tipo, y el trigger impide modificarlas |
+| `Pedido.IDEstadoPedido` | `IDEstadoNuevo` del último `HistorialEstadoPedido` | Filtrar pedidos por estado con un índice; el trigger `TR_Pedidos_ValidarTransicion` valida las transiciones sobre esta columna | `SP_Pedidos_CrearPedido`, `SP_Pedidos_CambiarEstado`, `SP_Pedidos_Cancelar` y `SP_Pedidos_RegistrarDevolucion` escriben el estado y el historial juntos |
+| `HistorialEstadoPedido.IDEstadoAnterior` | `IDEstadoNuevo` de la fila anterior del mismo pedido | Que `CK_HistorialEstadoPedido_Estados` impida registrar un cambio al mismo estado, y leer cada cambio sin buscar la fila anterior. Es redundancia entre filas, no una dependencia funcional | Los SPs que cambian el estado, al insertar la fila del historial |
+| `Pago.Estado` | `REEMBOLSADO_PARCIAL` tras una devolución parcial; `REEMBOLSADO` si el pedido se cancela o ya no queda nada por devolver | Saber si el cobro se reembolsó sin recorrer cancelaciones y devoluciones | `SP_Pedidos_Cancelar` y `SP_Pedidos_RegistrarDevolucion`, en la misma transacción que el cambio de estado del pedido |
+| `EstadoPedido.EsFinal` | El estado no tiene transiciones de salida en `TransicionEstadoPedido` | Saber si un pedido terminó sin consultar las transiciones | `085_datos_catalogos.sql`: es un catálogo fijo y ningún endpoint lo modifica |
+
+#### Totales derivados
+
+| Columna | Equivale a | Cómo se garantiza |
+| :--- | :--- | :--- |
+| `Pedido.Total` | `Subtotal - Descuento + CostoEnvio` | `CHECK` en `Pedido` |
+| `PedidoDetalle.Subtotal` | `PrecioUnitario * Cantidad - DescuentoLinea` | `CHECK` en `PedidoDetalle` |
+| `Pedido.Subtotal` | Suma de `PrecioUnitario * Cantidad` de las líneas, antes del descuento | `SP_Pedidos_CrearPedido` escribe el pedido y sus líneas en la misma transacción; después no se modifican |
+| `Pedido.Descuento` | Suma de `PedidoDetalle.DescuentoLinea` | `SP_Pedidos_CrearPedido`, en la misma transacción |
+| `Pago.Monto` | `Pedido.Total` | `SP_Pedidos_CrearPedido` |
+| `DevolucionDetalle.MontoReembolso` | `Cantidad * PedidoDetalle.Subtotal / PedidoDetalle.Cantidad`, redondeado a 2 decimales. La devolución que completa la línea recibe lo que falta para llegar a `PedidoDetalle.Subtotal` | `SP_Pedidos_RegistrarDevolucion` |
+| `Devolucion.MontoReembolso`, `Devolucion.Tipo` | Suma de `DevolucionDetalle.MontoReembolso`; `TOTAL` cuando ya no queda nada por devolver | `SP_Pedidos_RegistrarDevolucion` |
+
+`Pedido.Subtotal` no es la suma de `PedidoDetalle.Subtotal`: esa columna ya resta `DescuentoLinea`, y sumarla aplicaría el descuento dos veces. En el ejemplo "Iniciar checkout" de `Backend/API.md`, el subtotal es Q298.00, las líneas suman Q268.20 y el total es Q293.20; con la suma de las líneas el total saldría Q263.40. La relación que se cumple es: suma de `PedidoDetalle.Subtotal` = `Pedido.Subtotal - Pedido.Descuento`.
+
+El reembolso se redondea en cada devolución, y la que completa la línea toma el resto para no perder centavos. Por ejemplo, una línea de 3 unidades con subtotal Q100.00 devuelta en tres veces reembolsa Q33.33, Q33.33 y Q33.34.
+
+Un `CHECK` no puede comparar contra otra tabla. Por eso los totales que suman filas de detalle los escribe un solo SP, en la misma transacción que el detalle.
+
+#### Cupón aplicado
+
+El cupón de un pedido aparece en `Pedido` (`IDCupon`, `Descuento`) y en `UsoCupon` (`IDCupon`, `IDUsuario`, `IDPedido`). Son dos hechos distintos:
+
+- `Pedido.IDCupon` y `Pedido.Descuento` dicen qué cupón se aplicó y cuánto descontó. Forman parte del pedido congelado y no cambian. El monto total se guarda aquí y su reparto por línea en `PedidoDetalle.DescuentoLinea`; `UsoCupon` no guarda montos.
+- `UsoCupon` es el registro de usos que cuentan contra los límites. Al cancelar, `SP_Pedidos_Cancelar` borra la fila y resta `UsosActuales`, y el cliente puede volver a usar el cupón; el pedido cancelado sigue mostrando el cupón que tenía.
+- `UsoCupon.IDCupon` e `IDUsuario` repiten datos del pedido, pero la FK compuesta `(IDPedido, IDUsuario, IDCupon)` hacia `Pedido` impide que se contradigan. `IDUsuario` se guarda para contar los usos por cliente con el índice `IX_UsoCupon_IDCupon_IDUsuario`, sin unir con `Pedido`.
+
+#### Columnas repetidas para proteger reglas entre tablas
+
+Cinco columnas repiten un dato que ya se deduce de otra columna de la misma fila. Se aceptan porque permiten declarar en la base una regla que cruza tablas: la FK compuesta garantiza que la copia sea siempre igual al dato original. No hay anomalías de actualización: el dato original no cambia y, como la FK no tiene `ON UPDATE CASCADE`, la base impide cambiarlo mientras esté referenciado.
+
+| Columna | Dependencia que introduce | Forma normal que rompe | Regla que permite declarar |
+| :--- | :--- | :--- | :--- |
+| `Pedido.IDUsuario` | `IDDireccion → IDUsuario` (cada dirección es de un solo cliente) | 3FN | La dirección de entrega es del cliente del pedido. Además, el dueño del pedido se lee sin unir con `Direccion` y lo usa el índice de "Mis pedidos" |
+| `VarianteValorAtributo.IDAtributo` | `IDValorAtributo → IDAtributo` | Solo BCNF: `IDAtributo` es parte de la clave `(IDVariante, IDAtributo)`, así que la tabla sigue en 3FN | Un valor por atributo en cada variante, con `UNIQUE (IDVariante, IDAtributo)`. Una descomposición en BCNF no puede expresar esta regla con una restricción de una sola tabla |
+| `DevolucionDetalle.IDPedido` | `IDDevolucion → IDPedido` e `IDPedidoDetalle → IDPedido` | 2FN: depende de una parte de la clave `(IDDevolucion, IDPedidoDetalle)` | La línea devuelta es del pedido de la devolución |
+| `MovimientoInventario.IDPedido`, en los movimientos de una devolución | `IDDevolucion → IDPedido` | 3FN | El movimiento de una devolución apunta al pedido de esa devolución |
+| `MovimientoInventario.Signo` | `IDTipoMovimientoInventario → Signo` | 3FN | `CHECK (ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad)`: la existencia cambia en la dirección del tipo, así que una salida nunca suma existencia. Sin la copia, el `CHECK` no podría leer el signo, que está en otra tabla |
+
+#### Otras dependencias aceptadas
+
+- `Direccion`: un código postal corresponde a un solo municipio y departamento, así que `CodigoPostal → Municipio, Departamento` rompe la 3FN. Se acepta porque la dirección es texto que escribe el cliente, el código es opcional, la base no valida códigos postales y el pedido guarda su propia copia en `DireccionEntrega`. Normalizarlo exigiría un catálogo geográfico que el reto no pide.
+- `Bitacora.Modulo` no depende de `Entidad`: el módulo dice dónde ocurrió el cambio, no qué tabla cambió. Por ejemplo, `Variante` se registra en el módulo de catálogo al cambiar el precio y en el de inventario al ajustar la existencia.
+- `Bitacora.ValorAnterior` y `ValorNuevo` guardan JSON y cumplen la 1FN porque la base los trata como un valor único: solo se muestran, ninguna consulta filtra ni une por su contenido, y un `CHECK` exige `ISJSON`. Una tabla de detalle con campo, valor anterior y valor nuevo no aportaría nada en una bitácora que no se modifica.
+
+#### Validación en el SP y en la base
+
+Las reglas que cruzan tablas se protegen con FK compuestas: la tabla referenciada tiene un `UNIQUE (PK, columna)` y la tabla hija repite esa columna (por ejemplo `VarianteValorAtributo.IDAtributo` o `DevolucionDetalle.IDPedido`). La restricción es la última barrera. El SP valida antes de escribir y responde con su código de negocio, así el cliente nunca recibe un error de la base; si una violación de FK o `CHECK` (547) llegara al backend, responde 500 porque significa que el SP omitió una validación (`Backend/API.md` §4).
+
+| Regla | Restricción | Respuesta | Dónde se valida antes |
+| :--- | :--- | :--- | :--- |
+| La dirección es del cliente del pedido | `FK_Pedido_Direccion` | 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia`, `SP_Pedidos_CrearPedido` |
+| Un valor por atributo en cada variante | `UQ_VarianteValorAtributo_IDVariante_IDAtributo` | 400 `VALIDACION` | `SP_Productos_Crear`, `SP_Variantes_Crear`, `SP_Variantes_Actualizar` |
+| La línea devuelta es del pedido de la devolución | `FK_DevolucionDetalle_PedidoDetalle` | 400 `VALIDACION` | `SP_Pedidos_RegistrarDevolucion` |
+| El estado nuevo es distinto del actual | `CK_HistorialEstadoPedido_Estados` | 409 `TRANSICION_NO_PERMITIDA` | Servicio de pedidos y `SP_Pedidos_CambiarEstado` |
+| El método de pago es `TARJETA` | `CK_Pago_MetodoPago` | 400 `VALIDACION` | Esquema zod del checkout |
+
+`FK_UsoCupon_Pedido`, `FK_MovimientoInventario_Devolucion`, `FK_MovimientoInventario_TipoMovimientoInventario` y `CK_Pedido_DescuentoSinCupon` no tienen un código propio: esos datos los arma el SP, el cliente no los envía.
 
 ### Patrón de los stored procedures que escriben
 
@@ -648,6 +798,11 @@ END;
 | `FU_Carrito_CalcularTotales` | Subtotal, descuento y total de un carrito |
 | `FU_Inventario_ExistenciaDisponible` | Existencia disponible de una o varias variantes |
 
+Decisiones de los reportes:
+
+- Las ventas por categoría usan la categoría vigente del producto. Si un producto cambia de categoría, sus ventas anteriores se cuentan en la nueva.
+- Las fechas se guardan en UTC. Los reportes por día, semana y mes agrupan por la fecha de Guatemala (`FechaCreacion AT TIME ZONE 'UTC' AT TIME ZONE 'Central America Standard Time'`), para que una venta de las 20:00 del lunes no cuente como del martes.
+
 ### Índices principales
 
 | Tabla | Índice | Para |
@@ -658,6 +813,7 @@ END;
 | `Pedido` | `(IDEstadoPedido, FechaCreacion)` | Listado de pedidos y reportes |
 | `MovimientoInventario` | `(IDVariante, Fecha)` | Kardex |
 | `ReservaExistencia` | `(FechaExpiracion) WHERE Estado = 'ACTIVA'` | Liberación de reservas vencidas |
+| `ReservaExistencia` | `UNIQUE (IDCarrito, IDVariante) WHERE Estado = 'ACTIVA'` | Una sola reserva activa por línea del carrito |
 | `Carrito` | `UNIQUE (TokenInvitado) WHERE TokenInvitado IS NOT NULL` | Carrito de invitado |
 | `Carrito` | `(Estado, FechaUltimaActividad)` | Carritos abandonados |
 | `Bitacora` | `(Modulo, Fecha DESC)` | Consulta con filtro por módulo |
@@ -714,6 +870,7 @@ package "Seguridad" {
     CodigoPostal : NVARCHAR(10)
     Referencias : NVARCHAR(300)
     * Activo : BIT
+    .. UQ (IDDireccion, IDUsuario) ..
   }
 }
 
@@ -759,6 +916,7 @@ package "Catalogo" {
     * IDAtributo : INT <<FK>>
     * Valor : NVARCHAR(50)
     .. UQ (IDAtributo, Valor) ..
+    .. UQ (IDAtributo, IDValorAtributo) ..
   }
 
   entity Variante {
@@ -779,8 +937,10 @@ package "Catalogo" {
     * IDVarianteValorAtributo : INT <<PK>>
     --
     * IDVariante : INT <<FK>>
+    * IDAtributo : INT <<FK>>
     * IDValorAtributo : INT <<FK>>
-    .. UQ (IDVariante, IDValorAtributo) ..
+    .. FK (IDAtributo, IDValorAtributo) → ValorAtributo ..
+    .. UQ (IDVariante, IDAtributo): un valor por atributo ..
   }
 }
 
@@ -793,6 +953,7 @@ package "Inventario" {
     * Nombre : NVARCHAR(100)
     * Signo : SMALLINT
     .. CHECK Signo IN (-1, 1) ..
+    .. UQ (IDTipoMovimientoInventario, Signo) ..
   }
 
   entity MovimientoInventario {
@@ -800,6 +961,7 @@ package "Inventario" {
     --
     * IDVariante : INT <<FK>>
     * IDTipoMovimientoInventario : INT <<FK>>
+    * Signo : SMALLINT
     * IDUsuario : INT <<FK>>
     IDPedido : INT <<FK>>
     IDDevolucion : INT <<FK>>
@@ -809,6 +971,9 @@ package "Inventario" {
     * Motivo : NVARCHAR(300)
     * Fecha : DATETIME2
     .. CHECK Cantidad > 0 AND ExistenciaNueva >= 0 ..
+    .. CHECK ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad ..
+    .. FK (IDTipoMovimientoInventario, Signo) → TipoMovimientoInventario ..
+    .. FK (IDDevolucion, IDPedido) → Devolucion ..
   }
 
   entity ReservaExistencia {
@@ -821,6 +986,7 @@ package "Inventario" {
     * FechaExpiracion : DATETIME2
     * FechaCreacion : DATETIME2
     .. Estado: ACTIVA / CONFIRMADA / LIBERADA ..
+    .. UQ (IDCarrito, IDVariante) WHERE Estado = 'ACTIVA' ..
   }
 }
 
@@ -836,6 +1002,7 @@ package "Carrito" {
     * FechaCreacion : DATETIME2
     * FechaUltimaActividad : DATETIME2
     .. CHECK IDUsuario o TokenInvitado no nulo ..
+    .. CHECK IDCupon solo con IDUsuario ..
   }
 
   entity CarritoDetalle {
@@ -877,8 +1044,8 @@ package "Cupones" {
     * IDCupon : INT <<FK>>
     * IDUsuario : INT <<FK>>
     * IDPedido : INT <<FK, UQ>>
-    * MontoDescuento : DECIMAL(12,2)
     * Fecha : DATETIME2
+    .. FK (IDPedido, IDUsuario, IDCupon) → Pedido ..
   }
 }
 
@@ -908,6 +1075,7 @@ package "Pedidos" {
     * IDEstadoDestino : INT <<FK>>
     * IDRol : INT <<FK>>
     .. UQ (IDEstadoOrigen, IDEstadoDestino, IDRol) ..
+    .. CHECK IDEstadoOrigen ≠ IDEstadoDestino ..
   }
 
   entity Pedido {
@@ -928,7 +1096,10 @@ package "Pedidos" {
     * MontoIVA : DECIMAL(12,2)
     * Total : DECIMAL(12,2)
     * FechaCreacion : DATETIME2
-    .. CHECK Total >= 0 ..
+    .. CHECK Total = Subtotal - Descuento + CostoEnvio >= 0 ..
+    .. CHECK sin cupón, Descuento = 0 ..
+    .. FK (IDDireccion, IDUsuario) → Direccion ..
+    .. UQ (IDPedido, IDUsuario, IDCupon) ..
   }
 
   entity PedidoDetalle {
@@ -945,6 +1116,7 @@ package "Pedidos" {
     * Subtotal : DECIMAL(12,2)
     * CantidadDevuelta : INT
     .. CHECK 0 <= CantidadDevuelta <= Cantidad ..
+    .. UQ (IDPedidoDetalle, IDPedido) ..
   }
 
   entity Pago {
@@ -956,6 +1128,7 @@ package "Pedidos" {
     * Estado : NVARCHAR(20)
     * ReferenciaTransaccion : NVARCHAR(100)
     * Fecha : DATETIME2
+    .. CHECK MetodoPago = 'TARJETA' ..
   }
 
   entity HistorialEstadoPedido {
@@ -967,6 +1140,7 @@ package "Pedidos" {
     * IDUsuario : INT <<FK>>
     Comentario : NVARCHAR(300)
     * Fecha : DATETIME2
+    .. CHECK IDEstadoAnterior ≠ IDEstadoNuevo ..
   }
 
   entity Devolucion {
@@ -979,16 +1153,20 @@ package "Pedidos" {
     * MontoReembolso : DECIMAL(12,2)
     * Fecha : DATETIME2
     .. Tipo: TOTAL / PARCIAL ..
+    .. UQ (IDDevolucion, IDPedido) ..
   }
 
   entity DevolucionDetalle {
     * IDDevolucionDetalle : INT <<PK>>
     --
     * IDDevolucion : INT <<FK>>
+    * IDPedido : INT <<FK>>
     * IDPedidoDetalle : INT <<FK>>
     * Cantidad : INT
     * MontoReembolso : DECIMAL(12,2)
     .. CHECK Cantidad > 0 ..
+    .. FK (IDDevolucion, IDPedido) → Devolucion ..
+    .. FK (IDPedidoDetalle, IDPedido) → PedidoDetalle ..
   }
 }
 
@@ -1005,7 +1183,7 @@ package "Auditoria" {
     ValorAnterior : NVARCHAR(MAX)
     ValorNuevo : NVARCHAR(MAX)
     * Fecha : DATETIME2
-    .. Accion: CREAR / MODIFICAR / DESACTIVAR ..
+    .. Accion: CREAR / MODIFICAR / ACTIVAR / DESACTIVAR / ELIMINAR ..
     .. Inmutable: trigger INSTEAD OF UPDATE, DELETE ..
   }
 

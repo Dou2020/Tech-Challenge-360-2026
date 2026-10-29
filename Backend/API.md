@@ -91,6 +91,8 @@ Todos los listados aceptan:
 | `pageSize` | int | 20 | Máximo 100 |
 | `sort` | string | depende del recurso | `campo:asc` o `campo:desc`; solo campos permitidos por endpoint |
 
+El backend valida `sort` contra la lista del endpoint y lo pasa tal cual al SP: `@Pagina INT`, `@TamanoPagina INT`, `@Orden NVARCHAR(50)` (por ejemplo `N'precio:desc'`). El SP elige la columna con un `CASE` sobre esos valores; nunca los concatena.
+
 Respuesta:
 ```json
 {
@@ -185,20 +187,20 @@ Solo muestra categorías, productos y variantes activos.
 | :--- | :--- | :--- | :--- | :--- |
 | GET | `/api/productos` | Admin | Lista paginada, incluye inactivos. Filtros: `q`, `idCategoria`, `activo` | `SP_Productos_Listar` |
 | GET | `/api/productos/:id` | Admin | Detalle con variantes (existencia física y reservada) e imágenes | `SP_Productos_ObtenerPorId` |
-| POST | `/api/productos` | Admin | Crea el producto con sus variantes en una sola transacción. Las variantes se envían al SP como JSON (`OPENJSON`). La existencia inicial entra como movimiento de kardex | `SP_Productos_Crear` |
+| POST | `/api/productos` | Admin | Crea el producto con sus variantes en una sola transacción. Las variantes se envían al SP como JSON (`OPENJSON`). La existencia inicial entra como movimiento de kardex. Cada variante lleva como máximo un valor por atributo; si repite un atributo: 400 `VALIDACION` | `SP_Productos_Crear` |
 | PUT | `/api/productos/:id` | Admin | Actualiza nombre, descripción y categoría | `SP_Productos_Actualizar` |
 | PATCH | `/api/productos/:id/estado` | Admin | Activa o desactiva; un producto inactivo deja de verse en la tienda | `SP_Productos_CambiarEstado` |
 | DELETE | `/api/productos/:id` | Admin | Elimina solo si nunca se vendió; si tiene ventas, 409 `PRODUCTO_CON_VENTAS` (se debe desactivar) | `SP_Productos_Eliminar` |
 | POST | `/api/productos/:id/imagenes` | Admin | Agrega una imagen por URL (`url`, `orden`, `esPrincipal`) | `SP_Productos_AgregarImagen` |
 | DELETE | `/api/productos/:id/imagenes/:idImagen` | Admin | Quita una imagen | `SP_Productos_EliminarImagen` |
-| POST | `/api/productos/:id/variantes` | Admin | Agrega una variante (SKU, valores de atributo, precio, existencia inicial) | `SP_Variantes_Crear` |
+| POST | `/api/productos/:id/variantes` | Admin | Agrega una variante (SKU, valores de atributo, precio, existencia inicial). Los valores se envían por `idValorAtributo`, como máximo uno por atributo; si repite un atributo: 400 `VALIDACION` | `SP_Variantes_Crear` |
 
 ### Variantes — `/api/variantes`
 La existencia **no** se modifica aquí: solo cambia por movimientos de inventario, pedidos, cancelaciones y devoluciones.
 
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| PUT | `/api/variantes/:id` | Admin | Actualiza SKU y valores de atributo | `SP_Variantes_Actualizar` |
+| PUT | `/api/variantes/:id` | Admin | Actualiza SKU y valores de atributo (como máximo uno por atributo; si repite un atributo: 400 `VALIDACION`) | `SP_Variantes_Actualizar` |
 | PATCH | `/api/variantes/:id/precio` | Admin | Cambia el precio (`{ "precio": "149.00" }`). Queda en la bitácora; no altera pedidos ya realizados | `SP_Variantes_CambiarPrecio` |
 | PATCH | `/api/variantes/:id/estado` | Admin | Activa o desactiva la variante | `SP_Variantes_CambiarEstado` |
 
@@ -235,10 +237,10 @@ Funciona para invitados (con `X-Cart-Token`) y para clientes (con su token). Tod
 ### Checkout — `/api/checkout`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/api/checkout/iniciar` | Cliente | Recibe `idDireccion` e `idMetodoEnvio`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con las variantes afectadas | `SP_Inventario_ReservarExistencia` |
+| POST | `/api/checkout/iniciar` | Cliente | Recibe `idDireccion` e `idMetodoEnvio`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con las variantes afectadas. Si la dirección no existe, está dada de baja o es de otro cliente: 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia` |
 | GET | `/api/checkout` | Cliente | Resumen y reserva vigente (para retomar el checkout tras recargar la página) | `SP_Checkout_ObtenerResumen` |
 | DELETE | `/api/checkout/reserva` | Cliente | Libera la reserva (el cliente vuelve al carrito). Responde 204 | `SP_Inventario_LiberarReserva` |
-| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
+| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. `metodoPago` solo acepta `TARJETA`. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
 
 ### Pedidos — `/api/pedidos`
 El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administrador ven todos.
@@ -250,9 +252,9 @@ El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administra
 | GET | `/api/pedidos/:id` | Cliente (propio), Operador, Admin | Detalle: líneas con precios congelados, montos, dirección de entrega, pago y estado | `SP_Pedidos_ObtenerPorId` |
 | GET | `/api/pedidos/:id/historial` | Cliente (propio), Operador, Admin | Cambios de estado: anterior, nuevo, usuario y fecha | `SP_Pedidos_ObtenerHistorialEstados` |
 | POST | `/api/pedidos/:id/cancelar` | Cliente (propio), Operador, Admin | Cancela si aún no se despachó (`motivo` opcional). Reintegra la existencia con movimientos de kardex y libera el uso del cupón. Si ya se despachó: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_Cancelar` |
-| PATCH | `/api/pedidos/:id/estado` | Operador, Admin | Avanza el estado (`estado`, `comentario`). Solo transiciones definidas en `TransicionEstadoPedido`; otra: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_CambiarEstado` |
+| PATCH | `/api/pedidos/:id/estado` | Operador, Admin | Avanza el estado (`estado`, `comentario`). Solo transiciones definidas en `TransicionEstadoPedido`; otra, o el mismo estado en que ya está: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_CambiarEstado` |
 | GET | `/api/pedidos/:id/devoluciones` | Cliente (propio), Operador, Admin | Devoluciones del pedido con sus líneas | `SP_Pedidos_ListarDevoluciones` |
-| POST | `/api/pedidos/:id/devoluciones` | Operador, Admin | Registra una devolución total o parcial por línea. Solo para pedidos entregados. Reintegra la existencia por kardex. Si una cantidad supera lo vendido menos lo ya devuelto: 422 `CANTIDAD_DEVOLUCION_EXCEDIDA` | `SP_Pedidos_RegistrarDevolucion` |
+| POST | `/api/pedidos/:id/devoluciones` | Operador, Admin | Registra una devolución total o parcial por línea. Solo para pedidos entregados. Reintegra la existencia por kardex. Cada línea (`idPedidoDetalle`) debe ser de ese pedido y aparecer una sola vez; si no: 400 `VALIDACION`. Si una cantidad supera lo vendido menos lo ya devuelto: 422 `CANTIDAD_DEVOLUCION_EXCEDIDA` | `SP_Pedidos_RegistrarDevolucion` |
 
 **Ciclo de vida del pedido:**
 
@@ -273,8 +275,8 @@ El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administra
 | POST | `/api/cupones` | Admin | Crea un cupón: `codigo`, `tipoDescuento` (`PORCENTAJE` o `MONTO_FIJO`), `valor`, `idCategoria` (opcional; sin ella aplica a todo el carrito), `montoMinimo`, `fechaInicio`, `fechaFin`, `limiteUsosTotal`, `limiteUsosPorCliente` | `SP_Cupones_Crear` |
 | PUT | `/api/cupones/:id` | Admin | Actualiza el cupón. No permite bajar `limiteUsosTotal` por debajo de los usos actuales (400 `VALIDACION`) | `SP_Cupones_Actualizar` |
 | PATCH | `/api/cupones/:id/estado` | Admin | Activa o desactiva | `SP_Cupones_CambiarEstado` |
-| DELETE | `/api/cupones/:id` | Admin | Elimina solo si nunca se usó; si no, 409 `EN_USO` | `SP_Cupones_Eliminar` |
-| GET | `/api/cupones/:id/usos` | Admin | Usos del cupón: cliente, pedido, descuento y fecha | `SP_Cupones_ListarUsos` |
+| DELETE | `/api/cupones/:id` | Admin | Elimina solo si ningún pedido (aunque esté cancelado) ni carrito lo tiene; si no, 409 `EN_USO` y se debe desactivar | `SP_Cupones_Eliminar` |
+| GET | `/api/cupones/:id/usos` | Admin | Usos del cupón: cliente, pedido, descuento (el de `Pedido.Descuento`) y fecha. Los pedidos cancelados ya no cuentan como uso | `SP_Cupones_ListarUsos` |
 
 ### Reportes — `/api/reportes`
 Los reportes solo cuentan pedidos completados (`ENTREGADO` y `DEVUELTO_PARCIAL`), excluyen los cancelados y descuentan lo devuelto. Todos aceptan `desde` y `hasta`. El listado de pedidos con filtros por estado, cliente y fechas es `GET /api/pedidos`.
@@ -437,6 +439,8 @@ Location: /api/pedidos/1503
 
 `Pedido.ClaveIdempotencia` es `UNIQUE`: aunque dos peticiones con la misma clave lleguen al mismo tiempo, solo una inserta y la otra lee el pedido existente.
 
+`metodoPago` solo acepta `TARJETA`: el pago es simulado y la tabla `Pago` lo restringe con un `CHECK`. El esquema zod rechaza cualquier otro valor con 400 `VALIDACION` antes de llegar al SP.
+
 ### Cambiar estado de un pedido
 ```http
 PATCH /api/pedidos/1503/estado
@@ -488,6 +492,8 @@ HTTP/1.1 201 Created
 ## 4. Catálogo de códigos de error
 
 Los SPs señalan errores de negocio con `THROW <número>, '<mensaje>', 1`. `sqlErrorMapper` traduce el número al código y al status HTTP. Los errores que no son de negocio (ej. violación de `UNIQUE`, 2627/2601) también se traducen; cualquier otro error devuelve 500 sin exponer detalles.
+
+Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan antes de escribir y responden con su código de negocio (por ejemplo, la dirección de otro cliente es 404 `NO_ENCONTRADO`), así que un 547 significa que un SP omitió una validación: responde 500 y queda en el log con el `requestId`. Las restricciones de la base son la última barrera (ver "Reglas de integridad en la base" en el README).
 
 | Código | HTTP | THROW | Cuándo |
 | :--- | :---: | :---: | :--- |

@@ -35,17 +35,33 @@ BEGIN
 END;
 GO
 
--- Un pedido solo cambia a un estado definido en TransicionEstadoPedido.
+-- Un pedido nace en PAGADO y solo cambia a un estado definido en TransicionEstadoPedido.
 -- La validación por rol la hace el SP; aquí se valida el par (anterior, nuevo).
 CREATE OR ALTER TRIGGER dbo.TR_Pedidos_ValidarTransicion
 ON dbo.Pedido
-AFTER UPDATE
+AFTER INSERT, UPDATE
 AS
 BEGIN
     SET NOCOUNT ON;
 
     IF NOT UPDATE(IDEstadoPedido)
         RETURN;
+
+    -- Inserción: deleted viene vacía.
+    IF NOT EXISTS (SELECT 1 FROM deleted)
+    BEGIN
+        IF EXISTS (
+            SELECT 1
+            FROM inserted AS i
+            INNER JOIN dbo.EstadoPedido AS e ON e.IDEstadoPedido = i.IDEstadoPedido
+            WHERE e.Codigo <> N'PAGADO'
+        )
+        BEGIN
+            THROW 50040, N'Un pedido nuevo debe crearse en estado PAGADO.', 1;
+        END;
+
+        RETURN;
+    END;
 
     IF EXISTS (
         SELECT 1
