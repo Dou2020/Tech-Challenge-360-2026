@@ -11,6 +11,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { notFound } from './middlewares/notFound.js';
+import { authRoutes } from './modules/auth/auth.routes.js';
 import { sistemaRoutes } from './modules/sistema/sistema.routes.js';
 
 // Funciona igual desde src/ (tsx, vitest) y desde dist/ (la imagen copia src/docs/openapi.yaml).
@@ -41,6 +42,7 @@ export function createApp(): Express {
 
   const api = Router();
   api.use(sistemaRoutes);
+  api.use('/auth', authRoutes);
   api.use('/docs', swaggerUi.serve, swaggerUi.setup(especificacionOpenApi));
   app.use('/api', api);
 

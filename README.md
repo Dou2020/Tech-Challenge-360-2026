@@ -2,11 +2,6 @@
 
 Plataforma web de ventas con catálogo, carrito de compras, cupones, checkout, gestión de pedidos, inventario con kardex, reportes y bitácora. Proyecto del **Tech Challenge 360** (Grupo Pentandra).
 
-| Fase | Alcance | Fecha límite |
-| :--- | :--- | :--- |
-| Fase 1 | Base de datos y backend | Lunes 2 de noviembre de 2026, 23:59 |
-| Fase 2 | Frontend y proyecto completo | Lunes 9 de noviembre de 2026, 23:59 |
-
 ## Contenido
 
 1. [Stack](#stack)
@@ -29,7 +24,7 @@ Plataforma web de ventas con catálogo, carrito de compras, cupones, checkout, g
 | Validación | `zod` (body, query, params y variables de entorno) |
 | Autenticación | Access token JWT de corta duración y refresh token con rotación en cookie `httpOnly` |
 | Redis | Redis 7.4: sesiones, revocación de tokens, bloqueo de login, rate limiting y caché. No guarda datos de negocio |
-| Frontend (Fase 2) | React 18 o superior con TypeScript |
+| Frontend | React 18 o superior con TypeScript |
 
 ---
 
@@ -255,6 +250,8 @@ Edita `.env` con los datos de tu entorno:
 | `CACHE_TTL_CATALOGO_SEG` | `600` | Vigencia de la caché del catálogo público |
 | `LOGIN_MAX_INTENTOS` | `5` | Intentos fallidos antes de bloquear la cuenta |
 | `LOGIN_BLOQUEO_MIN` | `15` | Minutos de bloqueo tras superar los intentos |
+| `RATE_LIMIT_AUTH_MAX` | `10` | Solicitudes por IP a login y a registro en cada ventana; `0` desactiva el límite |
+| `RATE_LIMIT_AUTH_VENTANA_MIN` | `15` | Duración de la ventana del rate limit |
 
 Para generar un secreto:
 
@@ -295,13 +292,26 @@ Debe responder con el estado del servicio y de la conexión a la base. La docume
 
 Creadas por `090_datos_semilla.sql`:
 
-| Rol | Correo | Contraseña |
-| :--- | :--- | :--- |
-| Administrador | `admin@shopcart.gt` | `Admin#2026` |
-| Operador | `operador@shopcart.gt` | `Operador#2026` |
-| Cliente | `cliente@shopcart.gt` | `Cliente#2026` |
+| Rol | Correo | Contraseña | Uso |
+| :--- | :--- | :--- | :--- |
+| Administrador | `admin@shopcart.gt` | `Admin#2026` | |
+| Operador | `operador@shopcart.gt` | `Operador#2026` | |
+| Cliente | `cliente@shopcart.gt` | `Cliente#2026` | Dos direcciones (Casa y Oficina) |
+| Cliente | `cliente2@shopcart.gt` | `Cliente#2026` | Segundo cliente: sus recursos son ajenos para `cliente@` (404) |
+| Cliente (inactivo) | `inactivo@shopcart.gt` | `Cliente#2026` | Login responde `403 USUARIO_INACTIVO` |
 
-Cupones de prueba: `BIENVENIDA10` (10 % sobre todo el carrito) y `VERANO25` (Q25.00 con compra mínima de Q300.00).
+Cupones de prueba (las vigencias se calculan desde la fecha en que se crea la base):
+
+| Código | Regla | Para probar |
+| :--- | :--- | :--- |
+| `BIENVENIDA10` | 10 % sobre todo el carrito, vigente | Cupón válido |
+| `VERANO25` | Q25.00 en la categoría Camisetas, compra mínima de Q300.00 | `CUPON_NO_APLICA`, `CUPON_MINIMO_NO_ALCANZADO` |
+| `VENCIDO5` | 5 %, su vigencia terminó ayer | `CUPON_VENCIDO` |
+| `AGOTADO5` | 5 %, límite total de 1 uso ya alcanzado | `CUPON_AGOTADO` |
+| `PROXIMO15` | 15 %, empieza en 30 días | `CUPON_NO_VIGENTE` |
+| `INACTIVO5` | 5 %, desactivado | `CUPON_INACTIVO` |
+
+Catálogo de ejemplo: 4 categorías, atributos Talla y Color, 7 productos (uno inactivo, `Bufanda de lana`) y 16 variantes con su existencia inicial en el kardex. Variantes útiles para pruebas: `CAM-LIM-NEG-M` tiene una sola unidad (compra concurrente de la última unidad), `CAL-TEN-NEG-41` está inactiva con 5 unidades y `CAL-TEN-BLA-42` está agotada.
 
 ### Problemas comunes
 
@@ -426,18 +436,19 @@ Todas las claves llevan el prefijo `shopcart:`.
 
 | Uso | Claves | TTL |
 | :--- | :--- | :--- |
-| Sesión (refresh token) | `sesion:token:{sha256 del token}` → `{idUsuario, familia}`; `sesion:familia:{familia}` → `{idUsuario, tokenActual}`; `sesion:usuario:{idUsuario}` → familias activas del usuario | 7 días |
+| Sesión (refresh token) | `sesion:token:{sha256 del token}` → `{idUsuario, familia}` (se conserva tras rotar, para detectar la reutilización); `sesion:familia:{familia}` → `{idUsuario, tokenActual}`; `sesion:usuario:{idUsuario}` → familias activas del usuario | 7 días, renovados en cada rotación |
 | Revocar un access token | `auth:revocado:jti:{jti}` (logout) | Vida restante del token (≤ 15 min) |
-| Revocar todos los tokens de un usuario | `auth:revocado-desde:{idUsuario}` = fecha; se rechazan los tokens emitidos antes (desactivación, cambio de contraseña o de rol) | 15 min |
+| Revocar todos los tokens de un usuario | `auth:revocado-desde:{idUsuario}` = segundo Unix; se rechazan los tokens emitidos en segundos anteriores (desactivación, cambio de contraseña o de rol) | 15 min |
 | Bloqueo por intentos | `auth:intentos:{correo}`; con `LOGIN_MAX_INTENTOS` fallos → `429 CUENTA_BLOQUEADA` con `Retry-After`; se borra al iniciar sesión bien | `LOGIN_BLOQUEO_MIN` |
-| Rate limit por IP | Store de `rate-limit-redis` en login y registro (10 por IP cada 15 min) | 15 min |
+| Rate limit por IP | `ratelimit:login:{ip}` y `ratelimit:registro:{ip}` (store de `rate-limit-redis`, 10 por IP cada 15 min) | 15 min |
 | Caché del usuario | `usuario:{id}` → rol, estado, nombre y correo; la usan `refresh` y `/me` | 15 min |
 | Caché de reportes | `reportes:v{n}:{endpoint}:{hash de filtros}` | `CACHE_TTL_REPORTES_SEG` |
 | Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:producto:{id}` (sin existencia) | `CACHE_TTL_CATALOGO_SEG` |
 | Métodos de envío y configuración | `checkout:metodos-envio`, `configuracion` | 1 h |
 
 **Sesiones y tokens:**
-- El access token JWT lleva `jti` (identificador único) y `sid` (familia de la sesión). `authenticate` verifica la firma y luego consulta en Redis si el `jti` fue revocado o si el token es anterior a `revocado-desde` del usuario.
+- El access token JWT lleva `jti` (identificador único) y `sid` (familia de la sesión). `authenticate` verifica la firma y luego consulta en Redis, en una sola ida (`MULTI`), si el `jti` fue revocado, si la familia `sid` sigue existiendo y si el token es anterior a `revocado-desde` del usuario. Así, al terminar una sesión dejan de valer todos sus access tokens.
+- El refresh token tiene la forma `<sid>.<secreto>`: la familia viaja en el token para que el script de rotación reciba todas sus claves.
 - La rotación del refresh token es un **script Lua atómico**: si el token presentado es el `tokenActual` de su familia, emite uno nuevo y lo reemplaza; si no lo es (alguien reutilizó un token ya rotado), borra la familia completa y responde `401 REFRESH_INVALIDO`. Dos peticiones simultáneas con el mismo token no pueden rotarlo dos veces.
 - Logout revoca el `jti` actual y borra la familia. Desactivar un usuario, cambiar su contraseña o su rol borra todas sus familias y fija `revocado-desde`.
 
@@ -460,7 +471,8 @@ Todas las claves llevan el prefijo `shopcart:`.
 
 | Función | Comportamiento |
 | :--- | :--- |
-| Sesiones, revocación y bloqueo de login | *Fail-closed*: login, refresh y rutas autenticadas responden `503 SERVICIO_NO_DISPONIBLE` (no se puede verificar si un token fue revocado) |
+| Sesiones, revocación y bloqueo de login | *Fail-closed*: login, registro, refresh, logout y rutas autenticadas responden `503 SERVICIO_NO_DISPONIBLE` (no se puede verificar si un token fue revocado). El registro lo comprueba antes de crear el usuario. El cliente de Redis no encola comandos mientras reconecta (`disableOfflineQueue`), así que la respuesta es inmediata |
+| Rate limit por IP | Deja pasar la solicitud; login y registro igual responden `503` por la fila anterior |
 | Caché | *Fail-open*: se registra el error y se lee de la base |
 | `GET /api/health` | Reporta `redis: "down"` |
 
@@ -506,8 +518,8 @@ Casos de integración ligados a los criterios de aceptación:
 | RF-04 | No se puede agregar más cantidad que la disponible |
 | RF-05 | Cupón vencido, agotado o sin el mínimo se rechaza con su código; con usos en paralelo nunca se supera el límite total |
 | RF-06 | Dos clientes pagan la última unidad al mismo tiempo → un `201` y un `409 STOCK_INSUFICIENTE`; dos pagos con la misma `Idempotency-Key` → un solo pedido y un solo cobro |
-| RF-07 | Transición no permitida → 409; devolver más de lo vendido → 422; devolver una línea de otro pedido → 400; una reserva vencida se libera al correr el job |
-| RF-08 | Los reportes excluyen pedidos cancelados y descuentan devoluciones |
+| RF-07 | Transición no permitida → 409; cancelar antes del despacho reintegra la existencia con un movimiento `CANCELACION` y libera el uso del cupón; devolver más de lo vendido → 422; devolver una línea de otro pedido → 400; una reserva vencida se libera al correr el job |
+| RF-08 | Los reportes excluyen pedidos cancelados y descuentan devoluciones; una venta de las 20:00 hora de Guatemala (02:00 UTC del día siguiente) cuenta en el día local |
 | RF-09 | Un `UPDATE` o `DELETE` sobre la bitácora falla (lo prueba `Database/pruebas/integridad.sql`, porque ninguna ruta escribe en la bitácora) |
 
 Casos de integración de Redis:
@@ -539,7 +551,7 @@ Database/
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
 │   ├── 005_funciones.sql            # Funciones tipo tabla (FU_)                                   (pendiente)
 │   ├── 006_vistas.sql               # Vistas (VW_)                                                (pendiente)
-│   ├── 007_sp_auth.sql              # SPs de autenticación, perfil y usuarios                     (pendiente)
+│   ├── 007_sp_auth.sql              # SPs de autenticación, perfil y usuarios                     (en curso: SP_Auth_*, SP_Usuarios_ObtenerPorId)
 │   ├── 008_sp_catalogo.sql          # SPs de catálogo, categorías, productos, variantes y atributos (pendiente)
 │   ├── 009_sp_inventario.sql        # SPs de existencias, kardex, ajustes y reservas              (pendiente)
 │   ├── 010_sp_carrito.sql           # SPs de carrito y cupón aplicado                             (pendiente)
@@ -549,7 +561,7 @@ Database/
 │   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema                    (pendiente)
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
-│   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y pedidos de ejemplo  (pendiente)
+│   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y pedidos de ejemplo  (pedidos pendientes)
 ├── pruebas/
 │   └── integridad.sql               # Intenta romper cada regla de integridad y verifica qué restricción lo impide; no deja datos
 └── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose), la opción manual y las pruebas del backend

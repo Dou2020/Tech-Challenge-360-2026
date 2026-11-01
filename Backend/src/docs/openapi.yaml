@@ -9,6 +9,7 @@ servers:
   - url: /api
 tags:
   - name: Sistema
+  - name: Autenticación
 paths:
   /health:
     get:
@@ -25,13 +26,194 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EstadoSistema' }
+  /auth/registro:
+    post:
+      tags: [Autenticación]
+      summary: Registra un Cliente y abre su sesión (igual que el login)
+      description: |
+        Límite por IP: 10 solicitudes cada 15 minutos (429 DEMASIADAS_SOLICITUDES).
+        El correo se guarda sin espacios y en minúsculas.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Registro' }
+      responses:
+        '201':
+          description: Cliente creado. Deja la cookie refreshToken.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookieRefresh' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sesion' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409':
+          description: DUPLICADO (el correo ya está registrado)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Inicia sesión
+      description: |
+        Credenciales incorrectas → 401 CREDENCIALES_INVALIDAS (mismo mensaje si el correo no existe).
+        Usuario desactivado → 403 USUARIO_INACTIVO (solo con la contraseña correcta).
+        Al llegar a 5 fallos seguidos con el mismo correo → 429 CUENTA_BLOQUEADA con Retry-After
+        durante 15 minutos, aun con la contraseña correcta. Límite por IP: 10 cada 15 minutos
+        (429 DEMASIADAS_SOLICITUDES). Si Redis no responde → 503 SERVICIO_NO_DISPONIBLE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Login' }
+      responses:
+        '200':
+          description: Sesión abierta. Deja la cookie refreshToken.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookieRefresh' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sesion' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '429':
+          description: CUENTA_BLOQUEADA o DEMASIADAS_SOLICITUDES
+          headers:
+            Retry-After:
+              description: Segundos que faltan para volver a intentar
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/refresh:
+    post:
+      tags: [Autenticación]
+      summary: Rota el refresh token y entrega un access token nuevo
+      description: |
+        Usa la cookie refreshToken. El access token nuevo lleva el rol actual del usuario.
+        Token vencido, revocado o reutilizado → 401 REFRESH_INVALIDO y se borra la cookie;
+        si fue reutilizado (ya se había rotado), además se revoca la sesión completa.
+        Usuario desactivado → 403 USUARIO_INACTIVO.
+      security:
+        - cookieRefresh: []
+      responses:
+        '200':
+          description: Token rotado. Deja la cookie refreshToken nueva.
+          headers:
+            Set-Cookie: { $ref: '#/components/headers/SetCookieRefresh' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccessToken' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      tags: [Autenticación]
+      summary: Cierra la sesión
+      description: |
+        Revoca el access token del header Authorization (si viene) y la sesión de la cookie,
+        y borra la cookie. Los access tokens de esa sesión dejan de aceptarse de inmediato.
+        Es idempotente: sin sesión también responde 204.
+      security:
+        - cookieRefresh: []
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Sesión cerrada
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/me:
+    get:
+      tags: [Autenticación]
+      summary: Usuario de la sesión
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Usuario de la sesión
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsuarioSesion' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    cookieRefresh:
+      type: apiKey
+      in: cookie
+      name: refreshToken
+  headers:
+    SetCookieRefresh:
+      description: 'refreshToken=…; HttpOnly; Secure; SameSite=Strict; Path=/api/auth; Max-Age=604800'
+      schema: { type: string }
+    XCache:
+      description: HIT si la respuesta salió de Redis, MISS si salió de la base
+      schema: { type: string, enum: [HIT, MISS] }
+  responses:
+    Error:
+      description: Error con el formato estándar (ver el catálogo de códigos en API.md §4)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    Registro:
+      type: object
+      required: [correo, contrasena, nombre, apellido]
+      properties:
+        correo: { type: string, format: email, maxLength: 150, example: ana@correo.gt }
+        contrasena:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: Al menos una letra y un número
+          example: Segura2026
+        nombre: { type: string, minLength: 1, maxLength: 100, example: Ana }
+        apellido: { type: string, minLength: 1, maxLength: 100, example: López }
+        telefono:
+          type: [string, 'null']
+          maxLength: 20
+          pattern: '^\+?[\d\s-]{8,20}$'
+          example: 5555-1234
+    Login:
+      type: object
+      required: [correo, contrasena]
+      properties:
+        correo: { type: string, format: email, example: cliente@shopcart.gt }
+        contrasena: { type: string, example: 'Cliente#2026' }
+    UsuarioSesion:
+      type: object
+      required: [idUsuario, nombre, apellido, correo, rol]
+      properties:
+        idUsuario: { type: integer, example: 12 }
+        nombre: { type: string, example: Ana }
+        apellido: { type: string, example: López }
+        correo: { type: string, format: email, example: cliente@shopcart.gt }
+        rol: { type: string, enum: [Cliente, Operador, Administrador] }
+    AccessToken:
+      type: object
+      required: [accessToken, expiraEn]
+      properties:
+        accessToken: { type: string, description: JWT para Authorization Bearer }
+        expiraEn: { type: integer, description: Segundos de vida del access token, example: 900 }
+    Sesion:
+      allOf:
+        - { $ref: '#/components/schemas/AccessToken' }
+        - type: object
+          required: [usuario]
+          properties:
+            usuario: { $ref: '#/components/schemas/UsuarioSesion' }
     EstadoSistema:
       type: object
       required: [status, sqlServer, redis, timestamp]

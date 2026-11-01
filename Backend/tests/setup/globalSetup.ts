@@ -100,6 +100,9 @@ export default async function setup(project: TestProject) {
     JWT_ACCESS_SECRET: 'secreto-de-pruebas-de-integracion-con-mas-de-32-caracteres',
     CORS_ORIGIN: 'http://localhost:5173',
     REDIS_URL: redis.url,
+    // Todas las peticiones llegan desde la misma IP: el límite real (10) frenaría la suite.
+    // tests/integration/auth.test.ts prueba el limitador con uno propio de límite bajo.
+    RATE_LIMIT_AUTH_MAX: '10000',
   });
 
   return async () => {

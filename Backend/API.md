@@ -62,7 +62,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
 | :--- | :--- |
 | Access token | JWT de 15 minutos en `Authorization: Bearer <token>` |
 | Refresh token | Cookie `refreshToken` con `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, válida 7 días. Se rota en cada uso. La sesión se guarda en Redis (solo el hash SHA-256 del token) |
-| Revocación | El access token lleva `jti` y `sid` (sesión). Tras logout, desactivación, cambio de contraseña o de rol, deja de aceptarse de inmediato aunque no haya expirado (lista de revocación en Redis) |
+| Revocación | El access token lleva `jti` y `sid` (sesión). Solo se acepta mientras su sesión exista en Redis y no esté revocado. Tras logout, reutilización del refresh, desactivación, cambio de contraseña o de rol, deja de aceptarse de inmediato aunque no haya expirado |
 | Bloqueo de login | Tras `LOGIN_MAX_INTENTOS` (5) fallos con el mismo correo, el login se bloquea `LOGIN_BLOQUEO_MIN` (15) minutos → `429 CUENTA_BLOQUEADA` con header `Retry-After` |
 | Carrito de invitado | Header `X-Cart-Token: <uuid>` |
 | Pago | Header `Idempotency-Key: <uuid v4>` obligatorio en `POST /api/checkout/pagar` |
@@ -132,11 +132,11 @@ El catálogo completo de códigos está en la [sección 4](#4-catálogo-de-códi
 ### Autenticación — `/api/auth`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/api/auth/registro` | Público | Registra un Cliente (correo, contraseña, nombre, apellido, teléfono). Devuelve 201 con los tokens, igual que el login | `SP_Auth_RegistrarCliente` |
+| POST | `/api/auth/registro` | Público | Registra un Cliente (`correo`, `contrasena` de 8+ caracteres con al menos una letra y un número, `nombre`, `apellido`, `telefono` opcional). Devuelve 201 con los tokens, igual que el login. Correo repetido: 409 `DUPLICADO` | `SP_Auth_RegistrarCliente` |
 | POST | `/api/auth/login` | Público | Valida credenciales; crea la sesión en Redis, devuelve el access token y deja la cookie de refresh. Un usuario inactivo recibe 403; tras 5 fallos, 429 `CUENTA_BLOQUEADA` | `SP_Auth_ObtenerUsuarioPorCorreo` + Redis |
-| POST | `/api/auth/refresh` | Cookie | Rota el refresh token en Redis (script Lua atómico) y devuelve un access token nuevo con el rol y estado actuales del usuario. Si se reutiliza un token ya rotado, se revoca toda la sesión | Redis + `SP_Usuarios_ObtenerPorId` (con caché) |
-| POST | `/api/auth/logout` | Cookie | Revoca el access token actual y la sesión, y borra la cookie. Responde 204 | Redis |
-| GET | `/api/auth/me` | Autenticado | Usuario de la sesión: id, nombre, correo y rol | `SP_Usuarios_ObtenerPorId` |
+| POST | `/api/auth/refresh` | Cookie | Rota el refresh token en Redis (script Lua atómico) y devuelve un access token nuevo con el rol y estado actuales del usuario. Si se reutiliza un token ya rotado, se revoca toda la sesión. Un usuario desactivado recibe 403 `USUARIO_INACTIVO` | Redis + `SP_Usuarios_ObtenerPorId` (con caché) |
+| POST | `/api/auth/logout` | Cookie | Revoca el access token del header `Authorization` (si viene) y la sesión de la cookie, y borra la cookie. Los demás access tokens de esa sesión también dejan de aceptarse. Responde 204, también sin sesión | Redis |
+| GET | `/api/auth/me` | Autenticado | Usuario de la sesión: `idUsuario`, `nombre`, `apellido`, `correo` y `rol` (mismo objeto que `usuario` del login). Usa la caché del usuario (`X-Cache`) | `SP_Usuarios_ObtenerPorId` |
 
 ### Perfil — `/api/perfil`
 | Método | Ruta | Acceso | Descripción | SP |
@@ -321,10 +321,12 @@ Set-Cookie: refreshToken=…; HttpOnly; Secure; SameSite=Strict; Path=/api/auth;
 {
   "accessToken": "eyJhbGciOi…",
   "expiraEn": 900,
-  "usuario": { "idUsuario": 12, "nombre": "Ana", "correo": "cliente@shopcart.gt", "rol": "Cliente" }
+  "usuario": { "idUsuario": 12, "nombre": "Ana", "apellido": "López", "correo": "cliente@shopcart.gt", "rol": "Cliente" }
 }
 ```
-Credenciales incorrectas → `401 CREDENCIALES_INVALIDAS` (el mismo mensaje si el correo no existe). Usuario desactivado → `403 USUARIO_INACTIVO`. Al quinto fallo seguido con el mismo correo → `429 CUENTA_BLOQUEADA` con `Retry-After: 900`; el contador se reinicia al iniciar sesión correctamente. Si Redis no responde → `503 SERVICIO_NO_DISPONIBLE`.
+Credenciales incorrectas → `401 CREDENCIALES_INVALIDAS` (el mismo mensaje si el correo no existe; también se verifica contra un hash ficticio para que la respuesta tarde lo mismo). Usuario desactivado → `403 USUARIO_INACTIVO`, solo si la contraseña es correcta. Al quinto fallo seguido con el mismo correo → `429 CUENTA_BLOQUEADA` con `Retry-After: 900`, y así durante 15 minutos aunque llegue la contraseña correcta; el contador se reinicia al iniciar sesión correctamente. El correo se compara sin espacios ni mayúsculas. Si Redis no responde → `503 SERVICIO_NO_DISPONIBLE`.
+
+`POST /api/auth/registro` responde igual, con `201 Created`.
 
 ### Refresh
 ```http
@@ -337,7 +339,9 @@ Set-Cookie: refreshToken=<nuevo>; HttpOnly; Secure; SameSite=Strict; Path=/api/a
 
 { "accessToken": "eyJhbGciOi…", "expiraEn": 900 }
 ```
-Token vencido, revocado o reutilizado → `401 REFRESH_INVALIDO`. Si fue reutilizado, también se revoca toda la familia de tokens.
+Token vencido, revocado o reutilizado → `401 REFRESH_INVALIDO` y se borra la cookie. Si fue reutilizado, también se revoca toda la familia de tokens y sus access tokens. Dos refresh simultáneos con el mismo token cuentan como reutilización: uno recibe el token nuevo y el otro `401`, y la sesión queda revocada. Por eso el frontend comparte una sola renovación en curso. Usuario desactivado → `403 USUARIO_INACTIVO`.
+
+Formato del refresh token: `<sid>.<secreto>`, donde `sid` es la sesión y el secreto son 32 bytes aleatorios en base64url. En Redis solo se guarda su SHA-256.
 
 ### Agregar al carrito
 ```http
@@ -540,7 +544,7 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 | Dashboard en tiempo real | `GET /api/reportes/stream` (Server-Sent Events, Admin). Emite un evento cuando se crea, cancela o devuelve un pedido |
 | Exportación a Excel o PDF | Se genera en el frontend (`ReportTable`) con los datos de `/api/reportes/*`; no requiere endpoint nuevo |
 | Caché de reportes | Caché en Redis por endpoint y filtros. Se invalida por versión (`INCR shopcart:reportes:version`) al crear, cancelar o cambiar de estado un pedido y al registrar una devolución, siempre después de confirmar la transacción. Las respuestas llevan `X-Cache: HIT` o `MISS` |
-| Rate limiting | `POST /api/auth/login` y `POST /api/auth/registro`: 10 intentos por IP cada 15 minutos → `429 DEMASIADAS_SOLICITUDES`. Los contadores viven en Redis (`rate-limit-redis`) |
+| Rate limiting | `POST /api/auth/login` y `POST /api/auth/registro`: 10 intentos por IP cada 15 minutos, con un contador por endpoint → `429 DEMASIADAS_SOLICITUDES` con `Retry-After` y headers `RateLimit-*`. Los contadores viven en Redis (`rate-limit-redis`, claves `shopcart:ratelimit:{login\|registro}:{ip}`). Se configura con `RATE_LIMIT_AUTH_MAX` (0 lo desactiva) y `RATE_LIMIT_AUTH_VENTANA_MIN`. Si Redis no responde, el limitador deja pasar la solicitud: no abre un hueco, porque login y registro responden `503` por su cuenta (fail-closed) |
 
 ---
 

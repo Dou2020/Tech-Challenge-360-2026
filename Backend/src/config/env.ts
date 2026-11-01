@@ -15,7 +15,11 @@ const esquema = z.object({
   DB_TRUST_SERVER_CERTIFICATE: booleano.default(false),
 
   JWT_ACCESS_SECRET: z.string().min(32, 'Debe tener al menos 32 caracteres'),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  // Número seguido de s, m, h o d (15m, 900s, 1h); sin unidad son segundos.
+  JWT_ACCESS_EXPIRES_IN: z
+    .string()
+    .regex(/^\d+[smhd]?$/, 'Usa un número seguido de s, m, h o d (ej. 15m)')
+    .default('15m'),
   REFRESH_TOKEN_DAYS: z.coerce.number().int().positive().default(7),
 
   CORS_ORIGIN: z.url(),
@@ -27,6 +31,9 @@ const esquema = z.object({
   CACHE_TTL_CATALOGO_SEG: z.coerce.number().int().positive().default(600),
   LOGIN_MAX_INTENTOS: z.coerce.number().int().positive().default(5),
   LOGIN_BLOQUEO_MIN: z.coerce.number().int().positive().default(15),
+  // Solicitudes por IP en login y registro en cada ventana; 0 desactiva el límite.
+  RATE_LIMIT_AUTH_MAX: z.coerce.number().int().min(0).default(10),
+  RATE_LIMIT_AUTH_VENTANA_MIN: z.coerce.number().int().positive().default(15),
 });
 
 export type Env = z.infer<typeof esquema>;

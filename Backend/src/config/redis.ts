@@ -4,6 +4,10 @@ import { logger } from './logger.js';
 
 export const redis = createClient({
   url: env.REDIS_URL,
+  // Sin cola offline: mientras Redis está caído los comandos fallan de inmediato en lugar de
+  // esperar la reconexión. Así la caché cae a la base (fail-open) y la autenticación responde
+  // 503 (fail-closed) sin dejar peticiones colgadas.
+  disableOfflineQueue: true,
   socket: {
     connectTimeout: 5_000,
     // Reintenta con espera creciente hasta 5 s; nunca se rinde.
