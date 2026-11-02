@@ -55,7 +55,10 @@ export const perfilService = {
       throw errorCampo('contrasenaNueva', MENSAJE_IGUAL);
     }
 
-    await perfilRepository.cambiarContrasena(idUsuario, await hashearContrasena(datos.contrasenaNueva));
+    await perfilRepository.cambiarContrasena(
+      idUsuario,
+      await hashearContrasena(datos.contrasenaNueva),
+    );
     await revocacionStore.revocarAccesoDelUsuario(idUsuario, sidActual);
     await cache.borrar(claves.usuario(idUsuario));
   },

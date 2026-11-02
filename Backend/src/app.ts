@@ -21,9 +21,16 @@ import {
   variantesRoutes,
 } from './modules/catalogo/catalogo.routes.js';
 import { carritoRoutes } from './modules/carrito/carrito.routes.js';
+import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
 import { cuponesRoutes } from './modules/cupones/cupones.routes.js';
 import { direccionesRoutes } from './modules/direcciones/direcciones.routes.js';
 import { inventarioRoutes } from './modules/inventario/inventario.routes.js';
+import { pedidosRoutes } from './modules/pedidos/pedidos.routes.js';
+import { reportesRoutes } from './modules/reportes/reportes.routes.js';
+import { bitacoraRoutes } from './modules/bitacora/bitacora.routes.js';
+import { configuracionRoutes } from './modules/configuracion/configuracion.routes.js';
+import { perfilRoutes } from './modules/perfil/perfil.routes.js';
+import { usuariosRoutes } from './modules/usuarios/usuarios.routes.js';
 import { sistemaRoutes } from './modules/sistema/sistema.routes.js';
 
 // Funciona igual desde src/ (tsx, vitest) y desde dist/ (la imagen copia src/docs/openapi.yaml).
@@ -65,6 +72,13 @@ export function createApp(): Express {
   api.use('/direcciones', direccionesRoutes);
   api.use('/carrito', carritoRoutes);
   api.use('/cupones', cuponesRoutes);
+  api.use('/checkout', checkoutRoutes);
+  api.use('/pedidos', pedidosRoutes);
+  api.use('/reportes', reportesRoutes);
+  api.use('/perfil', perfilRoutes);
+  api.use('/usuarios', usuariosRoutes);
+  api.use('/bitacora', bitacoraRoutes);
+  api.use('/configuracion', configuracionRoutes);
   api.use('/docs', swaggerUi.serve, swaggerUi.setup(especificacionOpenApi));
   app.use('/api', api);
 

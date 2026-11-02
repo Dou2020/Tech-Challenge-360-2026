@@ -45,12 +45,14 @@ export const revocacionStore = {
   /**
    * Corta todo el acceso del usuario: sus sesiones y sus access tokens vigentes.
    * Para desactivación y cambio de rol; en cambio de contraseña se pasa `exceptoSid` para
-   * conservar la sesión actual (el frontend renueva su access token con el refresh).
+   * conservar la sesión actual y su access token.
+   * Con `exceptoSid` no se escribe `revocado-desde`, que también rechazaría el token de la
+   * sesión conservada: los de las demás sesiones ya caen porque su sesión dejó de existir.
    * Llamar después de que el SP confirmó el cambio en la base.
    */
   async revocarAccesoDelUsuario(idUsuario: number, exceptoSid?: string): Promise<void> {
     await sesionesStore.revocarTodasDelUsuario(idUsuario, exceptoSid);
-    await revocacionStore.revocarEmitidosAntes(idUsuario);
+    if (exceptoSid === undefined) await revocacionStore.revocarEmitidosAntes(idUsuario);
   },
 
   /** true si el access token fue revocado o su sesión ya terminó. */

@@ -352,8 +352,6 @@ describe('RF-05: cupones en el carrito', () => {
     const http = await nuevoCliente();
     expect((await http.delete('/api/carrito/cupon')).status).toBe(200);
   });
-
-  it.todo('con usos en paralelo nunca se supera el límite total (SP_Pedidos_CrearPedido)');
 });
 
 describe('Fusión del carrito de invitado', () => {

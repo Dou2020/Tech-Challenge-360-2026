@@ -90,7 +90,7 @@ Algunos endpoints de lectura se sirven desde Redis cuando es posible (*cache-asi
 | `GET /api/catalogo/categorias` | `shopcart:catalogo:v{n}:categorias` | `CACHE_TTL_CATALOGO_SEG` (600 s) | Crear, actualizar, activar/desactivar o eliminar una categoría; crear, actualizar, activar/desactivar o eliminar un producto; crear o activar/desactivar una variante |
 | `GET /api/metodos-envio` | `shopcart:catalogo:v{n}:metodos-envio` | `CACHE_TTL_CATALOGO_SEG` | Lo mismo (comparte el namespace `catalogo`) |
 | `GET /api/auth/me` | `shopcart:usuario:{id}` | 15 min | Cambio de perfil, rol o estado del usuario |
-| `GET /api/reportes/*` | `shopcart:reportes:v{n}:…` | `CACHE_TTL_REPORTES_SEG` | Ver [Extras](#5-extras-opcionales) |
+| `GET /api/reportes/*` | `shopcart:reportes:v{n}:{endpoint}:{desde}:{hasta}:…` | `CACHE_TTL_REPORTES_SEG` (300 s) | Crear, cancelar o cambiar de estado un pedido y registrar una devolución (ver [Extras](#5-extras-opcionales)) |
 | `GET /api/configuracion` | `shopcart:configuracion` | 1 h | `PUT /api/configuracion/:clave` |
 
 La invalidación es `INCR shopcart:catalogo:version` y se hace en el servicio **después** de que el SP confirmó. Precios, SKU, valores de atributo e imágenes no aparecen en lo cacheado, así que cambiarlos no invalida.
@@ -168,7 +168,12 @@ El catálogo completo de códigos está en la [sección 4](#4-catálogo-de-códi
 | :--- | :--- | :--- | :--- | :--- |
 | GET | `/api/perfil` | Autenticado | Datos del propio usuario | `SP_Usuarios_ObtenerPorId` |
 | PUT | `/api/perfil` | Autenticado | Actualiza nombre, apellido y teléfono | `SP_Usuarios_ActualizarPerfil` |
-| PUT | `/api/perfil/contrasena` | Autenticado | Cambia la contraseña (pide la actual) y revoca los demás refresh tokens | `SP_Usuarios_CambiarContrasena` |
+| PUT | `/api/perfil/contrasena` | Autenticado | Cambia la contraseña (pide la actual) y revoca las demás sesiones | `SP_Usuarios_ObtenerCredencialPorId` + `SP_Usuarios_CambiarContrasena` |
+
+Cualquier rol autenticado; el usuario sale siempre del token. Un usuario es `{ idUsuario, correo, nombre, apellido, telefono, rol, activo, fechaCreacion }`.
+- `GET /api/perfil` responde 200 con el usuario (siempre leído de la base).
+- `PUT /api/perfil`: body `{ nombre, apellido, telefono? }` (máx. 100, 100 y 20; mismo formato de teléfono que el registro). Reemplaza los tres campos: omitir `telefono` lo borra. Responde 200 con el usuario y borra la caché del usuario.
+- `PUT /api/perfil/contrasena`: body `{ contrasenaActual, contrasenaNueva }`; la nueva sigue la política del registro (8+ caracteres, una letra y un número) y debe ser distinta de la actual. Responde **204**. Una contraseña actual incorrecta responde **400 `VALIDACION`** con `details: [{ field: "contrasenaActual" }]` y no 401, porque el frontend toma un 401 por access token vencido e intentaría renovar la sesión. Tras el SP se revocan **las demás** sesiones (access y refresh) y se conserva la actual: sigue funcionando y el frontend renueva su access token con el refresh.
 
 ### Usuarios — `/api/usuarios`
 | Método | Ruta | Acceso | Descripción | SP |
@@ -176,8 +181,14 @@ El catálogo completo de códigos está en la [sección 4](#4-catálogo-de-códi
 | GET | `/api/usuarios` | Admin | Lista paginada. Filtros: `q` (nombre o correo), `rol`, `activo` | `SP_Usuarios_Listar` |
 | GET | `/api/usuarios/:id` | Admin | Detalle de un usuario | `SP_Usuarios_ObtenerPorId` |
 | POST | `/api/usuarios` | Admin | Crea un Operador o Administrador | `SP_Usuarios_Crear` |
-| PUT | `/api/usuarios/:id` | Admin | Actualiza nombre, teléfono y rol | `SP_Usuarios_Actualizar` |
-| PATCH | `/api/usuarios/:id/estado` | Admin | Activa o desactiva (`{ "activo": false }`). Desactivar revoca sus refresh tokens. Un Admin no puede desactivarse a sí mismo (409) | `SP_Usuarios_CambiarEstado` |
+| PUT | `/api/usuarios/:id` | Admin | Actualiza nombre, apellido, teléfono y rol | `SP_Usuarios_Actualizar` |
+| PATCH | `/api/usuarios/:id/estado` | Admin | Activa o desactiva (`{ "activo": false }`). Desactivar revoca sus sesiones y access tokens. Un Admin no puede desactivarse a sí mismo ni al último Administrador activo (409 `EN_USO`) | `SP_Usuarios_CambiarEstado` |
+
+Usuario: el mismo objeto del perfil. `GET /api/usuarios` filtra por `q` (literal en "nombre apellido" y correo), `rol` y `activo`, y ordena por `nombre`, `correo`, `rol` o `fechaCreacion` (default `nombre:asc`).
+- `POST`: body `{ correo, contrasena, nombre, apellido, telefono?, rol }` con `rol` = `Operador` o `Administrador` (`Cliente` → 400; los clientes se registran solos). La contraseña inicial sigue la política del registro. Responde 201 con `Location`. Correo repetido: 409 `DUPLICADO`.
+- `PUT`: body `{ nombre, apellido, telefono?, rol? }`; el correo no cambia, sin `rol` se conserva y sin `telefono` se borra. Quitar el rol Administrador a sí mismo o al último Administrador activo: 409 `EN_USO`.
+- `PATCH .../estado`: body `{ activo: boolean }`.
+- Tras el SP, si cambió el rol o el estado, se revocan las sesiones y los access tokens del usuario: su access token responde 401 al instante y su refresh token deja de servir (403 `USUARIO_INACTIVO` si está desactivado). Siempre se borra su caché. Un usuario inexistente responde 404.
 
 ### Direcciones — `/api/direcciones`
 Solo para el rol Cliente: Operador y Administrador reciben 403. El cliente sale siempre del token. Una dirección de otro cliente, inexistente o dada de baja responde igual, `404 NO_ENCONTRADO`. Una dirección se responde como `{ idDireccion, alias, nombreDestinatario, telefono, linea1, linea2, municipio, departamento, codigoPostal, referencias }`; los opcionales (`linea2`, `codigoPostal`, `referencias`) son `null` si no se dieron.
@@ -296,10 +307,10 @@ Quién es el dueño: si la petición trae `Authorization`, manda el usuario del 
 ### Checkout — `/api/checkout`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/api/checkout/iniciar` | Cliente | Recibe `idDireccion` e `idMetodoEnvio`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con las variantes afectadas. Si la dirección no existe, está dada de baja o es de otro cliente: 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia` |
-| GET | `/api/checkout` | Cliente | Resumen y reserva vigente (para retomar el checkout tras recargar la página) | `SP_Checkout_ObtenerResumen` |
-| DELETE | `/api/checkout/reserva` | Cliente | Libera la reserva (el cliente vuelve al carrito). Responde 204 | `SP_Inventario_LiberarReserva` |
-| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. `metodoPago` solo acepta `TARJETA`. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
+| POST | `/api/checkout/iniciar` | Cliente | Recibe `idDireccion` e `idMetodoEnvio`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con `details` por variante afectada (`field: "idVariante:4"`, `message: "SKU: solicitado 2, disponible 1."`). Si el cupón del carrito ya no vale: 422 con su código. Si la dirección no existe, está dada de baja o es de otro cliente: 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia` |
+| GET | `/api/checkout` | Cliente | Resumen y reserva vigente (para retomar el checkout tras recargar la página). Query opcional `idMetodoEnvio` (el método no se guarda en la reserva; sin él `costoEnvio` es `"0.00"`). Sin reserva vigente que cubra el carrito: 409 `RESERVA_VENCIDA` | `SP_Checkout_ObtenerResumen` |
+| DELETE | `/api/checkout/reserva` | Cliente | Libera la reserva (el cliente vuelve al carrito). Responde 204, también si no había reserva | `SP_Inventario_LiberarReserva` |
+| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Body `{ idDireccion, idMetodoEnvio, metodoPago: "TARJETA", datosPago: { titular, ultimos4 } }`. Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. Responde 201 con el pedido nuevo o 200 con el mismo pedido si es una repetición, siempre con `Location: /api/pedidos/:id`. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
 
 ### Pedidos — `/api/pedidos`
 El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administrador ven todos.
@@ -310,10 +321,10 @@ El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administra
 | GET | `/api/pedidos/estados` | Autenticado | Estados del pedido y transiciones permitidas, para la interfaz | `SP_Pedidos_ListarTransiciones` |
 | GET | `/api/pedidos/:id` | Cliente (propio), Operador, Admin | Detalle: líneas con precios congelados, montos, dirección de entrega, pago y estado | `SP_Pedidos_ObtenerPorId` |
 | GET | `/api/pedidos/:id/historial` | Cliente (propio), Operador, Admin | Cambios de estado: anterior, nuevo, usuario y fecha | `SP_Pedidos_ObtenerHistorialEstados` |
-| POST | `/api/pedidos/:id/cancelar` | Cliente (propio), Operador, Admin | Cancela si aún no se despachó (`motivo` opcional). Reintegra la existencia con movimientos de kardex y libera el uso del cupón. Si ya se despachó: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_Cancelar` |
-| PATCH | `/api/pedidos/:id/estado` | Operador, Admin | Avanza el estado (`estado`, `comentario`). Solo transiciones definidas en `TransicionEstadoPedido`; otra, o el mismo estado en que ya está: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_CambiarEstado` |
+| POST | `/api/pedidos/:id/cancelar` | Cliente (propio), Operador, Admin | Cancela si aún no se despachó (`motivo` opcional; sin body se acepta). Responde 200 con el detalle del pedido. Reintegra la existencia con movimientos de kardex y libera el uso del cupón. Si ya se despachó: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_Cancelar` |
+| PATCH | `/api/pedidos/:id/estado` | Operador, Admin | Avanza el estado (`estado` = código, `comentario` opcional). Responde 200 con el detalle del pedido. Cancelar y devolver tienen su endpoint: pedir `CANCELADO` o `DEVUELTO*` aquí es 409. Solo transiciones definidas en `TransicionEstadoPedido`; otra, o el mismo estado en que ya está: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_CambiarEstado` |
 | GET | `/api/pedidos/:id/devoluciones` | Cliente (propio), Operador, Admin | Devoluciones del pedido con sus líneas | `SP_Pedidos_ListarDevoluciones` |
-| POST | `/api/pedidos/:id/devoluciones` | Operador, Admin | Registra una devolución total o parcial por línea. Solo para pedidos entregados. Reintegra la existencia por kardex. Cada línea (`idPedidoDetalle`) debe ser de ese pedido y aparecer una sola vez; si no: 400 `VALIDACION`. Si una cantidad supera lo vendido menos lo ya devuelto: 422 `CANTIDAD_DEVOLUCION_EXCEDIDA` | `SP_Pedidos_RegistrarDevolucion` |
+| POST | `/api/pedidos/:id/devoluciones` | Operador, Admin | Registra una devolución total o parcial por línea (`{ motivo, lineas: [{ idPedidoDetalle, cantidad }] }`). Responde 201. Solo para pedidos `ENTREGADO` o `DEVUELTO_PARCIAL` (otro estado: 409 `TRANSICION_NO_PERMITIDA`). Reintegra la existencia por kardex. Cada línea (`idPedidoDetalle`) debe ser de ese pedido y aparecer una sola vez; si no: 400 `VALIDACION`. Si una cantidad supera lo vendido menos lo ya devuelto: 422 `CANTIDAD_DEVOLUCION_EXCEDIDA` | `SP_Pedidos_RegistrarDevolucion` |
 
 **Ciclo de vida del pedido:**
 
@@ -340,15 +351,25 @@ Solo Administrador. Un cupón se responde como `{ idCupon, codigo, descripcion, 
 | GET | `/api/cupones/:id/usos` | Admin | Usos paginados (`sort`: `fecha`, `descuento`; default `fecha:desc`): `idUsoCupon`, `idPedido`, `numeroPedido`, `idUsuario`, `cliente`, `correo`, `descuento` (el de `Pedido.Descuento`), `totalPedido`, `estadoPedido`, `fecha`. Los pedidos cancelados ya no cuentan como uso | `SP_Cupones_ListarUsos` |
 
 ### Reportes — `/api/reportes`
-Los reportes solo cuentan pedidos completados (`ENTREGADO` y `DEVUELTO_PARCIAL`), excluyen los cancelados y descuentan lo devuelto. Todos aceptan `desde` y `hasta`. El listado de pedidos con filtros por estado, cliente y fechas es `GET /api/pedidos`.
+Los reportes solo cuentan pedidos completados (`ENTREGADO` y `DEVUELTO_PARCIAL`), excluyen los cancelados y descuentan lo devuelto. Todos aceptan `desde` y `hasta` (`YYYY-MM-DD`, días de Guatemala, ambos inclusive; no admiten hora ni zona. `desde > hasta` → 400 `VALIDACION`). El listado de pedidos con filtros por estado, cliente y fechas es `GET /api/pedidos`.
 
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/reportes/resumen` | Admin | Indicadores del dashboard: ventas netas, número de pedidos, ticket promedio, unidades vendidas y carritos abandonados | `SP_Reportes_ResumenDashboard` |
-| GET | `/api/reportes/ventas` | Admin | Serie de ventas en quetzales y número de pedidos. `agrupacion`: `dia`, `semana` o `mes` | `SP_Reportes_VentasPorPeriodo` |
+| GET | `/api/reportes/resumen` | Admin | Indicadores del dashboard: ventas netas, número de pedidos, ticket promedio, unidades vendidas, envío cobrado y carritos abandonados | `SP_Reportes_ResumenDashboard` |
+| GET | `/api/reportes/ventas` | Admin | Serie de ventas en quetzales y número de pedidos. `agrupacion`: `dia` (default), `semana` (inicia el lunes) o `mes` | `SP_Reportes_VentasPorPeriodo` |
 | GET | `/api/reportes/ventas-por-categoria` | Admin | Ventas netas y unidades por categoría (usa `VW_Dashboard_VentasPorCategoria`) | `SP_Reportes_VentasPorCategoria` |
-| GET | `/api/reportes/productos-mas-vendidos` | Admin | Productos más vendidos del periodo. `limite` (default 10) | `SP_Reportes_ProductosMasVendidos` |
-| GET | `/api/reportes/carritos-abandonados` | Admin | Carritos con productos sin actividad por más de `HorasCarritoAbandonado`, paginados | `SP_Reportes_CarritosAbandonados` |
+| GET | `/api/reportes/productos-mas-vendidos` | Admin | Productos más vendidos del periodo. `limite` 1–100 (default 10) | `SP_Reportes_ProductosMasVendidos` |
+| GET | `/api/reportes/carritos-abandonados` | Admin | Carritos con productos sin actividad por más de `HorasCarritoAbandonado`, paginados. `sort`: `fecha`, `valor`, `unidades`, `cliente`; default `fecha:asc` | `SP_Reportes_CarritosAbandonados` |
+
+Formas de respuesta (montos como string, `periodoInicio` como `YYYY-MM-DD`, fechas ISO 8601 UTC). Todas llevan `X-Cache: HIT|MISS`.
+
+| Endpoint | Respuesta |
+| :--- | :--- |
+| `resumen` | `{ ventasNetas, pedidos, ticketPromedio, unidadesNetas, envioCobrado, carritosAbandonados }`. `ventasNetas` no incluye el envío; `envioCobrado` es el envío de esos pedidos, aparte. Sin pedidos: ceros (`"0.00"`) |
+| `ventas` | Arreglo `[{ periodoInicio, ventas, pedidos, unidadesNetas }]` por fecha ascendente. Solo trae periodos con ventas (no rellena huecos) |
+| `ventas-por-categoria` | Arreglo `[{ idCategoria, categoria, unidadesVendidas, unidadesDevueltas, unidadesNetas, ventaBruta, montoReembolsado, ventaNeta }]` por `ventaNeta` descendente |
+| `productos-mas-vendidos` | Arreglo `[{ idProducto, producto, idCategoria, categoria, unidadesNetas, ventaNeta }]` por unidades netas descendente |
+| `carritos-abandonados` | `{ items, page, pageSize, total }` con `items[]`: `{ idCarrito, idUsuario, tipo (CLIENTE o INVITADO), cliente, correo, cantidadLineas, cantidadUnidades, subtotal, descuento, valor, fechaCreacion, fechaUltimaActividad, horasInactivo }`. En un invitado `idUsuario`, `cliente` y `correo` son `null` y no se expone su token. `valor` no incluye envío. `desde`/`hasta` filtran por la fecha local de la última actividad |
 
 ### Bitácora — `/api/bitacora`
 Solo lectura: no existe ningún endpoint que modifique o elimine registros, y la tabla además está protegida con un trigger.
@@ -356,13 +377,17 @@ Solo lectura: no existe ningún endpoint que modifique o elimine registros, y la
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
 | GET | `/api/bitacora` | Admin | Lista paginada. Filtros: `modulo`, `entidad`, `idRegistro`, `idUsuario`, `accion`, `desde`, `hasta` | `SP_Bitacora_Listar` |
-| GET | `/api/bitacora/modulos` | Admin | Módulos disponibles para el filtro | `SP_Bitacora_ListarModulos` |
+| GET | `/api/bitacora/modulos` | Admin | Módulos con registros, alfabético, como arreglo de texto | `SP_Bitacora_ListarModulos` |
+
+Entrada: `{ idBitacora, idUsuario, usuario, correoUsuario, modulo, entidad, idRegistro, accion, valorAnterior, valorNuevo, fecha }`. `idBitacora` es number (BIGINT en la base), `valorAnterior` y `valorNuevo` son objetos JSON ya interpretados (o `null`, por ejemplo `{ "Precio": 149.5 }`) y `fecha` es ISO 8601 UTC. Los filtros de texto son por igualdad (sin distinguir mayúsculas ni acentos), `desde`/`hasta` siguen §1 "Filtros de fecha" y el orden admite `fecha` (default `fecha:desc`), `modulo`, `entidad` y `accion`. Sin caché.
 
 ### Configuración — `/api/configuracion`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/configuracion` | Admin | Parámetros: `MinutosReserva`, `HorasCarritoAbandonado`, `PorcentajeIVA` | `SP_Configuracion_Listar` |
-| PUT | `/api/configuracion/:clave` | Admin | Cambia el valor de un parámetro (queda en la bitácora) | `SP_Configuracion_Actualizar` |
+| GET | `/api/configuracion` | Admin | Parámetros: `MinutosReserva`, `HorasCarritoAbandonado`, `PorcentajeIVA`, `UmbralBajoStock`. Cacheado (`X-Cache`) | `SP_Configuracion_Listar` |
+| PUT | `/api/configuracion/:clave` | Admin | Cambia el valor de un parámetro (queda en la bitácora) e invalida la caché | `SP_Configuracion_Actualizar` |
+
+GET responde un arreglo por clave de `{ idConfiguracion, clave, valor, descripcion }`; `valor` siempre es texto normalizado (`"15"`, `"12.00"`). PUT: body `{ valor }` (texto o número). Rangos: `MinutosReserva` entero 1-120, `HorasCarritoAbandonado` entero 1-720, `UmbralBajoStock` entero ≥ 0, `PorcentajeIVA` decimal 0-100 con hasta 2 decimales; fuera de rango o con mal formato, 400 `VALIDACION`; clave inexistente, 404. Responde 200 con el parámetro actualizado.
 
 ---
 
@@ -562,17 +587,37 @@ Authorization: Bearer …
 ```
 ```json
 {
-  "items": [ { "idVariante": 41, "cantidad": 2, "precioUnitario": "149.00", "descuentoLinea": "29.80", "subtotal": "268.20" } ],
-  "cupon": { "codigo": "BIENVENIDA10", "tipo": "PORCENTAJE", "valor": "10.00" },
+  "idCarrito": 88,
+  "items": [
+    { "idCarritoDetalle": 301, "idVariante": 41, "sku": "CAM-LIM-NEG-M", "producto": "Camiseta", "variante": "M / Negro", "cantidad": 2, "precioUnitario": "149.00", "importe": "298.00", "descuentoLinea": "29.80", "subtotal": "268.20" }
+  ],
+  "cupon": { "idCupon": 1, "codigo": "BIENVENIDA10", "descripcion": null, "tipoDescuento": "PORCENTAJE", "valor": "10.00", "aplicado": true, "codigoError": null, "mensajeError": null },
+  "cantidadLineas": 1,
+  "cantidadUnidades": 2,
   "subtotal": "298.00",
   "descuento": "29.80",
   "costoEnvio": "25.00",
   "total": "293.20",
+  "porcentajeIVA": "12.00",
   "montoIVA": "31.41",
-  "reservaExpiraEn": "2026-11-03T15:45:00Z"
+  "metodoEnvio": { "idMetodoEnvio": 1, "nombre": "Estándar", "diasEstimados": 3 },
+  "reservaVigente": true,
+  "reservaExpiraEn": "2026-11-03T15:45:00.000Z"
 }
 ```
 El IVA (12 %) va incluido en el total; `montoIVA` es solo el desglose: `total - total / 1.12`.
+
+Sin existencia suficiente:
+```json
+{
+  "error": {
+    "code": "STOCK_INSUFICIENTE",
+    "message": "No hay existencia suficiente para completar la compra.",
+    "details": [ { "field": "idVariante:41", "message": "CAM-LIM-NEG-M: solicitado 2, disponible 1." } ]
+  },
+  "requestId": "…"
+}
+```
 
 ### Pago idempotente
 ```http
@@ -580,7 +625,12 @@ POST /api/checkout/pagar
 Authorization: Bearer …
 Idempotency-Key: 9a7c1e52-4b8d-4f3a-a2e6-0c5d7b9f1e34
 
-{ "metodoPago": "TARJETA", "datosPago": { "titular": "Ana López", "ultimos4": "4242" } }
+{
+  "idDireccion": 5,
+  "idMetodoEnvio": 1,
+  "metodoPago": "TARJETA",
+  "datosPago": { "titular": "Ana López", "ultimos4": "4242" }
+}
 ```
 ```http
 HTTP/1.1 201 Created
@@ -593,14 +643,35 @@ Location: /api/pedidos/1503
 | :--- | :--- |
 | Primera vez con esa clave | `201` y el pedido nuevo |
 | Misma clave repetida (doble clic, reintento por red) | `200` con el **mismo** pedido; no se crea otro pedido ni otro cobro |
-| Misma clave con un carrito distinto | `409 IDEMPOTENCIA_CONFLICTO` |
+| Misma clave con un carrito distinto, o clave de otro cliente | `409 IDEMPOTENCIA_CONFLICTO` |
 | Falta el header | `400 IDEMPOTENCY_KEY_REQUERIDA` |
-| La reserva venció | `409 RESERVA_VENCIDA`; el cliente debe iniciar el checkout de nuevo |
-| El pago simulado se rechaza | `402 PAGO_RECHAZADO`; la reserva sigue vigente |
+| La reserva venció o nunca se inició el checkout | `409 RESERVA_VENCIDA`; el cliente debe iniciar el checkout de nuevo |
+| El pago simulado se rechaza (`ultimos4` = `0000`) | `402 PAGO_RECHAZADO`; la reserva sigue vigente y se puede reintentar con otra tarjeta |
+| El cupón se agotó o venció entre iniciar y pagar | `422 CUPON_AGOTADO` / `CUPON_VENCIDO`; no se crea el pedido |
 
 `Pedido.ClaveIdempotencia` es `UNIQUE`: aunque dos peticiones con la misma clave lleguen al mismo tiempo, solo una inserta y la otra lee el pedido existente.
 
-`metodoPago` solo acepta `TARJETA`: el pago es simulado y la tabla `Pago` lo restringe con un `CHECK`. El esquema zod rechaza cualquier otro valor con 400 `VALIDACION` antes de llegar al SP.
+`metodoPago` solo acepta `TARJETA`: el pago es simulado y la tabla `Pago` lo restringe con un `CHECK`. El esquema zod rechaza cualquier otro valor, o `ultimos4` que no sean 4 dígitos, con 400 `VALIDACION` antes de llegar al SP. El titular no se guarda.
+
+### Detalle de un pedido
+`GET /api/pedidos/:id` (y las respuestas de `cancelar` y `PATCH /estado`):
+```json
+{
+  "idPedido": 1503, "numeroPedido": "SC-2026-001503", "idUsuario": 6, "cliente": "Ana López", "correoCliente": "ana@correo.gt",
+  "estado": "PAGADO", "nombreEstado": "Pagado", "esFinal": false,
+  "direccion": { "idDireccion": 5, "entrega": "…" },
+  "metodoEnvio": { "idMetodoEnvio": 1, "nombre": "Estándar", "diasEstimados": 3 },
+  "cupon": { "idCupon": 1, "codigo": "BIENVENIDA10" },
+  "subtotal": "298.00", "descuento": "29.80", "costoEnvio": "25.00", "montoIVA": "31.41", "total": "293.20", "montoReembolsado": "0.00",
+  "pago": { "idPago": 9, "metodoPago": "TARJETA", "monto": "293.20", "estado": "APROBADO", "referencia": "SIM-…", "fecha": "2026-11-03T15:31:00.000Z" },
+  "fechaCreacion": "2026-11-03T15:31:00.000Z",
+  "lineas": [
+    { "idPedidoDetalle": 3021, "idVariante": 41, "sku": "CAM-LIM-NEG-M", "nombreProducto": "Camiseta", "variante": "M / Negro", "cantidad": 2, "precioUnitario": "149.00", "descuentoLinea": "29.80", "subtotal": "268.20", "cantidadDevuelta": 0, "cantidadDevolvible": 0 }
+  ],
+  "transiciones": [ { "estado": "CANCELADO", "nombre": "Cancelado", "via": "CANCELAR" } ]
+}
+```
+`transiciones` es lo que el rol de quien consulta puede hacer ahora, y `via` indica con qué endpoint (`ESTADO` → `PATCH /estado`, `CANCELAR` → `POST /cancelar`, `DEVOLUCION` → `POST /devoluciones`). `GET /api/pedidos/estados` responde `{ estados: [{ codigo, nombre, esFinal }], transiciones: [{ origen, destino, rol, permitida, via }] }`. El historial es un arreglo `[{ idHistorialEstadoPedido, idPedido, estadoAnterior: { codigo, nombre } | null, estadoNuevo, idUsuario, usuario, comentario, fecha }]` y las devoluciones, `[{ idDevolucion, tipo, motivo, montoReembolso, usuario, fecha, lineas: [{ idPedidoDetalle, sku, nombreProducto, cantidad, montoReembolso }] }]`.
 
 ### Cambiar estado de un pedido
 ```http
@@ -682,7 +753,7 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 | `TRANSICION_NO_PERMITIDA` | 409 | 50040 | Cambio de estado del pedido no definido en `TransicionEstadoPedido` |
 | `IDEMPOTENCIA_CONFLICTO` | 409 | 50021 | Misma `Idempotency-Key` con un contenido distinto |
 | `PRODUCTO_CON_VENTAS` | 409 | 50050 | Se intenta eliminar un producto con ventas (se debe desactivar) |
-| `EN_USO` | 409 | 50051 | Se intenta eliminar una categoría con productos o cupones, un cupón en uso o un producto sin ventas pero con kardex o reservas (si alguna vez tuvo existencia), o un Admin intenta desactivarse a sí mismo |
+| `EN_USO` | 409 | 50051 | Se intenta eliminar una categoría con productos o cupones, un cupón en uso o un producto sin ventas pero con kardex o reservas (si alguna vez tuvo existencia), o un Admin intenta desactivarse a sí mismo, desactivar al último Administrador activo o quitarle el rol a sí mismo o al último |
 | `CUPON_NO_EXISTE` | 422 | 50060 | El código no existe |
 | `CUPON_INACTIVO` | 422 | 50061 | El cupón está desactivado |
 | `CUPON_NO_VIGENTE` | 422 | 50062 | Aún no empieza su vigencia |
@@ -738,3 +809,5 @@ El enunciado deja estos puntos abiertos; se resolvieron así:
 - **Devoluciones solo sobre pedidos entregados**, registradas por Operador o Administrador.
 - **Fechas sin hora son días de Guatemala:** en `desde`/`hasta`, `2026-11-01` cubre el día local completo, como en los reportes; un instante con zona se usa tal cual ([Filtros de fecha](#filtros-de-fecha)).
 - **Ids `BIGINT` como `number`:** el kardex usa `BIGINT`; en JSON va como número porque no llegará a 2^53.
+- **Reportes por día local, sin envío:** `desde`/`hasta` en los reportes son solo `YYYY-MM-DD` (día de Guatemala). Las ventas netas son subtotal − descuento − reembolsos, sin envío (que va aparte en `envioCobrado`); un pedido `DEVUELTO` (todo reembolsado) no suma. Un pedido de las 20:00 en Guatemala cuenta en su día local aunque en UTC sea el siguiente.
+- **Reportes cacheados, también carritos abandonados:** no muestran existencia ni reservas, así que se sirven de Redis hasta `CACHE_TTL_REPORTES_SEG`. Un carrito que pasa a "abandonado" solo por el paso del tiempo aparece al vencer ese plazo; los eventos de pedidos invalidan la caché al instante.

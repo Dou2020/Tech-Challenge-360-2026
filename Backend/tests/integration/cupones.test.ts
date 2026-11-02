@@ -5,6 +5,13 @@ import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/config/database.js';
 import { closeRedis, connectRedis } from '../../src/config/redis.js';
 import { clienteComo } from '../helpers/auth.js';
+import {
+  comprar,
+  crearCupon,
+  crearVariante,
+  metodoEnvio,
+  nuevoCliente,
+} from '../helpers/pedidos.js';
 
 /*
  * Gestión de cupones (RF-05), solo Administrador. Los cupones se crean con un código aleatorio;
@@ -200,7 +207,26 @@ describe('Actualizar y cambiar estado', () => {
     expect(respuesta.body.error.code).toBe('VALIDACION');
   });
 
-  it.todo('bajar limiteUsosTotal por debajo de usosActuales → 400 (necesita un pedido: checkout)');
+  it('bajar limiteUsosTotal por debajo de usosActuales → 400 y los usos no cambian', async () => {
+    // Arrange
+    const cupon = await crearCupon(admin, { limiteUsosTotal: 3 });
+    const variante = await crearVariante(admin, 5);
+    const envio = await metodoEnvio(app);
+    const [a, b] = await Promise.all([nuevoCliente(app), nuevoCliente(app)]);
+    await comprar(a, envio, [{ idVariante: variante.idVariante, cantidad: 1 }], cupon.codigo);
+    await comprar(b, envio, [{ idVariante: variante.idVariante, cantidad: 1 }], cupon.codigo);
+
+    // Act
+    const respuesta = await admin
+      .put(`/api/cupones/${cupon.idCupon}`)
+      .send(cuerpo({ codigo: cupon.codigo, limiteUsosTotal: 1, limiteUsosPorCliente: 1 }));
+
+    // Assert
+    expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(400);
+    expect(respuesta.body.error.code).toBe('VALIDACION');
+    const despues = await admin.get(`/api/cupones/${cupon.idCupon}`);
+    expect(despues.body).toMatchObject({ limiteUsosTotal: 3, usosActuales: 2 });
+  });
 
   it('PUT de un cupón inexistente → 404; con el código de otro cupón → 409', async () => {
     const a = await crear();
@@ -258,7 +284,32 @@ describe('Eliminar', () => {
     expect((await admin.delete(`/api/cupones/${cupon.idCupon}`)).status).toBe(404);
   });
 
-  it.todo(
-    'un cupón con pedidos (aunque estén cancelados) → 409 EN_USO (necesita un pedido: checkout)',
-  );
+  it('un cupón con pedidos (aunque estén cancelados) → 409 EN_USO y sigue existiendo', async () => {
+    // Arrange
+    const cupon = await crearCupon(admin);
+    const variante = await crearVariante(admin, 3);
+    const comprador = await nuevoCliente(app);
+    const idPedido = await comprar(
+      comprador,
+      await metodoEnvio(app),
+      [{ idVariante: variante.idVariante, cantidad: 1 }],
+      cupon.codigo,
+    );
+    const cancelado = await comprador.http.post(`/api/pedidos/${idPedido}/cancelar`).send({});
+    expect(cancelado.status).toBe(200);
+
+    // Act
+    const respuesta = await admin.delete(`/api/cupones/${cupon.idCupon}`);
+
+    // Assert
+    expect(respuesta.status).toBe(409);
+    expect(respuesta.body.error.code).toBe('EN_USO');
+    const despues = await admin.get(`/api/cupones/${cupon.idCupon}`);
+    expect(despues.status).toBe(200);
+    expect(despues.body).toMatchObject({
+      usosActuales: 0,
+      cantidadPedidos: 1,
+      puedeEliminarse: false,
+    });
+  });
 });

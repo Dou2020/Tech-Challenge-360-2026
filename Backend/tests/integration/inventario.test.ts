@@ -372,9 +372,4 @@ describe('RF-07 job de liberación de reservas', () => {
       variantesAfectadas: 0,
     });
   });
-
-  // Crear una reserva necesita SP_Inventario_ReservarExistencia (POST /api/checkout/iniciar).
-  it.todo(
-    'una reserva vencida se libera al correr el job: ExistenciaReservada baja y la disponible vuelve',
-  );
 });

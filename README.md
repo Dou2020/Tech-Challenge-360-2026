@@ -499,14 +499,12 @@ Se usan **Vitest** como runner, **Supertest** para las peticiones HTTP y **Testc
 
 ```
 Backend/tests/
-├── unit/                         # Servicios y middlewares con repositorios simulados (vi.mock)
-│   ├── carrito.service.test.ts   # Armado de la respuesta del carrito y elección usuario/token
-│   ├── carrito.schemas.test.ts   # Esquemas del carrito y del cupón
-│   ├── pedidos.service.test.ts
-│   ├── inventario.service.test.ts
-│   ├── liberarReservas.job.test.ts  # Sin solapamiento; un error no tumba el proceso
-│   ├── sqlErrorMapper.test.ts
-│   └── middlewares/              # authorize, validate, idempotencyKey
+├── unit/                         # Misma estructura que src/: src/x/y.ts se prueba en unit/x/y.test.ts
+│   ├── db/                       # sqlErrorMapper
+│   ├── jobs/                     # liberarReservas.job: sin solapamiento; un error no tumba el proceso
+│   ├── middlewares/              # authenticate, authorize, validate, errorHandler, notFound, idempotencyKey, guestCart
+│   ├── modules/<modulo>/         # <modulo>.service (repositorio simulado con vi.mock) y <modulo>.schemas (zod)
+│   └── shared/                   # cache/ y utils/ (paginación, montos, fechas, contraseñas)
 ├── integration/                  # Endpoints de punta a punta con supertest
 │   ├── auth.test.ts
 │   ├── catalogo.test.ts
@@ -570,16 +568,16 @@ Database/
 │   ├── 002_tablas.sql               # 28 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
-│   ├── 005_funciones.sql            # Funciones tipo tabla (FU_)                                   (en curso: existencia disponible, búsqueda, catálogo, cupones, carrito, reserva del checkout y JSON de pedidos)
-│   ├── 006_vistas.sql               # Vistas (VW_)                                                (en curso: VW_Inventario_Existencias, VW_Pedidos_Historial)
-│   ├── 007_sp_auth.sql              # SPs de autenticación, perfil, usuarios y direcciones        (completo)
+│   ├── 005_funciones.sql            # Funciones tipo tabla (FU_): existencia disponible, búsqueda, catálogo, cupones, totales del carrito, reserva del checkout y JSON para la bitácora
+│   ├── 006_vistas.sql               # Vistas (VW_): existencias, historial de pedidos, ventas netas y ventas por categoría
+│   ├── 007_sp_auth.sql              # SPs de autenticación, perfil, usuarios y direcciones
 │   ├── 008_sp_catalogo.sql          # SPs de catálogo, categorías, productos, variantes y atributos
 │   ├── 009_sp_inventario.sql        # SPs de existencias, kardex, ajustes y reservas
 │   ├── 010_sp_carrito.sql           # SPs de carrito y cupón aplicado
 │   ├── 011_sp_cupones.sql           # SPs de gestión de cupones
 │   ├── 012_sp_pedidos.sql           # SPs de checkout, pedidos, estados y devoluciones
-│   ├── 013_sp_reportes.sql          # SPs de reportes y dashboard                                 (pendiente)
-│   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema                    (completo)
+│   ├── 013_sp_reportes.sql          # SPs de reportes y dashboard
+│   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
 │   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
@@ -842,10 +840,10 @@ Convenciones de los SPs:
 
 | Objeto | Uso |
 | :--- | :--- |
-| `VW_Dashboard_VentasPorCategoria` | Ventas netas y unidades por categoría (pedidos completados menos devoluciones) |
+| `VW_Dashboard_VentasPorCategoria` | Ventas netas y unidades por categoría y día local (`VW_Reportes_VentasNetas` agrupada); la usa `SP_Reportes_VentasPorCategoria` |
 | `VW_Pedidos_Historial` | Historial de estados con nombres de estado y usuario; la usa `SP_Pedidos_ObtenerHistorialEstados` |
 | `VW_Inventario_Existencias` | Existencia física, reservada vigente y disponible por variante, con su producto y categoría e incluidas las inactivas. La usa `SP_Inventario_ListarExistencias`, que marca `BajoStock` cuando la disponible es menor o igual a `Configuracion.UmbralBajoStock` (5 si falta o no es un entero válido) |
-| `VW_Reportes_VentasNetas` | Base de los reportes: pedidos completados con devoluciones descontadas |
+| `VW_Reportes_VentasNetas` | Base de todos los reportes: una fila por línea de pedido `ENTREGADO` o `DEVUELTO_PARCIAL`, con la fecha local de Guatemala, unidades netas y venta neta (subtotal de la línea menos lo reembolsado) |
 | `FU_Cupones_CalculoDescuento` | Una fila por línea del carrito con importe, si el cupón le aplica y su descuento. Porcentaje: `ROUND(subtotal elegible * valor / 100, 2)`; monto fijo: el menor entre el valor y el subtotal elegible. Elegible: todo el carrito, o las líneas de la categoría del cupón. El descuento se reparte proporcional al importe, en centavos exactos (la suma de las líneas es el descuento). Es el único lugar donde se calcula: lo reusan el carrito, el checkout y `SP_Pedidos_CrearPedido` |
 | `FU_Cupones_Validar` | Primer motivo por el que un cupón no aplica a un carrito (50060 a 50067, en ese orden) y su mensaje; sin error, el cupón aplica. El monto mínimo se compara con el subtotal de todo el carrito antes del descuento |
 | `FU_Carrito_CalcularTotales` | Subtotal, descuento, envío, total (nunca negativo) y desglose del IVA incluido (`Total - Total / (1 + IVA)`, con `Configuracion.PorcentajeIVA`; no es un recargo). Un cupón que dejó de valer no descuenta y se informa su motivo |
@@ -861,6 +859,8 @@ Convenciones de los SPs:
 
 Decisiones de los reportes:
 
+- Ventas netas = subtotal − descuento − reembolsos, sin envío (los precios ya incluyen el IVA). El envío cobrado se informa aparte en `SP_Reportes_ResumenDashboard` (`EnvioCobrado`). Los reembolsos son la suma de `DevolucionDetalle.MontoReembolso`, proporcional al subtotal neto de la línea.
+- `@Desde` y `@Hasta` son fechas locales de Guatemala, inclusivas. La semana empieza el lunes y las series solo traen periodos con ventas. Los carritos abandonados se filtran por la fecha local de su última actividad.
 - Las ventas por categoría usan la categoría vigente del producto. Si un producto cambia de categoría, sus ventas anteriores se cuentan en la nueva.
 - Las fechas se guardan en UTC. Los reportes por día, semana y mes agrupan por la fecha de Guatemala (`FechaCreacion AT TIME ZONE 'UTC' AT TIME ZONE 'Central America Standard Time'`), para que una venta de las 20:00 del lunes no cuente como del martes.
 

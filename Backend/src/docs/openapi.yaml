@@ -27,6 +27,20 @@ tags:
     description: Invitado (X-Cart-Token) o Cliente; nunca se cachea
   - name: Cupones
     description: Solo Administrador
+  - name: Checkout
+    description: Solo Cliente; el pago exige Idempotency-Key
+  - name: Pedidos
+    description: Cliente (propios), Operador y Administrador
+  - name: Perfil
+    description: Cualquier rol autenticado
+  - name: Usuarios
+    description: Solo Administrador
+  - name: Reportes
+    description: Solo Administrador; días de Guatemala; con caché (X-Cache)
+  - name: Bitácora
+    description: Solo Administrador, solo lectura
+  - name: Configuración
+    description: Solo Administrador
 paths:
   /health:
     get:
@@ -1375,6 +1389,839 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /checkout/iniciar:
+    post:
+      tags: [Checkout]
+      summary: Revalida el cupón, reserva la existencia (15 min) y devuelve el resumen
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idDireccion, idMetodoEnvio]
+              properties:
+                idDireccion: { type: integer, minimum: 1 }
+                idMetodoEnvio: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Resumen con la reserva vigente. Reemplaza la reserva anterior
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumenCheckout' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404':
+          description: NO_ENCONTRADO (dirección ajena, dada de baja o inexistente; método inactivo)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: STOCK_INSUFICIENTE; `details` trae una entrada por variante afectada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: El cupón del carrito ya no aplica (CUPON_VENCIDO, CUPON_AGOTADO, …)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /checkout:
+    get:
+      tags: [Checkout]
+      summary: Resumen y reserva vigente (retomar el checkout)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: idMetodoEnvio
+          in: query
+          description: Sin método, costoEnvio es 0.00 (el método no se guarda en la reserva)
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Resumen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumenCheckout' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: RESERVA_VENCIDA (no hay reserva vigente que cubra el carrito)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /checkout/reserva:
+    delete:
+      tags: [Checkout]
+      summary: Libera la reserva (el cliente vuelve al carrito)
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Liberada (también si no había reserva)
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /checkout/pagar:
+    post:
+      tags: [Checkout]
+      summary: Pago simulado idempotente; crea el pedido de forma atómica
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: UUID v4 generado una vez por intento de pago y reutilizado en los reintentos
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idDireccion, idMetodoEnvio, metodoPago, datosPago]
+              properties:
+                idDireccion: { type: integer, minimum: 1 }
+                idMetodoEnvio: { type: integer, minimum: 1 }
+                metodoPago: { type: string, enum: [TARJETA] }
+                datosPago:
+                  type: object
+                  required: [titular, ultimos4]
+                  properties:
+                    titular: { type: string, maxLength: 150 }
+                    ultimos4: { type: string, pattern: '^\d{4}$', description: '0000 se rechaza' }
+      responses:
+        '200':
+          description: Repetición de la misma clave y el mismo carrito. Devuelve el mismo pedido
+          headers:
+            Location: { schema: { type: string, example: /api/pedidos/1503 } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PedidoCreado' }
+        '201':
+          description: Pedido creado
+          headers:
+            Location: { schema: { type: string, example: /api/pedidos/1503 } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PedidoCreado' }
+        '400':
+          description: VALIDACION o IDEMPOTENCY_KEY_REQUERIDA
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '402':
+          description: PAGO_RECHAZADO (la reserva sigue vigente)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: IDEMPOTENCIA_CONFLICTO (otro carrito o clave de otro cliente) o RESERVA_VENCIDA
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Cupón rechazado al pagar (CUPON_AGOTADO, CUPON_VENCIDO, …)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /pedidos:
+    get:
+      tags: [Pedidos]
+      summary: Lista paginada (el Cliente solo ve los suyos)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: estado, in: query, schema: { type: string, example: PAGADO } }
+        - name: idCliente
+          in: query
+          description: Solo personal; un Cliente lo ignora
+          schema: { type: integer, minimum: 1 }
+        - { $ref: '#/components/parameters/Desde' }
+        - { $ref: '#/components/parameters/Hasta' }
+        - {
+            name: q,
+            in: query,
+            description: Número de pedido (parcial),
+            schema: { type: string, maxLength: 50 },
+          }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            default: fechaCreacion:desc
+            enum: [fechaCreacion:asc, fechaCreacion:desc, total:asc, total:desc]
+      responses:
+        '200':
+          description: Página de pedidos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PedidoResumen' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /pedidos/estados:
+    get:
+      tags: [Pedidos]
+      summary: Estados y transiciones (con las permitidas al rol del solicitante)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Estados y transiciones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  estados:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        codigo: { type: string }
+                        nombre: { type: string }
+                        esFinal: { type: boolean }
+                  transiciones:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        origen: { type: string }
+                        destino: { type: string }
+                        rol: { type: string }
+                        permitida: { type: boolean, description: Para el rol del solicitante }
+                        via: { type: string, enum: [ESTADO, CANCELAR, DEVOLUCION] }
+        '401': { $ref: '#/components/responses/Error' }
+  /pedidos/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Pedidos]
+      summary: Detalle con líneas congeladas y transiciones posibles
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pedido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PedidoDetalle' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404':
+          description: NO_ENCONTRADO (no existe o es de otro cliente)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /pedidos/{id}/historial:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Pedidos]
+      summary: Cambios de estado, del más antiguo al más reciente
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Historial
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CambioEstado' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /pedidos/{id}/cancelar:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [Pedidos]
+      summary: Cancela antes del despacho (reintegra existencia y libera el cupón)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                motivo: { type: [string, 'null'], maxLength: 300 }
+      responses:
+        '200':
+          description: Pedido cancelado (detalle)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PedidoDetalle' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: TRANSICION_NO_PERMITIDA (ya despachado, entregado o cancelado)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /pedidos/{id}/estado:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [Pedidos]
+      summary: Avanza el estado (Operador y Administrador)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estado]
+              properties:
+                estado:
+                  { type: string, example: EN_PREPARACION, description: Código del estado destino }
+                comentario: { type: [string, 'null'], maxLength: 300 }
+      responses:
+        '200':
+          description: Pedido con su nuevo estado (detalle)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PedidoDetalle' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: >-
+            TRANSICION_NO_PERMITIDA (no definida, mismo estado, o destino CANCELADO/DEVUELTO*:
+            usa sus endpoints)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /pedidos/{id}/devoluciones:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Pedidos]
+      summary: Devoluciones del pedido con sus líneas
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Devoluciones, de la más antigua a la más reciente
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Devolucion' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Pedidos]
+      summary: Registra una devolución total o parcial por línea (Operador y Administrador)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [motivo, lineas]
+              properties:
+                motivo: { type: string, maxLength: 300 }
+                lineas:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [idPedidoDetalle, cantidad]
+                    properties:
+                      idPedidoDetalle: { type: integer, minimum: 1 }
+                      cantidad: { type: integer, minimum: 1 }
+      responses:
+        '201':
+          description: Devolución registrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevolucionRegistrada' }
+        '400':
+          description: VALIDACION (línea repetida, de otro pedido, motivo vacío, …)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: TRANSICION_NO_PERMITIDA (el pedido no está ENTREGADO ni DEVUELTO_PARCIAL)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: CANTIDAD_DEVOLUCION_EXCEDIDA (más de lo vendido menos lo ya devuelto)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /perfil:
+    get:
+      tags: [Perfil]
+      summary: Datos del propio usuario
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Usuario
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '401': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Perfil]
+      summary: Reemplaza nombre, apellido y teléfono (omitir el teléfono lo borra)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PerfilEntrada' }
+      responses:
+        '200':
+          description: Usuario actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /perfil/contrasena:
+    put:
+      tags: [Perfil]
+      summary: Cambia la contraseña y revoca las demás sesiones (conserva la actual)
+      description: Una contraseña actual incorrecta responde 400 VALIDACION (no 401).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contrasenaActual, contrasenaNueva]
+              properties:
+                contrasenaActual: { type: string }
+                contrasenaNueva:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  description: Al menos una letra y un número; distinta de la actual
+      responses:
+        '204':
+          description: Contraseña cambiada
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /usuarios:
+    get:
+      tags: [Usuarios]
+      summary: Lista paginada de usuarios
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          description: 'campo:asc|desc con nombre, correo, rol o fechaCreacion'
+          schema: { type: string, default: 'nombre:asc' }
+        - name: q
+          in: query
+          description: Texto literal en "nombre apellido" o correo
+          schema: { type: string, maxLength: 100 }
+        - name: rol
+          in: query
+          schema: { type: string, enum: [Cliente, Operador, Administrador] }
+        - { $ref: '#/components/parameters/Activo' }
+      responses:
+        '200':
+          description: Página de usuarios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Usuario' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Usuarios]
+      summary: Crea un Operador o Administrador
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UsuarioNuevo' }
+      responses:
+        '201':
+          description: Usuario creado
+          headers:
+            Location:
+              schema: { type: string, example: /api/usuarios/9 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409':
+          description: DUPLICADO (correo repetido)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /usuarios/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Usuarios]
+      summary: Detalle de un usuario
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Usuario
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Usuarios]
+      summary: Actualiza nombre, apellido, teléfono y rol
+      description: |
+        Un cambio de rol revoca las sesiones y access tokens del usuario. Quitarse el rol
+        Administrador a sí mismo o al último Administrador activo responde 409 EN_USO.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UsuarioActualizacion' }
+      responses:
+        '200':
+          description: Usuario actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /usuarios/{id}/estado:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [Usuarios]
+      summary: Activa o desactiva un usuario
+      description: |
+        Desactivar revoca sus sesiones y access tokens al instante. Desactivarse a sí mismo o al
+        último Administrador activo responde 409 EN_USO.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activo]
+              properties:
+                activo: { type: boolean }
+      responses:
+        '200':
+          description: Usuario con su nuevo estado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usuario' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /reportes/resumen:
+    get:
+      tags: [Reportes]
+      summary: Indicadores del dashboard
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/ReporteDesde' }
+        - { $ref: '#/components/parameters/ReporteHasta' }
+      responses:
+        '200':
+          description: Resumen
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumenReporte'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /reportes/ventas:
+    get:
+      tags: [Reportes]
+      summary: Ventas por día, semana o mes
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/ReporteDesde' }
+        - { $ref: '#/components/parameters/ReporteHasta' }
+        - name: agrupacion
+          in: query
+          schema: { type: string, enum: [dia, semana, mes], default: dia }
+      responses:
+        '200':
+          description: Serie por fecha ascendente
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VentaPeriodo' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /reportes/ventas-por-categoria:
+    get:
+      tags: [Reportes]
+      summary: Ventas netas por categoría
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/ReporteDesde' }
+        - { $ref: '#/components/parameters/ReporteHasta' }
+      responses:
+        '200':
+          description: Categorías con ventas
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VentaCategoria' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /reportes/productos-mas-vendidos:
+    get:
+      tags: [Reportes]
+      summary: Productos más vendidos
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/ReporteDesde' }
+        - { $ref: '#/components/parameters/ReporteHasta' }
+        - name: limite
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+      responses:
+        '200':
+          description: Productos por unidades netas
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ProductoVendido' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /reportes/carritos-abandonados:
+    get:
+      tags: [Reportes]
+      summary: Carritos abandonados (paginado)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/ReporteDesde' }
+        - { $ref: '#/components/parameters/ReporteHasta' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          description: 'campo:asc|desc con fecha, valor, unidades o cliente'
+          schema: { type: string, default: 'fecha:asc' }
+      responses:
+        '200':
+          description: Página de carritos
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CarritoAbandonado' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /bitacora:
+    get:
+      tags: [Bitácora]
+      summary: Consulta paginada de la bitácora (solo lectura)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          description: 'campo:asc|desc con fecha, modulo, entidad o accion'
+          schema: { type: string, default: 'fecha:desc' }
+        - name: modulo
+          in: query
+          schema: { type: string, maxLength: 50 }
+        - name: entidad
+          in: query
+          schema: { type: string, maxLength: 50 }
+        - name: idRegistro
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: idUsuario
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: accion
+          in: query
+          schema: { type: string, maxLength: 20 }
+        - { $ref: '#/components/parameters/Desde' }
+        - { $ref: '#/components/parameters/Hasta' }
+      responses:
+        '200':
+          description: Página de entradas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/EntradaBitacora' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /bitacora/modulos:
+    get:
+      tags: [Bitácora]
+      summary: Módulos con registros, alfabético
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Nombres de módulo
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /configuracion:
+    get:
+      tags: [Configuración]
+      summary: Parámetros del sistema (cacheado)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Un elemento por clave
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Parametro' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /configuracion/{clave}:
+    put:
+      tags: [Configuración]
+      summary: Cambia el valor de un parámetro
+      description: |
+        MinutosReserva entero 1-120, HorasCarritoAbandonado entero 1-720, UmbralBajoStock entero
+        ≥ 0, PorcentajeIVA decimal 0-100 con hasta 2 decimales. Fuera de rango: 400.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: clave
+          in: path
+          required: true
+          schema: { type: string, example: UmbralBajoStock }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [valor]
+              properties:
+                valor:
+                  oneOf:
+                    - { type: string }
+                    - { type: number }
+      responses:
+        '200':
+          description: Parámetro actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Parametro' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     bearerAuth:
@@ -1424,6 +2271,16 @@ components:
         Inclusive. YYYY-MM-DD (desde las 00:00 de ese día en Guatemala, UTC-6) o instante ISO 8601
         con zona
       schema: { type: string, example: '2026-11-01' }
+    ReporteDesde:
+      name: desde
+      in: query
+      description: YYYY-MM-DD (día de Guatemala), inclusive
+      schema: { type: string, format: date, example: '2026-10-01' }
+    ReporteHasta:
+      name: hasta
+      in: query
+      description: YYYY-MM-DD (día de Guatemala), inclusive; no menor que desde
+      schema: { type: string, format: date, example: '2026-10-31' }
     Hasta:
       name: hasta
       in: query
@@ -1930,4 +2787,314 @@ components:
         descuento: { $ref: '#/components/schemas/Monto' }
         totalPedido: { $ref: '#/components/schemas/Monto' }
         estadoPedido: { type: string }
+        fecha: { type: string, format: date-time }
+    Usuario:
+      type: object
+      required: [idUsuario, correo, nombre, apellido, telefono, rol, activo, fechaCreacion]
+      properties:
+        idUsuario: { type: integer }
+        correo: { type: string, format: email }
+        nombre: { type: string }
+        apellido: { type: string }
+        telefono: { type: [string, 'null'] }
+        rol: { type: string, enum: [Cliente, Operador, Administrador] }
+        activo: { type: boolean }
+        fechaCreacion: { type: string, format: date-time }
+    PerfilEntrada:
+      type: object
+      required: [nombre, apellido]
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 100 }
+        apellido: { type: string, minLength: 1, maxLength: 100 }
+        telefono: { type: [string, 'null'], maxLength: 20, pattern: '^\+?[\d\s-]{8,20}$' }
+    UsuarioNuevo:
+      type: object
+      required: [correo, contrasena, nombre, apellido, rol]
+      properties:
+        correo: { type: string, format: email, maxLength: 150 }
+        contrasena: { type: string, minLength: 8, maxLength: 128 }
+        nombre: { type: string, maxLength: 100 }
+        apellido: { type: string, maxLength: 100 }
+        telefono: { type: [string, 'null'], maxLength: 20 }
+        rol: { type: string, enum: [Operador, Administrador] }
+    UsuarioActualizacion:
+      type: object
+      required: [nombre, apellido]
+      properties:
+        nombre: { type: string, maxLength: 100 }
+        apellido: { type: string, maxLength: 100 }
+        telefono: { type: [string, 'null'], maxLength: 20 }
+        rol:
+          {
+            type: string,
+            enum: [Cliente, Operador, Administrador],
+            description: Sin rol se conserva,
+          }
+    ResumenReporte:
+      type: object
+      properties:
+        ventasNetas: { type: string, example: '1515.00', description: Sin envío }
+        pedidos: { type: integer }
+        ticketPromedio: { type: string, example: '378.75' }
+        unidadesNetas: { type: integer }
+        envioCobrado: { type: string, example: '120.00' }
+        carritosAbandonados: { type: integer }
+    VentaPeriodo:
+      type: object
+      properties:
+        periodoInicio: { type: string, format: date }
+        ventas: { type: string, example: '377.00' }
+        pedidos: { type: integer }
+        unidadesNetas: { type: integer }
+    VentaCategoria:
+      type: object
+      properties:
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        unidadesVendidas: { type: integer }
+        unidadesDevueltas: { type: integer }
+        unidadesNetas: { type: integer }
+        ventaBruta: { type: string }
+        montoReembolsado: { type: string }
+        ventaNeta: { type: string }
+    ProductoVendido:
+      type: object
+      properties:
+        idProducto: { type: integer }
+        producto: { type: string }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        unidadesNetas: { type: integer }
+        ventaNeta: { type: string }
+    CarritoAbandonado:
+      type: object
+      properties:
+        idCarrito: { type: integer }
+        idUsuario: { type: [integer, 'null'] }
+        tipo: { type: string, enum: [CLIENTE, INVITADO] }
+        cliente: { type: [string, 'null'] }
+        correo: { type: [string, 'null'] }
+        cantidadLineas: { type: integer }
+        cantidadUnidades: { type: integer }
+        subtotal: { type: string }
+        descuento: { type: string }
+        valor: { type: string, description: Sin envío }
+        fechaCreacion: { type: string, format: date-time }
+        fechaUltimaActividad: { type: string, format: date-time }
+        horasInactivo: { type: integer }
+    EntradaBitacora:
+      type: object
+      properties:
+        idBitacora: { type: integer }
+        idUsuario: { type: integer }
+        usuario: { type: string }
+        correoUsuario: { type: string }
+        modulo: { type: string }
+        entidad: { type: string }
+        idRegistro: { type: [integer, 'null'] }
+        accion: { type: string }
+        valorAnterior: { type: [object, 'null'], description: JSON ya interpretado }
+        valorNuevo: { type: [object, 'null'], description: JSON ya interpretado }
+        fecha: { type: string, format: date-time }
+    Parametro:
+      type: object
+      properties:
+        idConfiguracion: { type: integer }
+        clave: { type: string, example: MinutosReserva }
+        valor: { type: string, description: Texto normalizado, example: '15' }
+        descripcion: { type: string }
+    LineaResumenCheckout:
+      type: object
+      properties:
+        idCarritoDetalle: { type: integer }
+        idVariante: { type: integer }
+        sku: { type: string }
+        producto: { type: string }
+        variante: { type: [string, 'null'] }
+        cantidad: { type: integer }
+        precioUnitario: { $ref: '#/components/schemas/Monto' }
+        importe: { $ref: '#/components/schemas/Monto' }
+        descuentoLinea: { $ref: '#/components/schemas/Monto' }
+        subtotal: { $ref: '#/components/schemas/Monto', description: importe - descuentoLinea }
+    ResumenCheckout:
+      type: object
+      properties:
+        idCarrito: { type: integer }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/LineaResumenCheckout' }
+        cupon:
+          type: [object, 'null']
+          properties:
+            idCupon: { type: integer }
+            codigo: { type: string }
+            descripcion: { type: [string, 'null'] }
+            tipoDescuento: { type: string }
+            valor: { $ref: '#/components/schemas/Monto' }
+            aplicado: { type: boolean }
+            codigoError: { type: [string, 'null'] }
+            mensajeError: { type: [string, 'null'] }
+        cantidadLineas: { type: integer }
+        cantidadUnidades: { type: integer }
+        subtotal: { $ref: '#/components/schemas/Monto' }
+        descuento: { $ref: '#/components/schemas/Monto' }
+        costoEnvio: { $ref: '#/components/schemas/Monto' }
+        total: { $ref: '#/components/schemas/Monto' }
+        porcentajeIVA: { $ref: '#/components/schemas/Monto' }
+        montoIVA: { $ref: '#/components/schemas/Monto', description: IVA incluido en el total }
+        metodoEnvio:
+          type: [object, 'null']
+          properties:
+            idMetodoEnvio: { type: integer }
+            nombre: { type: string }
+            diasEstimados: { type: [integer, 'null'] }
+        reservaVigente: { type: boolean }
+        reservaExpiraEn: { type: [string, 'null'], format: date-time }
+    PedidoCreado:
+      type: object
+      properties:
+        idPedido: { type: integer }
+        numeroPedido: { type: string, example: SC-2026-001503 }
+        estado: { type: string, example: PAGADO }
+        total: { $ref: '#/components/schemas/Monto' }
+    PedidoResumen:
+      type: object
+      properties:
+        idPedido: { type: integer }
+        numeroPedido: { type: string }
+        idUsuario: { type: integer }
+        cliente: { type: string }
+        correoCliente: { type: string }
+        estado: { type: string }
+        nombreEstado: { type: string }
+        subtotal: { $ref: '#/components/schemas/Monto' }
+        descuento: { $ref: '#/components/schemas/Monto' }
+        costoEnvio: { $ref: '#/components/schemas/Monto' }
+        total: { $ref: '#/components/schemas/Monto' }
+        cantidadLineas: { type: integer }
+        cantidadUnidades: { type: integer }
+        fechaCreacion: { type: string, format: date-time }
+    PedidoDetalle:
+      type: object
+      properties:
+        idPedido: { type: integer }
+        numeroPedido: { type: string }
+        idUsuario: { type: integer }
+        cliente: { type: string }
+        correoCliente: { type: string }
+        estado: { type: string }
+        nombreEstado: { type: string }
+        esFinal: { type: boolean }
+        direccion:
+          type: object
+          properties:
+            idDireccion: { type: integer }
+            entrega: { type: string, description: Copia de la dirección al comprar }
+        metodoEnvio:
+          type: object
+          properties:
+            idMetodoEnvio: { type: integer }
+            nombre: { type: string }
+            diasEstimados: { type: integer }
+        cupon:
+          type: [object, 'null']
+          properties:
+            idCupon: { type: integer }
+            codigo: { type: string }
+        subtotal: { $ref: '#/components/schemas/Monto' }
+        descuento: { $ref: '#/components/schemas/Monto' }
+        costoEnvio: { $ref: '#/components/schemas/Monto' }
+        montoIVA: { $ref: '#/components/schemas/Monto' }
+        total: { $ref: '#/components/schemas/Monto' }
+        montoReembolsado: { $ref: '#/components/schemas/Monto' }
+        pago:
+          type: object
+          properties:
+            idPago: { type: integer }
+            metodoPago: { type: string }
+            monto: { $ref: '#/components/schemas/Monto' }
+            estado: { type: string, enum: [APROBADO, REEMBOLSADO_PARCIAL, REEMBOLSADO] }
+            referencia: { type: string }
+            fecha: { type: string, format: date-time }
+        fechaCreacion: { type: string, format: date-time }
+        lineas:
+          type: array
+          description: Precios, SKU y nombre congelados al comprar
+          items:
+            type: object
+            properties:
+              idPedidoDetalle: { type: integer }
+              idVariante: { type: integer }
+              sku: { type: string }
+              nombreProducto: { type: string }
+              variante: { type: [string, 'null'] }
+              cantidad: { type: integer }
+              precioUnitario: { $ref: '#/components/schemas/Monto' }
+              descuentoLinea: { $ref: '#/components/schemas/Monto' }
+              subtotal: { $ref: '#/components/schemas/Monto' }
+              cantidadDevuelta: { type: integer }
+              cantidadDevolvible: { type: integer }
+        transiciones:
+          type: array
+          description: Lo que el rol del solicitante puede hacer ahora con el pedido
+          items:
+            type: object
+            properties:
+              estado: { type: string }
+              nombre: { type: string }
+              via:
+                type: string
+                enum: [ESTADO, CANCELAR, DEVOLUCION]
+                description: PATCH /estado, POST /cancelar o POST /devoluciones
+    CambioEstado:
+      type: object
+      properties:
+        idHistorialEstadoPedido: { type: integer }
+        idPedido: { type: integer }
+        estadoAnterior:
+          type: [object, 'null']
+          properties:
+            codigo: { type: string }
+            nombre: { type: string }
+        estadoNuevo:
+          type: object
+          properties:
+            codigo: { type: string }
+            nombre: { type: string }
+        idUsuario: { type: integer }
+        usuario: { type: string }
+        comentario: { type: [string, 'null'] }
+        fecha: { type: string, format: date-time }
+    Devolucion:
+      type: object
+      properties:
+        idDevolucion: { type: integer }
+        idPedido: { type: integer }
+        tipo: { type: string, enum: [PARCIAL, TOTAL] }
+        motivo: { type: string }
+        montoReembolso: { $ref: '#/components/schemas/Monto' }
+        idUsuario: { type: integer }
+        usuario: { type: string }
+        fecha: { type: string, format: date-time }
+        lineas:
+          type: array
+          items:
+            type: object
+            properties:
+              idDevolucionDetalle: { type: integer }
+              idPedidoDetalle: { type: integer }
+              sku: { type: string }
+              nombreProducto: { type: string }
+              variante: { type: [string, 'null'] }
+              cantidad: { type: integer }
+              montoReembolso: { $ref: '#/components/schemas/Monto' }
+    DevolucionRegistrada:
+      type: object
+      properties:
+        idDevolucion: { type: integer }
+        idPedido: { type: integer }
+        tipo: { type: string, enum: [PARCIAL, TOTAL] }
+        montoReembolso: { $ref: '#/components/schemas/Monto' }
+        motivo: { type: string }
+        estadoPedido: { type: string, example: DEVUELTO_PARCIAL }
         fecha: { type: string, format: date-time }

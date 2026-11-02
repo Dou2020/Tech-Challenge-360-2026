@@ -17,11 +17,13 @@ import { USUARIOS_SEMILLA, clienteHttp, iniciarSesionComo, type Sesion } from '.
 
 const app = createApp();
 let sesion: Sesion;
+let sesionAdmin: Sesion;
 
 beforeAll(async () => {
   await connectRedis();
   // La sesión se abre con Redis arriba; luego se "detiene" Redis.
   sesion = await iniciarSesionComo(app, 'cliente');
+  sesionAdmin = await iniciarSesionComo(app, 'admin');
   await cache.invalidar('catalogo');
   // Calienta la caché del catálogo: con Redis arriba la segunda lectura es HIT.
   await request(app).get('/api/catalogo/categorias');
@@ -49,6 +51,26 @@ describe('Redis detenido: rutas autenticadas (fail-closed)', () => {
     expect(respuesta.status).toBe(503);
     expect(respuesta.body.error.code).toBe('SERVICIO_NO_DISPONIBLE');
   });
+
+  it.each([
+    '/api/reportes/resumen',
+    '/api/reportes/ventas-por-categoria',
+    '/api/bitacora',
+    '/api/configuracion',
+  ])(
+    'GET %s como Administrador → 503 SERVICIO_NO_DISPONIBLE (los reportes exigen sesión: no hay respuesta sin Redis)',
+    async (ruta) => {
+      // Arrange
+      const http = clienteHttp(app, sesionAdmin);
+
+      // Act
+      const respuesta = await http.get(ruta);
+
+      // Assert
+      expect(respuesta.status).toBe(503);
+      expect(respuesta.body.error.code).toBe('SERVICIO_NO_DISPONIBLE');
+    },
+  );
 
   it('login con credenciales correctas → 503 SERVICIO_NO_DISPONIBLE', async () => {
     // Arrange

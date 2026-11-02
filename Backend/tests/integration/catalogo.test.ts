@@ -366,10 +366,6 @@ describe('Productos y variantes (Administrador)', () => {
     expect(publico.body.precioMinimo).toBe('149.00');
   });
 
-  it.todo(
-    'cambiar el precio de una variante no altera un pedido ya creado (RF-02; rebanada de pedidos)',
-  );
-
   it('agrega, edita y desactiva variantes; la existencia no se toca', async () => {
     const { respuesta: creado, sufijo: s } = await crearProducto();
     const idProducto = creado.body.idProducto as number;
