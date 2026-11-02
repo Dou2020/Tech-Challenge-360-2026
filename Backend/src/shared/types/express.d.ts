@@ -14,7 +14,9 @@ export interface UsuarioAutenticado {
 declare module 'express-serve-static-core' {
   interface Request {
     usuario?: UsuarioAutenticado;
-    /** Header X-Cart-Token del carrito de invitado; lo deja `guestCart`. */
+    /** Header X-Cart-Token del carrito de invitado, en minúsculas; lo deja `guestCart`. */
     tokenCarrito?: string;
+    /** Header Idempotency-Key (UUID v4 en minúsculas); lo deja `idempotencyKey`. */
+    claveIdempotencia?: string;
   }
 }

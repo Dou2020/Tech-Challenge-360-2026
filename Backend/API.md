@@ -12,6 +12,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
    - [Niveles de acceso](#niveles-de-acceso)
    - [Caché](#caché)
    - [Listados paginados](#listados-paginados)
+   - [Filtros de fecha](#filtros-de-fecha)
    - [Errores](#errores)
 2. [Endpoints](#2-endpoints)
    - [Salud y documentación](#salud-y-documentación)
@@ -35,6 +36,8 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
 3. [Ejemplos de los flujos críticos](#3-ejemplos-de-los-flujos-críticos)
    - [Login](#login)
    - [Refresh](#refresh)
+   - [Detalle público de un producto](#detalle-público-de-un-producto)
+   - [Crear un producto](#crear-un-producto)
    - [Agregar al carrito](#agregar-al-carrito)
    - [Aplicar cupón](#aplicar-cupón)
    - [Iniciar checkout](#iniciar-checkout)
@@ -80,7 +83,19 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
 Si un Cliente pide un recurso que no es suyo (pedido, carrito, dirección), el SP no lo encuentra y la API responde **404**, sin revelar si existe.
 
 ### Caché
-Los endpoints de reportes, catálogo público, métodos de envío y configuración se sirven desde Redis cuando es posible. Sus respuestas incluyen el header `X-Cache: HIT` (desde caché) o `X-Cache: MISS` (desde la base). La existencia disponible nunca se cachea.
+Algunos endpoints de lectura se sirven desde Redis cuando es posible (*cache-aside*, *fail-open*: si Redis falla se lee de la base). Sus respuestas incluyen el header `X-Cache: HIT` (desde caché) o `X-Cache: MISS` (desde la base); los endpoints sin caché no lo envían.
+
+| Endpoint | Clave | Vigencia | Se invalida al |
+| :--- | :--- | :--- | :--- |
+| `GET /api/catalogo/categorias` | `shopcart:catalogo:v{n}:categorias` | `CACHE_TTL_CATALOGO_SEG` (600 s) | Crear, actualizar, activar/desactivar o eliminar una categoría; crear, actualizar, activar/desactivar o eliminar un producto; crear o activar/desactivar una variante |
+| `GET /api/metodos-envio` | `shopcart:catalogo:v{n}:metodos-envio` | `CACHE_TTL_CATALOGO_SEG` | Lo mismo (comparte el namespace `catalogo`) |
+| `GET /api/auth/me` | `shopcart:usuario:{id}` | 15 min | Cambio de perfil, rol o estado del usuario |
+| `GET /api/reportes/*` | `shopcart:reportes:v{n}:…` | `CACHE_TTL_REPORTES_SEG` | Ver [Extras](#5-extras-opcionales) |
+| `GET /api/configuracion` | `shopcart:configuracion` | 1 h | `PUT /api/configuracion/:clave` |
+
+La invalidación es `INCR shopcart:catalogo:version` y se hace en el servicio **después** de que el SP confirmó. Precios, SKU, valores de atributo e imágenes no aparecen en lo cacheado, así que cambiarlos no invalida.
+
+La existencia disponible **nunca** se cachea. Por eso la búsqueda (`GET /api/catalogo/productos`, que trae `disponible`) y el detalle (`GET /api/catalogo/productos/:id`, que trae `existenciaDisponible`) se leen siempre de la base.
 
 ### Listados paginados
 Todos los listados aceptan:
@@ -102,6 +117,16 @@ Respuesta:
   "total": 134
 }
 ```
+
+### Filtros de fecha
+Los listados con `desde` y `hasta` aceptan dos formatos, y los dos extremos son inclusivos:
+
+| Formato | Ejemplo | Se interpreta como |
+| :--- | :--- | :--- |
+| Día | `2026-11-01` | Día de Guatemala (UTC-6, sin horario de verano), igual que los reportes. En `desde` empieza a las 00:00:00.000 y en `hasta` cubre hasta las 23:59:59.999 hora local. Así `desde=2026-11-01&hasta=2026-11-01` trae todo el 1 de noviembre (de `2026-11-01T06:00:00.000Z` a `2026-11-02T05:59:59.999Z`) |
+| Instante ISO 8601 con zona | `2026-11-01T15:30:00Z`, `2026-11-01T09:30:00-06:00` | Ese instante, tal cual |
+
+Un instante sin zona (`2026-11-01T10:00:00`) se rechaza porque es ambiguo, y `desde` posterior a `hasta` también: los dos responden `400 VALIDACION`. Un valor vacío equivale a no filtrar.
 
 ### Errores
 Todas las respuestas de error tienen el mismo formato:
@@ -155,84 +180,118 @@ El catálogo completo de códigos está en la [sección 4](#4-catálogo-de-códi
 | PATCH | `/api/usuarios/:id/estado` | Admin | Activa o desactiva (`{ "activo": false }`). Desactivar revoca sus refresh tokens. Un Admin no puede desactivarse a sí mismo (409) | `SP_Usuarios_CambiarEstado` |
 
 ### Direcciones — `/api/direcciones`
+Solo para el rol Cliente: Operador y Administrador reciben 403. El cliente sale siempre del token. Una dirección de otro cliente, inexistente o dada de baja responde igual, `404 NO_ENCONTRADO`. Una dirección se responde como `{ idDireccion, alias, nombreDestinatario, telefono, linea1, linea2, municipio, departamento, codigoPostal, referencias }`; los opcionales (`linea2`, `codigoPostal`, `referencias`) son `null` si no se dieron.
+
+Body de POST y PUT: `alias` (máx. 50), `nombreDestinatario` (máx. 150), `telefono` (8 a 20 dígitos, espacios o guiones, con `+` opcional), `linea1` (máx. 200), `linea2` (opcional, máx. 200), `municipio` y `departamento` (máx. 100), `codigoPostal` (opcional, 5 dígitos) y `referencias` (opcional, máx. 300). Los textos se guardan sin espacios sobrantes y un opcional vacío se guarda como `null`.
+
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/direcciones` | Cliente | Direcciones activas del cliente | `SP_Direcciones_ListarPorUsuario` |
-| POST | `/api/direcciones` | Cliente | Crea una dirección (alias, destinatario, teléfono, líneas, municipio, departamento, referencias) | `SP_Direcciones_Crear` |
-| PUT | `/api/direcciones/:id` | Cliente | Actualiza una dirección propia | `SP_Direcciones_Actualizar` |
-| DELETE | `/api/direcciones/:id` | Cliente | Baja lógica. Los pedidos conservan su copia de la dirección. Responde 204 | `SP_Direcciones_Desactivar` |
+| GET | `/api/direcciones` | Cliente | Arreglo (sin paginar) de las direcciones activas del cliente, por `idDireccion` | `SP_Direcciones_ListarPorUsuario` |
+| GET | `/api/direcciones/:id` | Cliente | Una dirección propia y activa. La usa el checkout para mostrar la dirección elegida | `SP_Direcciones_ObtenerPorId` |
+| POST | `/api/direcciones` | Cliente | Crea una dirección. Responde 201 con la dirección y `Location: /api/direcciones/{id}` | `SP_Direcciones_Crear` |
+| PUT | `/api/direcciones/:id` | Cliente | Reemplaza todos los campos de una dirección propia (omitir un opcional lo borra) | `SP_Direcciones_Actualizar` |
+| DELETE | `/api/direcciones/:id` | Cliente | Baja lógica. Los pedidos conservan su copia de la dirección. Responde 204; repetirlo responde 404 | `SP_Direcciones_Desactivar` |
 
 ### Catálogo público — `/api/catalogo`
-Solo muestra categorías, productos y variantes activos.
+Solo muestra lo visible en la tienda: producto activo, de una categoría activa y con al menos una variante activa. Un producto que no cumple eso responde 404 `NO_ENCONTRADO`. Las listas sin paginar (categorías, métodos de envío) son arreglos JSON.
 
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/catalogo/categorias` | Público | Categorías activas | `SP_Catalogo_ListarCategorias` |
-| GET | `/api/catalogo/productos` | Público | Búsqueda paginada. Filtros: `q` (texto), `idCategoria`, `precioMin`, `precioMax`, `disponible` (true = con existencia disponible). `sort`: `precio`, `nombre`, `fechaCreacion` | `SP_Catalogo_BuscarProductos` |
-| GET | `/api/catalogo/productos/:id` | Público | Detalle: imágenes y variantes con SKU, atributos, precio y existencia disponible | `SP_Catalogo_ObtenerProducto` |
-| GET | `/api/metodos-envio` | Público | Métodos de envío activos con costo y días estimados | `SP_Checkout_ListarMetodosEnvio` |
+| GET | `/api/catalogo/categorias` | Público | Categorías activas, por nombre: `idCategoria`, `nombre`, `descripcion`, `cantidadProductos` (productos visibles). Con caché (`X-Cache`) | `SP_Catalogo_ListarCategorias` |
+| GET | `/api/catalogo/productos` | Público | Búsqueda paginada. Filtros: `q` (nombre, descripción, categoría o SKU; máx. 150), `idCategoria`, `precioMin`, `precioMax` (sobre el precio mínimo del producto; `precioMin > precioMax` → 400), `disponible` (`true` con existencia disponible, `false` agotados, sin el filtro todos). `sort`: `precio` (precio mínimo), `nombre`, `fechaCreacion`; default `fechaCreacion:desc`. Cada item: `idProducto`, `nombre`, `descripcion`, `idCategoria`, `categoria`, `precioMinimo`, `precioMaximo`, `disponible`, `imagenPrincipal`, `fechaCreacion`. Sin caché | `SP_Catalogo_BuscarProductos` |
+| GET | `/api/catalogo/productos/:id` | Público | Detalle con `imagenes` (la principal primero) y `variantes` activas: `idVariante`, `sku`, `precio`, `existenciaDisponible`, `descripcion` ("Talla M / Color Negro") y `valores` (`idAtributo`, `atributo`, `idValorAtributo`, `valor`). Ver el [ejemplo](#detalle-público-de-un-producto). Sin caché | `SP_Catalogo_ObtenerProducto` |
+| GET | `/api/metodos-envio` | Público | Métodos de envío activos, por costo: `idMetodoEnvio`, `nombre`, `costo`, `diasEstimados`. Con caché (`X-Cache`) | `SP_Checkout_ListarMetodosEnvio` |
 
 ### Categorías — `/api/categorias`
+Una categoría se responde como `{ idCategoria, nombre, descripcion, activo, cantidadProductos, cantidadCupones }`.
+
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/categorias` | Admin | Lista paginada, incluye inactivas. Filtros: `q`, `activo` | `SP_Categorias_Listar` |
+| GET | `/api/categorias` | Admin | Lista paginada, incluye inactivas. Filtros: `q` (nombre), `activo` (`true`/`false`). `sort`: `nombre`, `activo`, `cantidadProductos`; default `nombre:asc` | `SP_Categorias_Listar` |
 | GET | `/api/categorias/:id` | Admin | Detalle | `SP_Categorias_ObtenerPorId` |
-| POST | `/api/categorias` | Admin | Crea una categoría (nombre único) | `SP_Categorias_Crear` |
-| PUT | `/api/categorias/:id` | Admin | Actualiza nombre y descripción | `SP_Categorias_Actualizar` |
-| PATCH | `/api/categorias/:id/estado` | Admin | Activa o desactiva | `SP_Categorias_CambiarEstado` |
-| DELETE | `/api/categorias/:id` | Admin | Elimina solo si no tiene productos ni cupones; si los tiene, 409 `EN_USO` | `SP_Categorias_Eliminar` |
+| POST | `/api/categorias` | Admin | Crea una categoría: `nombre` (único, máx. 100), `descripcion` (opcional, máx. 500). Responde 201. Nombre repetido: 409 `DUPLICADO` | `SP_Categorias_Crear` |
+| PUT | `/api/categorias/:id` | Admin | Reemplaza nombre y descripción (omitir `descripcion` la borra) | `SP_Categorias_Actualizar` |
+| PATCH | `/api/categorias/:id/estado` | Admin | `{ "activo": false }` activa o desactiva. Desactivarla oculta sus productos del catálogo público | `SP_Categorias_CambiarEstado` |
+| DELETE | `/api/categorias/:id` | Admin | Elimina solo si no tiene productos (aunque estén inactivos) ni cupones; si los tiene, 409 `EN_USO`. Responde 204 | `SP_Categorias_Eliminar` |
 
 ### Productos — `/api/productos`
+El detalle de gestión (`GET /:id` y las escrituras que no responden 204) es `{ idProducto, nombre, descripcion, idCategoria, categoria, categoriaActiva, activo, fechaCreacion, fechaModificacion, tieneVentas, puedeEliminarse, variantes, imagenes }`. Cada variante incluye las inactivas y trae `existenciaFisica`, `existenciaReservada` (solo reservas vigentes) y `existenciaDisponible`, además de los campos del catálogo público, `idProducto` y `activo`. `puedeEliminarse` es `true` solo si el producto no tiene ventas, kardex ni reservas.
+
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/productos` | Admin | Lista paginada, incluye inactivos. Filtros: `q`, `idCategoria`, `activo` | `SP_Productos_Listar` |
-| GET | `/api/productos/:id` | Admin | Detalle con variantes (existencia física y reservada) e imágenes | `SP_Productos_ObtenerPorId` |
-| POST | `/api/productos` | Admin | Crea el producto con sus variantes en una sola transacción. Las variantes se envían al SP como JSON (`OPENJSON`). La existencia inicial entra como movimiento de kardex. Cada variante lleva como máximo un valor por atributo; si repite un atributo: 400 `VALIDACION` | `SP_Productos_Crear` |
-| PUT | `/api/productos/:id` | Admin | Actualiza nombre, descripción y categoría | `SP_Productos_Actualizar` |
-| PATCH | `/api/productos/:id/estado` | Admin | Activa o desactiva; un producto inactivo deja de verse en la tienda | `SP_Productos_CambiarEstado` |
-| DELETE | `/api/productos/:id` | Admin | Elimina solo si nunca se vendió; si tiene ventas, 409 `PRODUCTO_CON_VENTAS` (se debe desactivar) | `SP_Productos_Eliminar` |
-| POST | `/api/productos/:id/imagenes` | Admin | Agrega una imagen por URL (`url`, `orden`, `esPrincipal`) | `SP_Productos_AgregarImagen` |
-| DELETE | `/api/productos/:id/imagenes/:idImagen` | Admin | Quita una imagen | `SP_Productos_EliminarImagen` |
-| POST | `/api/productos/:id/variantes` | Admin | Agrega una variante (SKU, valores de atributo, precio, existencia inicial). Los valores se envían por `idValorAtributo`, como máximo uno por atributo; si repite un atributo: 400 `VALIDACION` | `SP_Variantes_Crear` |
+| GET | `/api/productos` | Admin | Lista paginada, incluye inactivos. Filtros: `q` (nombre o SKU), `idCategoria`, `activo`. `sort`: `nombre`, `categoria`, `precio`, `existencia`, `fechaCreacion`; default `fechaCreacion:desc`. Cada item: datos del producto, `cantidadVariantes`, `cantidadVariantesActivas`, `precioMinimo`/`precioMaximo` (null sin variantes), existencias física, reservada y disponible sumadas, `imagenPrincipal`, `fechaCreacion`, `fechaModificacion` | `SP_Productos_Listar` |
+| GET | `/api/productos/:id` | Admin | Detalle con todas las variantes (existencia física, reservada y disponible) e imágenes | `SP_Productos_ObtenerPorId` |
+| POST | `/api/productos` | Admin | Crea el producto con sus variantes en una sola transacción: `idCategoria`, `nombre` (máx. 150), `descripcion` (opcional) y `variantes` (1 a 50) con `sku` (máx. 50), `precio` (> 0), `existenciaInicial` (default 0) y `valores` (`idValorAtributo`, default `[]`). El backend arma `@Variantes` como JSON con las claves `sku`, `precio`, `existenciaInicial`, `valores` (el SP usa `OPENJSON`). La existencia inicial entra como movimiento de kardex `INVENTARIO_INICIAL`. Cada variante lleva como máximo un valor por atributo y no puede repetir la combinación de otra; si no: 400 `VALIDACION`. SKU repetido: 409 `DUPLICADO`. Categoría inexistente: 404. Responde 201 con el detalle. Ver el [ejemplo](#crear-un-producto) | `SP_Productos_Crear` |
+| PUT | `/api/productos/:id` | Admin | Reemplaza nombre, descripción (omitirla la borra) y categoría | `SP_Productos_Actualizar` |
+| PATCH | `/api/productos/:id/estado` | Admin | `{ "activo": false }` activa o desactiva; un producto inactivo deja de verse en la tienda | `SP_Productos_CambiarEstado` |
+| DELETE | `/api/productos/:id` | Admin | Elimina solo un producto sin historia. Con ventas: 409 `PRODUCTO_CON_VENTAS` (se debe desactivar). Sin ventas pero con kardex o reservas (en la práctica, si alguna vez tuvo existencia): 409 `EN_USO`. Borra imágenes, variantes y líneas de carrito. Responde 204 | `SP_Productos_Eliminar` |
+| POST | `/api/productos/:id/imagenes` | Admin | Agrega una imagen por URL: `url` (`http://` o `https://`, máx. 500), `orden` (0–255, default 0), `esPrincipal` (default `false`). Si el producto no tenía principal, la nueva lo es; con `esPrincipal: true` reemplaza a la anterior. Responde 201 con el detalle | `SP_Productos_AgregarImagen` |
+| DELETE | `/api/productos/:id/imagenes/:idImagen` | Admin | Quita una imagen (404 si es de otro producto). Si era la principal, pasa a la siguiente por `orden`. Responde 204 | `SP_Productos_EliminarImagen` |
+| POST | `/api/productos/:id/variantes` | Admin | Agrega una variante: `sku`, `precio`, `existenciaInicial` (default 0, entra al kardex), `valores` (`idValorAtributo`, como máximo uno por atributo y sin repetir la combinación de otra variante; si no: 400 `VALIDACION`). Responde 201 con la variante | `SP_Variantes_Crear` |
 
 ### Variantes — `/api/variantes`
-La existencia **no** se modifica aquí: solo cambia por movimientos de inventario, pedidos, cancelaciones y devoluciones.
+La existencia **no** se modifica aquí: solo cambia por movimientos de inventario, pedidos, cancelaciones y devoluciones. Todas responden la variante con sus `valores` (misma forma que en el detalle de gestión del producto).
 
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| PUT | `/api/variantes/:id` | Admin | Actualiza SKU y valores de atributo (como máximo uno por atributo; si repite un atributo: 400 `VALIDACION`) | `SP_Variantes_Actualizar` |
-| PATCH | `/api/variantes/:id/precio` | Admin | Cambia el precio (`{ "precio": "149.00" }`). Queda en la bitácora; no altera pedidos ya realizados | `SP_Variantes_CambiarPrecio` |
-| PATCH | `/api/variantes/:id/estado` | Admin | Activa o desactiva la variante | `SP_Variantes_CambiarEstado` |
+| PUT | `/api/variantes/:id` | Admin | Actualiza `sku` y `valores`. Omitir `valores` conserva los actuales; `[]` los quita todos. Como máximo un valor por atributo y sin repetir la combinación de otra variante; si no: 400 `VALIDACION` | `SP_Variantes_Actualizar` |
+| PATCH | `/api/variantes/:id/precio` | Admin | Cambia el precio (`{ "precio": "149.00" }`, > 0). Queda en la bitácora con el precio anterior y el nuevo; no altera pedidos ya realizados | `SP_Variantes_CambiarPrecio` |
+| PATCH | `/api/variantes/:id/estado` | Admin | `{ "activo": false }` activa o desactiva la variante. Una variante inactiva no se muestra ni se vende | `SP_Variantes_CambiarEstado` |
 
 ### Atributos — `/api/atributos`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/atributos` | Admin | Atributos con sus valores (Talla: S, M, L; Color: Rojo, Azul) | `SP_Atributos_Listar` |
-| POST | `/api/atributos` | Admin | Crea un atributo | `SP_Atributos_Crear` |
-| POST | `/api/atributos/:id/valores` | Admin | Agrega un valor a un atributo | `SP_Atributos_AgregarValor` |
+| GET | `/api/atributos` | Admin | Arreglo de atributos con sus valores: `[{ idAtributo, nombre, cantidadValores, valores: [{ idValorAtributo, valor, cantidadVariantes }] }]` (Talla: S, M, L; Color: Negro, Azul) | `SP_Atributos_Listar` |
+| POST | `/api/atributos` | Admin | Crea un atributo (`nombre`, único, máx. 50). Responde 201 con `{ idAtributo, nombre }` | `SP_Atributos_Crear` |
+| POST | `/api/atributos/:id/valores` | Admin | Agrega un valor (`valor`, único dentro del atributo, máx. 50). Responde 201 con `{ idValorAtributo, idAtributo, atributo, valor }` | `SP_Atributos_AgregarValor` |
 
 ### Inventario — `/api/inventario`
+La existencia física solo cambia por movimientos de kardex: entradas y ajustes de este módulo, más los que generan pedidos, cancelaciones y devoluciones. Nada de este módulo se cachea, porque todo trae existencias. Las entradas y los ajustes tampoco invalidan la caché del catálogo: lo cacheado no depende de la existencia.
+
+- **Existencia** (item de `GET /existencias`): `{ idVariante, sku, idProducto, producto, idCategoria, categoria, descripcion, precio, existenciaFisica, existenciaReservada, existenciaDisponible, bajoStock, umbralBajoStock, activo, productoActivo, categoriaActiva }`. `existenciaReservada` cuenta solo las reservas vigentes, y `bajoStock` es `existenciaDisponible ≤ umbralBajoStock` (`Configuracion.UmbralBajoStock`, 5 por defecto). Incluye variantes, productos y categorías inactivos.
+- **Movimiento** (item del kardex): `{ idMovimientoInventario, idVariante, fecha, codigoTipoMovimiento, nombreTipoMovimiento, signo, cantidad, existenciaAnterior, existenciaNueva, motivo, idUsuario, usuario, idPedido, numeroPedido, idDevolucion }`. `signo` es `1` (suma) o `-1` (resta), y siempre se cumple `existenciaNueva = existenciaAnterior + signo × cantidad`. `idPedido`, `numeroPedido` e `idDevolucion` son `null` en los movimientos manuales.
+- **Movimiento registrado** (201 de entradas y ajustes): el movimiento más `sku`, `existenciaFisica`, `existenciaReservada` y `existenciaDisponible` de la variante después del movimiento.
+- `idMovimientoInventario` es `BIGINT` en la base y en JSON es `number`: una identidad que avanza de uno en uno no llega a 2^53. Si llegara, el backend responde 500 en lugar de devolver un id redondeado.
+
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/inventario/existencias` | Operador, Admin | Lista paginada por variante: existencia física, reservada y disponible. Filtros: `q` (SKU o nombre), `idCategoria`, `bajoStock` (disponible ≤ umbral) | `SP_Inventario_ListarExistencias` |
-| GET | `/api/inventario/variantes/:idVariante/kardex` | Operador, Admin | Movimientos de la variante, paginados. Filtros: `desde`, `hasta`, `tipo` | `SP_Inventario_ConsultarKardex` |
-| POST | `/api/inventario/entradas` | Operador, Admin | Entrada por compra (`idVariante`, `cantidad`, `motivo`) | `SP_Inventario_RegistrarEntrada` |
-| POST | `/api/inventario/ajustes` | Operador, Admin | Ajuste manual (`idVariante`, `tipo`: `ENTRADA` o `SALIDA`, `cantidad`, `motivo` obligatorio). Si dejaría la existencia en negativo o por debajo de lo reservado: 422 `EXISTENCIA_NEGATIVA` | `SP_Inventario_RegistrarAjuste` |
-| GET | `/api/inventario/tipos-movimiento` | Operador, Admin | Tipos de movimiento para el filtro del kardex | `SP_Inventario_ListarTiposMovimiento` |
+| GET | `/api/inventario/existencias` | Operador, Admin | Lista paginada por variante. Filtros: `q` (SKU o nombre del producto; máx. 150), `idCategoria`, `bajoStock` (`true`: disponible ≤ umbral; `false`: mayor; sin el filtro, todas), `activo` (estado de la variante). `sort`: `sku`, `producto`, `categoria`, `existenciaFisica`, `existenciaReservada`, `existenciaDisponible`; default `existenciaDisponible:asc` | `SP_Inventario_ListarExistencias` |
+| GET | `/api/inventario/variantes/:idVariante/kardex` | Operador, Admin | Movimientos de la variante, paginados. Filtros: `desde` y `hasta` (ver [Filtros de fecha](#filtros-de-fecha)) y `tipo` (código del tipo, p. ej. `AJUSTE_SALIDA`, sin distinguir mayúsculas; uno inexistente → 400). `sort`: `fecha`; default `fecha:desc`. Variante inexistente: 404 | `SP_Inventario_ConsultarKardex` |
+| POST | `/api/inventario/entradas` | Operador, Admin | Entrada por compra: `idVariante`, `cantidad` (entero de 1 a 1 000 000) y `motivo` (opcional, máx. 300; sin él queda `Entrada por compra`). Movimiento `ENTRADA_COMPRA`. Acepta variantes inactivas. Responde 201 con el movimiento registrado | `SP_Inventario_RegistrarEntrada` |
+| POST | `/api/inventario/ajustes` | Operador, Admin | Ajuste manual: `idVariante`, `tipo` (`ENTRADA` o `SALIDA`), `cantidad` (entero de 1 a 1 000 000) y `motivo` (obligatorio, máx. 300; sin él, 400). Movimiento `AJUSTE_ENTRADA` o `AJUSTE_SALIDA`. Si una salida dejaría la existencia en negativo o por debajo de lo reservado vigente: 422 `EXISTENCIA_NEGATIVA`. Responde 201 con el movimiento registrado. Ver el [ejemplo](#ajuste-de-inventario) | `SP_Inventario_RegistrarAjuste` |
+| GET | `/api/inventario/tipos-movimiento` | Operador, Admin | Arreglo de tipos para el filtro del kardex: `[{ idTipoMovimientoInventario, codigo, nombre, signo }]`, primero los que suman | `SP_Inventario_ListarTiposMovimiento` |
+
+Entradas y ajustes escriben el kardex, actualizan `Variante.ExistenciaFisica` y dejan la bitácora (`Inventario`, `Variante`, `MODIFICAR`) en la misma transacción.
 
 ### Carrito — `/api/carrito`
-Funciona para invitados (con `X-Cart-Token`) y para clientes (con su token). Todas las respuestas devuelven el carrito completo con los montos calculados por el backend.
+Funciona para invitados (con `X-Cart-Token`) y para clientes (con su token). Todas las respuestas devuelven el carrito completo con los montos calculados por el backend; el frontend no recalcula nada. **El carrito nunca se cachea** (cambia con cada clic y trae existencia disponible).
+
+Quién es el dueño: si la petición trae `Authorization`, manda el usuario del token y el `X-Cart-Token` se ignora; solo un **Cliente** tiene carrito (Operador y Administrador reciben 403 `PROHIBIDO`). Sin `Authorization`, el dueño es el invitado del `X-Cart-Token`. Un token de acceso inválido o vencido responde 401, nunca degrada a invitado. Un `X-Cart-Token` que no es UUID responde 400 `VALIDACION`. El `IDCarrito` nunca lo envía el cliente.
 
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/carrito` | Invitado, Cliente | Carrito actual: líneas, cupón, subtotal, descuento y total. Marca las líneas cuya cantidad ya supera lo disponible | `SP_Carrito_Obtener` |
-| POST | `/api/carrito/items` | Invitado, Cliente | Agrega una variante (`idVariante`, `cantidad`); si ya está, suma. Crea el carrito si no existe y al invitado le devuelve `tokenInvitado`. Si supera lo disponible: 409 `STOCK_INSUFICIENTE` | `SP_Carrito_AgregarItem` |
-| PATCH | `/api/carrito/items/:idVariante` | Invitado, Cliente | Cambia la cantidad de una línea (mismo control de existencia) | `SP_Carrito_ActualizarCantidad` |
-| DELETE | `/api/carrito/items/:idVariante` | Invitado, Cliente | Quita una línea | `SP_Carrito_EliminarItem` |
-| DELETE | `/api/carrito` | Invitado, Cliente | Vacía el carrito | `SP_Carrito_Vaciar` |
-| POST | `/api/carrito/cupon` | Cliente | Aplica un cupón (`{ "codigo": "BIENVENIDA10" }`). Si no es válido, 422 con el código exacto del motivo (`CUPON_VENCIDO`, `CUPON_AGOTADO`, `CUPON_MINIMO_NO_ALCANZADO`…). Reemplaza al cupón anterior: solo uno por pedido | `SP_Carrito_AplicarCupon` |
-| DELETE | `/api/carrito/cupon` | Cliente | Quita el cupón | `SP_Carrito_QuitarCupon` |
-| POST | `/api/carrito/fusionar` | Cliente | Pasa el carrito de invitado (`tokenInvitado`) al carrito del cliente; suma cantidades sin superar lo disponible | `SP_Carrito_FusionarInvitado` |
+| GET | `/api/carrito` | Invitado, Cliente | Carrito actual: líneas, cupón, subtotal, descuento y total. Marca las líneas cuya cantidad ya supera lo disponible. Sin carrito: `idCarrito: null`, `items: []` y montos en `"0.00"` | `SP_Carrito_Obtener` |
+| POST | `/api/carrito/items` | Invitado, Cliente | Agrega una variante (`idVariante`, `cantidad` entero 1–1000); si ya está, suma. Crea el carrito si no existe y al invitado le devuelve `tokenInvitado` (que debe enviar como `X-Cart-Token` en las siguientes). Variante o producto inactivo o inexistente: 404. Si el total supera lo disponible: 409 `STOCK_INSUFICIENTE` con la cifra en `details` | `SP_Carrito_AgregarItem` |
+| PATCH | `/api/carrito/items/:idVariante` | Invitado, Cliente | Cambia la cantidad de una línea (`{ "cantidad": 3 }`, mismo control de existencia). Línea ausente: 404 | `SP_Carrito_ActualizarCantidad` |
+| DELETE | `/api/carrito/items/:idVariante` | Invitado, Cliente | Quita una línea (aunque ya no se venda). Conserva el cupón. Línea ausente: 404 | `SP_Carrito_EliminarItem` |
+| DELETE | `/api/carrito` | Invitado, Cliente | Vacía el carrito y quita el cupón | `SP_Carrito_Vaciar` |
+| POST | `/api/carrito/cupon` | Cliente | Aplica un cupón (`{ "codigo": "BIENVENIDA10" }`, sin distinguir mayúsculas). Si no es válido, 422 con el código exacto del motivo (`CUPON_VENCIDO`, `CUPON_AGOTADO`, `CUPON_MINIMO_NO_ALCANZADO`…). Carrito vacío o inexistente: 400 `VALIDACION`. Reemplaza al cupón anterior: solo uno por pedido. Invitado: 401 | `SP_Carrito_AplicarCupon` |
+| DELETE | `/api/carrito/cupon` | Cliente | Quita el cupón (sin cupón o sin carrito no es error). Invitado: 401 | `SP_Carrito_QuitarCupon` |
+| POST | `/api/carrito/fusionar` | Cliente | Pasa el carrito de invitado al carrito del cliente. El token va en el body (`{ "tokenInvitado": "<uuid>" }`) o, si no viene, en el header `X-Cart-Token`; sin ninguno, 400. Suma cantidades recortadas a lo disponible (no falla por existencia) y conserva el cupón del cliente. Repetirla, o usar un token inexistente, ya fusionado o de un cliente, no cambia nada y no es error. Responde el carrito del cliente más `fusion` | `SP_Carrito_FusionarInvitado` |
+
+**Forma del carrito** (todos los endpoints de arriba; montos como string decimal, fechas ISO 8601 UTC):
+
+| Campo | Descripción |
+| :--- | :--- |
+| `idCarrito` | `number`, o `null` si todavía no hay carrito |
+| `tokenInvitado` | Solo a invitados con carrito; un cliente nunca lo recibe |
+| `items[]` | Por fecha de alta. Cada línea: `idCarritoDetalle`, `idVariante`, `sku`, `idProducto`, `producto`, `idCategoria`, `categoria`, `variante` (texto o `null`), `imagen` (o `null`), `precioUnitario` (vigente), `cantidad`, `importe` (precio × cantidad), `descuentoLinea`, `importeNeto`, `elegibleCupon`, `existenciaDisponible` (sin contar la reserva propia; 0 si no se vende), `vendible`, `excedeDisponible`, `requiereAjuste` (hay que bajar la cantidad o quitar la línea antes de pagar), `fechaAgregado` |
+| `cupon` | `null`, o `{ idCupon, codigo, descripcion, tipoDescuento, valor, idCategoria, categoria, aplicado, codigoError, mensajeError }`. Si el cupón guardado ya no vale (vence, se agota, el carrito baja del mínimo…) la lectura no falla: `aplicado: false`, `codigoError` trae el código del catálogo (`CUPON_VENCIDO`…), `mensajeError` el texto y `descuento` es `"0.00"`. Sigue guardado hasta que el cliente lo quite |
+| `cantidadLineas`, `cantidadUnidades` | Totales del carrito |
+| `subtotal`, `descuento`, `total` | `total = subtotal − descuento` (el envío se agrega en el checkout) |
+| `porcentajeIVA`, `montoIVA` | El IVA ya va incluido en el total; `montoIVA` es solo el desglose |
+| `lineasRequierenAjuste` | Cuántas líneas tienen `requiereAjuste: true` |
+| `fusion[]` | Solo en `POST /fusionar`, una fila por variante del invitado: `idVariante`, `sku`, `cantidadInvitado`, `cantidadAnterior`, `cantidadFinal`, `cantidadAgregada`, `recortada` |
 
 ### Checkout — `/api/checkout`
 | Método | Ruta | Acceso | Descripción | SP |
@@ -268,15 +327,17 @@ El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administra
 | `CANCELADO`, `DEVUELTO` | — (finales) | — |
 
 ### Cupones — `/api/cupones`
+Solo Administrador. Un cupón se responde como `{ idCupon, codigo, descripcion, tipoDescuento, valor, idCategoria, categoria, montoMinimo, fechaInicio, fechaFin, limiteUsosTotal, limiteUsosPorCliente, usosActuales, usosDisponibles, activo, vigente, agotado, cantidadPedidos, cantidadCarritos, puedeEliminarse }`. `vigente` solo mira las fechas (no `activo`). Los montos van como string y las fechas de entrada, como instante ISO 8601 **con zona** (`2026-11-01T00:00:00Z`; sin zona → 400).
+
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| GET | `/api/cupones` | Admin | Lista paginada. Filtros: `q` (código), `activo`, `vigente` | `SP_Cupones_Listar` |
+| GET | `/api/cupones` | Admin | Lista paginada. Filtros: `q` (código), `activo`, `vigente`. `sort`: `codigo`, `fechaInicio`, `fechaFin`, `usosActuales`, `valor`; default `codigo:asc` | `SP_Cupones_Listar` |
 | GET | `/api/cupones/:id` | Admin | Detalle con usos actuales | `SP_Cupones_ObtenerPorId` |
-| POST | `/api/cupones` | Admin | Crea un cupón: `codigo`, `tipoDescuento` (`PORCENTAJE` o `MONTO_FIJO`), `valor`, `idCategoria` (opcional; sin ella aplica a todo el carrito), `montoMinimo`, `fechaInicio`, `fechaFin`, `limiteUsosTotal`, `limiteUsosPorCliente` | `SP_Cupones_Crear` |
-| PUT | `/api/cupones/:id` | Admin | Actualiza el cupón. No permite bajar `limiteUsosTotal` por debajo de los usos actuales (400 `VALIDACION`) | `SP_Cupones_Actualizar` |
-| PATCH | `/api/cupones/:id/estado` | Admin | Activa o desactiva | `SP_Cupones_CambiarEstado` |
-| DELETE | `/api/cupones/:id` | Admin | Elimina solo si ningún pedido (aunque esté cancelado) ni carrito lo tiene; si no, 409 `EN_USO` y se debe desactivar | `SP_Cupones_Eliminar` |
-| GET | `/api/cupones/:id/usos` | Admin | Usos del cupón: cliente, pedido, descuento (el de `Pedido.Descuento`) y fecha. Los pedidos cancelados ya no cuentan como uso | `SP_Cupones_ListarUsos` |
+| POST | `/api/cupones` | Admin | Crea un cupón (responde 201 con `Location`): `codigo` (máx. 30; letras, números, `-` y `_`; se guarda en mayúsculas; repetido → 409 `DUPLICADO`), `descripcion` (opcional), `tipoDescuento` (`PORCENTAJE`, hasta 100, o `MONTO_FIJO`), `valor` (> 0), `idCategoria` (opcional; sin ella aplica a todo el carrito; inexistente → 404), `montoMinimo` (default `"0"`), `fechaInicio`, `fechaFin` (posterior a la de inicio), `limiteUsosTotal` (≥ 1), `limiteUsosPorCliente` (default 1, no mayor que el total). Nace activo y sin usos | `SP_Cupones_Crear` |
+| PUT | `/api/cupones/:id` | Admin | Reemplaza todo lo editable (omitir `descripcion`, `idCategoria` o `montoMinimo` los borra o reinicia); no cambia `activo` ni `usosActuales`. No permite bajar `limiteUsosTotal` por debajo de los usos actuales (400 `VALIDACION`) | `SP_Cupones_Actualizar` |
+| PATCH | `/api/cupones/:id/estado` | Admin | Activa o desactiva (`{ "activo": false }`) | `SP_Cupones_CambiarEstado` |
+| DELETE | `/api/cupones/:id` | Admin | Elimina solo si ningún pedido (aunque esté cancelado) ni carrito lo tiene; si no, 409 `EN_USO` y se debe desactivar. Responde 204 | `SP_Cupones_Eliminar` |
+| GET | `/api/cupones/:id/usos` | Admin | Usos paginados (`sort`: `fecha`, `descuento`; default `fecha:desc`): `idUsoCupon`, `idPedido`, `numeroPedido`, `idUsuario`, `cliente`, `correo`, `descuento` (el de `Pedido.Descuento`), `totalPedido`, `estadoPedido`, `fecha`. Los pedidos cancelados ya no cuentan como uso | `SP_Cupones_ListarUsos` |
 
 ### Reportes — `/api/reportes`
 Los reportes solo cuentan pedidos completados (`ENTREGADO` y `DEVUELTO_PARCIAL`), excluyen los cancelados y descuentan lo devuelto. Todos aceptan `desde` y `hasta`. El listado de pedidos con filtros por estado, cliente y fechas es `GET /api/pedidos`.
@@ -343,6 +404,81 @@ Token vencido, revocado o reutilizado → `401 REFRESH_INVALIDO` y se borra la c
 
 Formato del refresh token: `<sid>.<secreto>`, donde `sid` es la sesión y el secreto son 32 bytes aleatorios en base64url. En Redis solo se guarda su SHA-256.
 
+### Detalle público de un producto
+```http
+GET /api/catalogo/productos/5
+```
+```http
+HTTP/1.1 200 OK
+
+{
+  "idProducto": 5,
+  "nombre": "Tenis urbanos",
+  "descripcion": "Tenis de lona con suela de goma.",
+  "idCategoria": 3,
+  "categoria": "Calzado",
+  "precioMinimo": "459.00",
+  "precioMaximo": "459.00",
+  "disponible": true,
+  "fechaCreacion": "2026-11-01T15:30:00.000Z",
+  "imagenes": [
+    { "idProductoImagen": 6, "url": "https://placehold.co/600x600?text=Tenis+urbanos", "orden": 0, "esPrincipal": true }
+  ],
+  "variantes": [
+    {
+      "idVariante": 11, "sku": "CAL-TEN-BLA-40", "precio": "459.00", "existenciaDisponible": 8,
+      "descripcion": "Talla 40 / Color Blanco",
+      "valores": [
+        { "idAtributo": 1, "atributo": "Talla", "idValorAtributo": 8, "valor": "40" },
+        { "idAtributo": 2, "atributo": "Color", "idValorAtributo": 13, "valor": "Blanco" }
+      ]
+    },
+    {
+      "idVariante": 12, "sku": "CAL-TEN-BLA-42", "precio": "459.00", "existenciaDisponible": 0,
+      "descripcion": "Talla 42 / Color Blanco",
+      "valores": [ … ]
+    }
+  ]
+}
+```
+La variante inactiva `CAL-TEN-NEG-41` no aparece. `existenciaDisponible` es física menos reservas vigentes y se lee de la base en cada petición: esta respuesta no se cachea.
+
+### Crear un producto
+```http
+POST /api/productos
+Authorization: Bearer …
+
+{
+  "idCategoria": 1,
+  "nombre": "Sudadero con capucha",
+  "descripcion": "Algodón perchado",
+  "variantes": [
+    { "sku": "SUD-CAP-NEG-M", "precio": "249.00", "existenciaInicial": 10, "valores": [2, 12] },
+    { "sku": "SUD-CAP-NEG-L", "precio": "249.00", "valores": [3, 12] }
+  ]
+}
+```
+```http
+HTTP/1.1 201 Created
+
+{
+  "idProducto": 8, "nombre": "Sudadero con capucha", "descripcion": "Algodón perchado",
+  "idCategoria": 1, "categoria": "Camisetas", "categoriaActiva": true, "activo": true,
+  "fechaCreacion": "2026-11-01T15:30:00.000Z", "fechaModificacion": null,
+  "tieneVentas": false, "puedeEliminarse": false,
+  "variantes": [
+    {
+      "idVariante": 17, "idProducto": 8, "sku": "SUD-CAP-NEG-M", "precio": "249.00",
+      "existenciaFisica": 10, "existenciaReservada": 0, "existenciaDisponible": 10,
+      "activo": true, "descripcion": "Talla M / Color Negro", "valores": [ … ]
+    },
+    { "idVariante": 18, "sku": "SUD-CAP-NEG-L", "existenciaFisica": 0, … }
+  ],
+  "imagenes": []
+}
+```
+El backend envía las variantes al SP como `@Variantes = N'[{"sku":"SUD-CAP-NEG-M","precio":"249.00","existenciaInicial":10,"valores":[2,12]},…]'`. La primera variante genera un movimiento `INVENTARIO_INICIAL` de 10 unidades; por eso `puedeEliminarse` ya es `false`. Con `"valores": [2, 3]` (dos tallas) la respuesta es `400 VALIDACION`, y con un SKU que ya existe, `409 DUPLICADO`.
+
 ### Agregar al carrito
 ```http
 POST /api/carrito/items
@@ -356,23 +492,32 @@ X-Cart-Token: 2b1f0c8e-6a3d-4f0e-9c1a-7d5e8b2f4a10
   "tokenInvitado": "2b1f0c8e-6a3d-4f0e-9c1a-7d5e8b2f4a10",
   "items": [
     {
-      "idVariante": 41, "sku": "CAM-BAS-M-AZ", "producto": "Camisa básica",
-      "variante": "Talla M / Azul", "precioUnitario": "149.00", "cantidad": 2,
-      "existenciaDisponible": 7, "subtotal": "298.00"
+      "idCarritoDetalle": 120, "idVariante": 41, "sku": "CAM-BAS-M-AZ",
+      "idProducto": 9, "producto": "Camisa básica", "idCategoria": 2, "categoria": "Camisetas",
+      "variante": "Talla M / Azul", "imagen": null,
+      "precioUnitario": "149.00", "cantidad": 2, "importe": "298.00",
+      "descuentoLinea": "0.00", "importeNeto": "298.00", "elegibleCupon": true,
+      "existenciaDisponible": 7, "vendible": true, "excedeDisponible": false,
+      "requiereAjuste": false, "fechaAgregado": "2026-11-01T15:30:00.000Z"
     }
   ],
   "cupon": null,
+  "cantidadLineas": 1,
+  "cantidadUnidades": 2,
   "subtotal": "298.00",
   "descuento": "0.00",
-  "total": "298.00"
+  "total": "298.00",
+  "porcentajeIVA": "12.00",
+  "montoIVA": "31.93",
+  "lineasRequierenAjuste": 0
 }
 ```
-Sin existencia suficiente:
+Sin existencia suficiente (el SP solo trae la cifra dentro del mensaje; el backend la copia a `details`):
 ```json
 {
   "error": {
     "code": "STOCK_INSUFICIENTE",
-    "message": "Solo hay 1 unidad disponible de CAM-BAS-M-AZ.",
+    "message": "Solo hay 1 unidad(es) disponible(s) de CAM-BAS-M-AZ.",
     "details": [{ "field": "cantidad", "message": "Disponible: 1" }]
   },
   "requestId": "…"
@@ -393,6 +538,18 @@ Authorization: Bearer …
     "message": "El cupón VERANO25 requiere una compra mínima de Q300.00; tu carrito suma Q298.00."
   },
   "requestId": "…"
+}
+```
+Con un cupón válido (`BIENVENIDA10`, 10 %) responde el carrito completo con el descuento ya repartido por línea:
+```json
+{
+  "idCarrito": 88,
+  "items": [ { "idVariante": 1, "cantidad": 2, "importe": "178.00", "descuentoLinea": "17.80", "importeNeto": "160.20", "…": "…" } ],
+  "cupon": { "idCupon": 1, "codigo": "BIENVENIDA10", "tipoDescuento": "PORCENTAJE", "valor": "10.00", "aplicado": true, "codigoError": null, "mensajeError": null, "…": "…" },
+  "subtotal": "178.00",
+  "descuento": "17.80",
+  "total": "160.20",
+  "…": "…"
 }
 ```
 
@@ -488,8 +645,16 @@ Authorization: Bearer …
 ```http
 HTTP/1.1 201 Created
 
-{ "idMovimientoInventario": 9811, "existenciaAnterior": 9, "existenciaNueva": 6 }
+{
+  "idMovimientoInventario": 9811, "idVariante": 41, "fecha": "2026-11-03T15:30:00.000Z",
+  "codigoTipoMovimiento": "AJUSTE_SALIDA", "nombreTipoMovimiento": "Ajuste de salida", "signo": -1,
+  "cantidad": 3, "existenciaAnterior": 9, "existenciaNueva": 6,
+  "motivo": "Producto dañado en bodega", "idUsuario": 2, "usuario": "Óscar Operador",
+  "idPedido": null, "numeroPedido": null, "idDevolucion": null,
+  "sku": "CAM-BAS-M-AZ", "existenciaFisica": 6, "existenciaReservada": 2, "existenciaDisponible": 4
+}
 ```
+Antes del ajuste la variante tenía 9 unidades físicas y 2 reservadas vigentes. Con `"cantidad": 10` la existencia quedaría en `-1`, y con `"cantidad": 8` quedaría en 1, por debajo de las 2 reservadas: los dos responden `422 EXISTENCIA_NEGATIVA` y no se escribe nada. Sin `motivo`: `400 VALIDACION`.
 
 ---
 
@@ -509,15 +674,15 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 | `REFRESH_INVALIDO` | 401 | 50011 | Refresh token vencido, revocado o reutilizado |
 | `PAGO_RECHAZADO` | 402 | 50020 | El pago simulado fue rechazado |
 | `PROHIBIDO` | 403 | — | El rol no tiene acceso al recurso |
-| `USUARIO_INACTIVO` | 403 | 50012 | El usuario está desactivado |
+| `USUARIO_INACTIVO` | 403 | 50012 | El usuario está desactivado. Además del login y el refresh, puede salir de cualquier SP que escribe (`@IDUsuarioSolicitante` desactivado) |
 | `NO_ENCONTRADO` | 404 | 50004 | El recurso no existe o no pertenece al cliente |
 | `DUPLICADO` | 409 | 2627 / 2601 | Correo, SKU, código de cupón o nombre de categoría repetido |
 | `STOCK_INSUFICIENTE` | 409 | 50030 | La cantidad supera la existencia disponible |
 | `RESERVA_VENCIDA` | 409 | 50031 | Se intenta pagar con una reserva vencida o inexistente |
 | `TRANSICION_NO_PERMITIDA` | 409 | 50040 | Cambio de estado del pedido no definido en `TransicionEstadoPedido` |
 | `IDEMPOTENCIA_CONFLICTO` | 409 | 50021 | Misma `Idempotency-Key` con un contenido distinto |
-| `PRODUCTO_CON_VENTAS` | 409 | 50050 | Se intenta eliminar un producto con ventas |
-| `EN_USO` | 409 | 50051 | Se intenta eliminar una categoría o cupón que está en uso, o un Admin intenta desactivarse a sí mismo |
+| `PRODUCTO_CON_VENTAS` | 409 | 50050 | Se intenta eliminar un producto con ventas (se debe desactivar) |
+| `EN_USO` | 409 | 50051 | Se intenta eliminar una categoría con productos o cupones, un cupón en uso o un producto sin ventas pero con kardex o reservas (si alguna vez tuvo existencia), o un Admin intenta desactivarse a sí mismo |
 | `CUPON_NO_EXISTE` | 422 | 50060 | El código no existe |
 | `CUPON_INACTIVO` | 422 | 50061 | El cupón está desactivado |
 | `CUPON_NO_VIGENTE` | 422 | 50062 | Aún no empieza su vigencia |
@@ -552,7 +717,7 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 
 | Proceso | Detalle |
 | :--- | :--- |
-| Liberación de reservas | `jobs/liberarReservas.job.ts` ejecuta `SP_Inventario_LiberarReservasVencidas` cada minuto. Además, `SP_Pedidos_CrearPedido` y `SP_Inventario_ReservarExistencia` ignoran las reservas vencidas aunque el job no haya corrido |
+| Liberación de reservas | `jobs/liberarReservas.job.ts` ejecuta `SP_Inventario_LiberarReservasVencidas` cada `RESERVAS_JOB_INTERVAL_MS` (60 000 ms, un minuto). El SP marca `LIBERADA` cada reserva activa vencida y resta su cantidad de `Variante.ExistenciaReservada` en una transacción. Si la pasada anterior sigue en curso, la nueva se omite. Un error queda en el log y no detiene el proceso, y solo se registra en `info` cuando liberó algo. Lo arranca `server.ts` (no `createApp()`) y el cierre ordenado lo detiene y espera su pasada antes de cerrar el pool. Además, `SP_Pedidos_CrearPedido` y `SP_Inventario_ReservarExistencia` ignoran las reservas vencidas aunque el job no haya corrido |
 | Bitácora | Se escribe dentro de los SPs que crean, modifican o desactivan productos, precios, existencias, cupones y estados de pedido, en la misma transacción que el cambio |
 | Historial de estados | Cada cambio de estado del pedido inserta en `HistorialEstadoPedido` dentro del mismo SP |
 
@@ -563,8 +728,13 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 El enunciado deja estos puntos abiertos; se resolvieron así:
 
 - **Pago simulado:** no hay pasarela real. `POST /api/checkout/pagar` acepta los datos de pago y los aprueba; para probar un rechazo se usa una tarjeta que termina en `0000`.
+- **Carrito solo de Clientes (con sesión):** un Operador o Administrador con token recibe 403 `PROHIBIDO` en `/api/carrito`; el invitado usa `X-Cart-Token`. Si hay token de acceso y también `X-Cart-Token`, manda el usuario. El carrito no se cachea.
+- **Fusión:** `POST /api/carrito/fusionar` toma `tokenInvitado` del body o, si falta, de `X-Cart-Token`. El carrito del invitado queda `FUSIONADO` y repetirla no duplica nada.
+- **Cupón que deja de valer:** la lectura del carrito no falla; trae `cupon.aplicado: false` con `codigoError` y `mensajeError`, y `descuento` en `"0.00"`. El checkout lo vuelve a validar.
 - **Cupones solo con sesión:** el límite de usos por cliente necesita saber quién es el cliente, así que un invitado no puede aplicar cupones.
 - **Catálogo público separado del de gestión:** `/api/catalogo/*` solo muestra lo activo, con la existencia disponible; `/api/productos` y `/api/categorias` son para el Administrador e incluyen lo inactivo.
 - **Precio en la variante:** el precio vive en `Variante`; cada cambio queda en la bitácora y el pedido guarda el precio del momento de la compra.
 - **Cancelar libera el cupón:** al cancelar un pedido se resta su uso del cupón, para que el cliente pueda volver a usarlo.
 - **Devoluciones solo sobre pedidos entregados**, registradas por Operador o Administrador.
+- **Fechas sin hora son días de Guatemala:** en `desde`/`hasta`, `2026-11-01` cubre el día local completo, como en los reportes; un instante con zona se usa tal cual ([Filtros de fecha](#filtros-de-fecha)).
+- **Ids `BIGINT` como `number`:** el kardex usa `BIGINT`; en JSON va como número porque no llegará a 2^53.

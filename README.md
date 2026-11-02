@@ -299,6 +299,7 @@ Creadas por `090_datos_semilla.sql`:
 | Cliente | `cliente@shopcart.gt` | `Cliente#2026` | Dos direcciones (Casa y Oficina) |
 | Cliente | `cliente2@shopcart.gt` | `Cliente#2026` | Segundo cliente: sus recursos son ajenos para `cliente@` (404) |
 | Cliente (inactivo) | `inactivo@shopcart.gt` | `Cliente#2026` | Login responde `403 USUARIO_INACTIVO` |
+| Cliente | `cliente3@shopcart.gt` | `Cliente#2026` | Dueño de los 7 pedidos de ejemplo (usuario 6, dirección 5) |
 
 Cupones de prueba (las vigencias se calculan desde la fecha en que se crea la base):
 
@@ -310,6 +311,20 @@ Cupones de prueba (las vigencias se calculan desde la fecha en que se crea la ba
 | `AGOTADO5` | 5 %, límite total de 1 uso ya alcanzado | `CUPON_AGOTADO` |
 | `PROXIMO15` | 15 %, empieza en 30 días | `CUPON_NO_VIGENTE` |
 | `INACTIVO5` | 5 %, desactivado | `CUPON_INACTIVO` |
+
+Pedidos de ejemplo del cliente 6 (`cliente3@`), creados con los SPs reales y con las fechas repartidas (relativas al día en que se crea la base; las horas son UTC):
+
+| IDPedido | Creado | Estado | Contenido |
+| :---: | :--- | :--- | :--- |
+| 1 | hace 12 días, 15:30 | `ENTREGADO` | 2 × `CAM-BAS-NEG-M` + 1 × `PAN-JOG-GRI-M`, envío Estándar |
+| 2 | hace 9 días, **02:00** | `ENTREGADO` | `PAN-JEA-AZU-30` + `ACC-GOR-NEG-U`, Express. Son las 20:00 del día anterior en Guatemala: prueba la agrupación por fecha local |
+| 3 | hace 8 días, 14:00 | `CANCELADO` | 4 × `CAM-BAS-BLA-M` con `VERANO25` (la cancelación reintegró la existencia y liberó el cupón) |
+| 4 | hace 6 días, 16:00 | `ENTREGADO` | 4 × `CAM-BAS-BLA-M` + `ACC-GOR-ROJ-U` con `VERANO25` (deja `UsosActuales = 1`) |
+| 5 | hace 4 días, 18:00 | `DEVUELTO_PARCIAL` | 3 × `CAM-BAS-AZU-L` + 2 × `ACC-GOR-ROJ-U`; se devolvió 1 × `CAM-BAS-AZU-L` (Q95.00) |
+| 6 | hace 2 días, 09:00 | `EN_PREPARACION` | `PAN-JOG-NEG-L` + `PAN-JEA-NEG-34`, Express |
+| 7 | hace 1 día, 10:00 | `PAGADO` | `CAM-BAS-NEG-M` + `PAN-JEA-AZU-32`, recoger en tienda |
+
+Los SPs graban la fecha actual; la semilla reescribe las fechas como `sa`, con los triggers de inmutabilidad deshabilitados dentro de su transacción y habilitados otra vez antes del `COMMIT`, y mueve a 30 días atrás el `INVENTARIO_INICIAL` de las variantes vendidas para que el kardex quede en orden cronológico. Al final comprueba que cada existencia coincide con su kardex y sus reservas, y cada `UsosActuales` con `UsoCupon`. Las variantes y los clientes de las pruebas (`CAM-LIM-NEG-M`, `BIENVENIDA10`, `AGOTADO5`, clientes 3 y 4) no se tocan.
 
 Catálogo de ejemplo: 4 categorías, atributos Talla y Color, 7 productos (uno inactivo, `Bufanda de lana`) y 16 variantes con su existencia inicial en el kardex. Variantes útiles para pruebas: `CAM-LIM-NEG-M` tiene una sola unidad (compra concurrente de la última unidad), `CAL-TEN-NEG-41` está inactiva con 5 unidades y `CAL-TEN-BLA-42` está agotada.
 
@@ -375,7 +390,7 @@ Backend/
 │   ├── shared/
 │   │   ├── cache/                # cache.ts (getOrSet, invalidar) y claves.ts (claves y namespaces)
 │   │   ├── errors/               # AppError y catálogo de códigos de error
-│   │   ├── utils/                # Paginación, respuestas, montos
+│   │   ├── utils/                # Paginación, montos, fechas (filtros desde/hasta), esquemas zod comunes
 │   │   └── types/                # Extensiones de tipos de Express (usuario autenticado, token de carrito)
 │   └── docs/
 │       └── openapi.yaml          # Especificación OpenAPI servida en /api/docs
@@ -443,8 +458,8 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Rate limit por IP | `ratelimit:login:{ip}` y `ratelimit:registro:{ip}` (store de `rate-limit-redis`, 10 por IP cada 15 min) | 15 min |
 | Caché del usuario | `usuario:{id}` → rol, estado, nombre y correo; la usan `refresh` y `/me` | 15 min |
 | Caché de reportes | `reportes:v{n}:{endpoint}:{hash de filtros}` | `CACHE_TTL_REPORTES_SEG` |
-| Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:producto:{id}` (sin existencia) | `CACHE_TTL_CATALOGO_SEG` |
-| Métodos de envío y configuración | `checkout:metodos-envio`, `configuracion` | 1 h |
+| Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:metodos-envio` | `CACHE_TTL_CATALOGO_SEG` |
+| Caché de la configuración | `configuracion` | 1 h |
 
 **Sesiones y tokens:**
 - El access token JWT lleva `jti` (identificador único) y `sid` (familia de la sesión). `authenticate` verifica la firma y luego consulta en Redis, en una sola ida (`MULTI`), si el `jti` fue revocado, si la familia `sid` sigue existiendo y si el token es anterior a `revocado-desde` del usuario. Así, al terminar una sesión dejan de valer todos sus access tokens.
@@ -460,11 +475,11 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Namespace | Se invalida al |
 | :--- | :--- |
 | `reportes` | Crear, cancelar o cambiar de estado un pedido, y registrar una devolución |
-| `catalogo` | Crear, modificar o desactivar categorías, productos, variantes, precios o imágenes |
+| `catalogo` | Crear, modificar, activar/desactivar o eliminar categorías y productos; crear o activar/desactivar variantes (lo que cambia qué categorías y cuántos productos se ven). Precios, SKU, valores de atributo e imágenes no están en lo cacheado |
 | `usuario:{id}` | Actualizar perfil, rol o estado del usuario |
 | `configuracion` | `PUT /api/configuracion/:clave` |
 
-- La existencia disponible **nunca** se cachea: el detalle de producto combina los datos cacheados con la existencia leída de la base en cada petición.
+- La existencia disponible **nunca** se cachea: la búsqueda y el detalle de productos del catálogo público traen `disponible` y `existenciaDisponible`, así que se leen de la base en cada petición.
 - Las respuestas cacheadas llevan el header `X-Cache: HIT` o `X-Cache: MISS`.
 
 **Si Redis falla:**
@@ -485,13 +500,19 @@ Se usan **Vitest** como runner, **Supertest** para las peticiones HTTP y **Testc
 ```
 Backend/tests/
 ├── unit/                         # Servicios y middlewares con repositorios simulados (vi.mock)
-│   ├── cupones.service.test.ts
+│   ├── carrito.service.test.ts   # Armado de la respuesta del carrito y elección usuario/token
+│   ├── carrito.schemas.test.ts   # Esquemas del carrito y del cupón
 │   ├── pedidos.service.test.ts
+│   ├── inventario.service.test.ts
+│   ├── liberarReservas.job.test.ts  # Sin solapamiento; un error no tumba el proceso
 │   ├── sqlErrorMapper.test.ts
 │   └── middlewares/              # authorize, validate, idempotencyKey
 ├── integration/                  # Endpoints de punta a punta con supertest
 │   ├── auth.test.ts
+│   ├── catalogo.test.ts
+│   ├── direcciones.test.ts
 │   ├── carrito.test.ts
+│   ├── cupones.test.ts
 │   ├── checkout.concurrencia.test.ts
 │   ├── pedidos.test.ts
 │   ├── inventario.test.ts
@@ -549,19 +570,19 @@ Database/
 │   ├── 002_tablas.sql               # 28 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
-│   ├── 005_funciones.sql            # Funciones tipo tabla (FU_)                                   (pendiente)
-│   ├── 006_vistas.sql               # Vistas (VW_)                                                (pendiente)
-│   ├── 007_sp_auth.sql              # SPs de autenticación, perfil y usuarios                     (en curso: SP_Auth_*, SP_Usuarios_ObtenerPorId)
-│   ├── 008_sp_catalogo.sql          # SPs de catálogo, categorías, productos, variantes y atributos (pendiente)
-│   ├── 009_sp_inventario.sql        # SPs de existencias, kardex, ajustes y reservas              (pendiente)
-│   ├── 010_sp_carrito.sql           # SPs de carrito y cupón aplicado                             (pendiente)
-│   ├── 011_sp_cupones.sql           # SPs de gestión de cupones                                   (pendiente)
-│   ├── 012_sp_pedidos.sql           # SPs de checkout, pedidos, estados y devoluciones            (pendiente)
+│   ├── 005_funciones.sql            # Funciones tipo tabla (FU_)                                   (en curso: existencia disponible, búsqueda, catálogo, cupones, carrito, reserva del checkout y JSON de pedidos)
+│   ├── 006_vistas.sql               # Vistas (VW_)                                                (en curso: VW_Inventario_Existencias, VW_Pedidos_Historial)
+│   ├── 007_sp_auth.sql              # SPs de autenticación, perfil, usuarios y direcciones        (completo)
+│   ├── 008_sp_catalogo.sql          # SPs de catálogo, categorías, productos, variantes y atributos
+│   ├── 009_sp_inventario.sql        # SPs de existencias, kardex, ajustes y reservas
+│   ├── 010_sp_carrito.sql           # SPs de carrito y cupón aplicado
+│   ├── 011_sp_cupones.sql           # SPs de gestión de cupones
+│   ├── 012_sp_pedidos.sql           # SPs de checkout, pedidos, estados y devoluciones
 │   ├── 013_sp_reportes.sql          # SPs de reportes y dashboard                                 (pendiente)
-│   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema                    (pendiente)
+│   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema                    (completo)
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
-│   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y pedidos de ejemplo  (pedidos pendientes)
+│   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
 ├── pruebas/
 │   └── integridad.sql               # Intenta romper cada regla de integridad y verifica qué restricción lo impide; no deja datos
 └── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose), la opción manual y las pruebas del backend
@@ -702,8 +723,8 @@ Evitan sumar el historial en cada lectura y, sobre todo, dan una sola fila que s
 
 | Columna | Equivale a | Para qué | Quién la mantiene |
 | :--- | :--- | :--- | :--- |
-| `Variante.ExistenciaFisica` | Suma de `MovimientoInventario.Cantidad` × `Signo` | Leer la existencia sin recorrer el kardex; `CHECK (ExistenciaFisica >= 0)` | Todo SP que inserta un movimiento actualiza la existencia en la misma transacción |
-| `Variante.ExistenciaReservada` | Suma de `ReservaExistencia.Cantidad` con `Estado = 'ACTIVA'` | `CHECK (ExistenciaReservada BETWEEN 0 AND ExistenciaFisica)` impide la sobreventa | `SP_Inventario_ReservarExistencia`, `SP_Inventario_LiberarReserva`, `SP_Inventario_LiberarReservasVencidas`, `SP_Pedidos_CrearPedido` |
+| `Variante.ExistenciaFisica` | Suma de `MovimientoInventario.Cantidad` × `Signo` | Leer la existencia sin recorrer el kardex; `CHECK (ExistenciaFisica >= 0)` | Todo SP que inserta un movimiento actualiza la existencia en la misma transacción, con la variante bloqueada (`UPDLOCK, ROWLOCK`). La variante nace con 0 y `SP_Productos_Crear` / `SP_Variantes_Crear` registran la existencia inicial como `INVENTARIO_INICIAL`; después la mueven `SP_Inventario_RegistrarEntrada` (`ENTRADA_COMPRA`), `SP_Inventario_RegistrarAjuste` (`AJUSTE_ENTRADA` / `AJUSTE_SALIDA`) y los SPs de pedidos |
+| `Variante.ExistenciaReservada` | Suma de `ReservaExistencia.Cantidad` con `Estado = 'ACTIVA'` | `CHECK (ExistenciaReservada BETWEEN 0 AND ExistenciaFisica)` impide la sobreventa | `SP_Inventario_ReservarExistencia`, `SP_Inventario_LiberarReserva`, `SP_Inventario_LiberarReservasVencidas`, `SP_Pedidos_CrearPedido`. El saldo incluye las reservas vencidas hasta que el job las libera, así que `SP_Inventario_RegistrarAjuste` libera las vencidas de su variante antes de una salida: si no, el `CHECK` rechazaría un ajuste que solo choca con reservas ya vencidas |
 | `Cupon.UsosActuales` | Filas de `UsoCupon` del cupón | `UPDATE … WHERE UsosActuales < LimiteUsosTotal` respeta el límite total aunque dos clientes paguen a la vez | `SP_Pedidos_CrearPedido` suma; `SP_Pedidos_Cancelar` resta |
 | `PedidoDetalle.CantidadDevuelta` | Suma de `DevolucionDetalle.Cantidad` de la línea | `CHECK (CantidadDevuelta BETWEEN 0 AND Cantidad)` impide devolver más de lo vendido, también con dos devoluciones simultáneas | `SP_Pedidos_RegistrarDevolucion` |
 | `MovimientoInventario.ExistenciaAnterior`, `ExistenciaNueva` | Saldo acumulado del kardex | Leer el kardex sin recalcular el saldo línea por línea | Se escriben una sola vez; `CHECK (ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad)` exige que cambien en la cantidad y en la dirección del tipo, y el trigger impide modificarlas |
@@ -798,17 +819,45 @@ BEGIN
 END;
 ```
 
+Convenciones de los SPs:
+
+- Los que escriben llaman primero a `SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante` (sin endpoint): un solicitante inexistente responde 50004 y uno desactivado 50012, en lugar de un 547 de `FK_Bitacora_Usuario`.
+- La bitácora usa `Modulo` = módulo funcional (`Catalogo`, `Inventario`, `Pedidos`…) y `Entidad` = tabla (`Producto`, `Variante`, `Categoria`, `ProductoImagen`, `Atributo`, `ValorAtributo`). `ValorAnterior` y `ValorNuevo` se arman con `FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES`. Activar o desactivar algo que ya está en ese estado, o un cambio de precio al mismo precio, no escribe ni registra nada.
+- Los listados validan `@Pagina >= 1`, `@TamanoPagina` entre 1 y 100 y `@Orden` contra su lista blanca; si no, 50001. Ordenan con un `CASE` por cada `campo:dirección` y desempatan por la PK. Filtran en una variable de tabla (toma la collation de la base; una `#temporal` tomaría la de `tempdb`) y devuelven las filas de la página y luego `Total`.
+- Los SPs que crean o modifican devuelven el mismo resultado que su `ObtenerPorId` (lo ejecutan después del `COMMIT`), así el backend mapea una sola forma por recurso.
+- Orden de bloqueo en el catálogo: `Categoria` → `Producto` → `Variante`. Crear o mover un producto bloquea su categoría con `UPDLOCK`, igual que `SP_Categorias_Eliminar`, que además comprueba los productos con `READCOMMITTEDLOCK` (con `READ_COMMITTED_SNAPSHOT` una lectura normal no ve un `INSERT` sin confirmar).
+- `SP_Productos_Eliminar` borra físicamente solo un producto sin ventas (si no, 50050) y sin movimientos de kardex ni reservas (si no, 50051): el kardex es inmutable y no puede quedar sin su variante. Un producto así se desactiva.
+- Orden de bloqueo en carrito y cupones: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`, con `Categoria` antes de `Cupon` al crear o actualizar un cupón. Todo SP que escribe en un carrito lo bloquea primero con `UPDLOCK, HOLDLOCK` (también si aún no existe, para no crear dos carritos del mismo cliente). El carrito se identifica por el usuario del token o por `X-Cart-Token`, nunca por un ID enviado; manda el usuario si vienen ambos. Los SPs del carrito no reservan ni bloquean variantes: la sobreventa la impiden la reserva del checkout y el pedido.
+- Orden de bloqueo en inventario: `Variante` → `ReservaExistencia`, y varias variantes en orden de `IDVariante`. Quien crea, confirma o libera una reserva bloquea antes su variante con `UPDLOCK, ROWLOCK`; así un ajuste que tiene la variante bloqueada ve un conjunto de reservas estable.
+- Entradas y ajustes escriben en la bitácora `MODIFICAR` de la `Variante` con `Modulo = 'Inventario'`: `ValorAnterior` lleva `ExistenciaFisica` y `ExistenciaReservada`, y `ValorNuevo` además el movimiento (`IDMovimientoInventario`, tipo, cantidad, motivo). Un ajuste de salida que dejaría la existencia por debajo de 0 o de la reservada vigente responde 50032. `SP_Inventario_LiberarReservasVencidas` no escribe bitácora: no cambia la existencia física.
+- Usuarios: un Administrador no puede desactivarse a sí mismo ni quitarse el rol de Administrador, y el sistema nunca se queda sin un Administrador activo (50051 `EN_USO` en los tres casos). Los SPs bloquean con `UPDLOCK` a todos los administradores activos antes de contar. La bitácora (`Modulo = 'Usuarios'`, `Entidad = 'Usuario'`) usa `FU_Usuarios_UsuarioJson`, que nunca incluye el hash; el cambio de contraseña registra solo `{"ContrasenaCambiada":true}`. `SP_Usuarios_Actualizar` y `SP_Usuarios_CambiarEstado` devuelven `RolCambio` y `ActivoCambio` para que el backend revoque sesiones. El perfil (`ActualizarPerfil`) no va a la bitácora.
+- `SP_Configuracion_Actualizar` valida el valor según la clave (enteros solo con dígitos, IVA decimal 0–100 con hasta 2 decimales), lo guarda normalizado y registra `Modulo = 'Configuracion'`; un valor igual al actual no escribe nada.
+- Orden de bloqueo en checkout y pedidos: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`; con un pedido existente, `Pedido` → `PedidoDetalle` → `Cupon` → `Variante`. Las variantes se bloquean una por una en orden de `IDVariante`. `SP_Pedidos_CrearPedido` toma antes un bloqueo de aplicación (`sp_getapplock`) por `Idempotency-Key`: las peticiones simultáneas con la misma clave se serializan y las posteriores devuelven el pedido ya creado (`Repetido = 1`), sin depender de capturar el 2627.
+- Reservar (`SP_Inventario_ReservarExistencia`) reemplaza la reserva `ACTIVA` anterior del carrito y libera las vencidas de las variantes involucradas antes de comprobar la existencia, para que `CK_Variante_ExistenciaReservada` no rechace una reserva válida. Si falta existencia lanza 50030 con el detalle en el mensaje (`\nDETALLE=` y un arreglo JSON); todo se revierte. `SP_Checkout_ObtenerResumen` sin reserva vigente responde 50031; el método de envío no se guarda con la reserva, por eso recibe `@IDMetodoEnvio` opcional.
+- `SP_Pedidos_CrearPedido` calcula `HuellaSolicitud` (SHA-256 en hexadecimal) sobre dirección, método de envío, método de pago, últimos 4 dígitos, cupón y líneas `IDVariantexCantidad` ordenadas. `NumeroPedido` es `SC-<año>-<IDPedido a 6 dígitos>`. El pago simulado con tarjeta terminada en `0000` lanza 50020 antes de escribir, así que la reserva sigue vigente. El precio congelado es el vigente al pagar.
+- `SP_Pedidos_CambiarEstado` no sirve para cancelar ni devolver (50040): `SP_Pedidos_Cancelar` reintegra existencia (`CANCELACION`), borra el `UsoCupon`, resta `UsosActuales` y deja el pago `REEMBOLSADO`; `SP_Pedidos_RegistrarDevolucion` reintegra por línea (`DEVOLUCION`), actualiza `CantidadDevuelta`, el estado y el pago. El rol del solicitante se busca en la base. Todos escriben bitácora `MODIFICAR` del pedido (`CREAR` al crearlo).
+- Las direcciones se filtran siempre por `@IDUsuarioSolicitante` y `Activo = 1`: la de otro cliente, la inexistente y la dada de baja responden igual, 50004. La baja es lógica porque `Pedido` la referencia; no van a la bitácora.
+
 ### Vistas y funciones
 
 | Objeto | Uso |
 | :--- | :--- |
 | `VW_Dashboard_VentasPorCategoria` | Ventas netas y unidades por categoría (pedidos completados menos devoluciones) |
-| `VW_Pedidos_Historial` | Historial de estados con nombres de estado y usuario |
-| `VW_Inventario_Existencias` | Existencia física, reservada y disponible por variante |
+| `VW_Pedidos_Historial` | Historial de estados con nombres de estado y usuario; la usa `SP_Pedidos_ObtenerHistorialEstados` |
+| `VW_Inventario_Existencias` | Existencia física, reservada vigente y disponible por variante, con su producto y categoría e incluidas las inactivas. La usa `SP_Inventario_ListarExistencias`, que marca `BajoStock` cuando la disponible es menor o igual a `Configuracion.UmbralBajoStock` (5 si falta o no es un entero válido) |
 | `VW_Reportes_VentasNetas` | Base de los reportes: pedidos completados con devoluciones descontadas |
-| `FU_Cupones_CalculoDescuento` | Descuento de un cupón sobre un carrito (por línea, nunca mayor al subtotal) |
-| `FU_Carrito_CalcularTotales` | Subtotal, descuento y total de un carrito |
-| `FU_Inventario_ExistenciaDisponible` | Existencia disponible de una o varias variantes |
+| `FU_Cupones_CalculoDescuento` | Una fila por línea del carrito con importe, si el cupón le aplica y su descuento. Porcentaje: `ROUND(subtotal elegible * valor / 100, 2)`; monto fijo: el menor entre el valor y el subtotal elegible. Elegible: todo el carrito, o las líneas de la categoría del cupón. El descuento se reparte proporcional al importe, en centavos exactos (la suma de las líneas es el descuento). Es el único lugar donde se calcula: lo reusan el carrito, el checkout y `SP_Pedidos_CrearPedido` |
+| `FU_Cupones_Validar` | Primer motivo por el que un cupón no aplica a un carrito (50060 a 50067, en ese orden) y su mensaje; sin error, el cupón aplica. El monto mínimo se compara con el subtotal de todo el carrito antes del descuento |
+| `FU_Carrito_CalcularTotales` | Subtotal, descuento, envío, total (nunca negativo) y desglose del IVA incluido (`Total - Total / (1 + IVA)`, con `Configuracion.PorcentajeIVA`; no es un recargo). Un cupón que dejó de valer no descuenta y se informa su motivo |
+| `FU_Cupones_CuponJson` | Foto JSON del cupón para `Bitacora.ValorAnterior` / `ValorNuevo` |
+| `FU_Usuarios_UsuarioJson` | Foto JSON del usuario (sin el hash de la contraseña) para `Bitacora.ValorAnterior` / `ValorNuevo` |
+| `FU_Inventario_ExistenciaDisponible` | Existencia física, reservada vigente y disponible de una variante (varias con `CROSS APPLY`). Solo resta reservas `ACTIVA` no vencidas, aunque el job de liberación no haya corrido; el segundo parámetro excluye las reservas de un carrito |
+| `FU_Checkout_EstadoReserva` | Si la reserva del carrito está vigente: cada línea con una reserva `ACTIVA` no vencida de su misma cantidad y ninguna reserva de variantes que ya no están en el carrito. Devuelve `Vigente`, `ReservaExpiraEn` y los conteos que fallan. La usan `SP_Checkout_ObtenerResumen` y `SP_Pedidos_CrearPedido` (esta, con las variantes ya bloqueadas) |
+| `FU_Pedidos_PedidoJson` | Foto JSON del pedido (estado, montos, estado del pago, monto reembolsado y, opcional, líneas con su cantidad devuelta) para `Bitacora.ValorAnterior` / `ValorNuevo` |
+| `FU_Catalogo_DescripcionVariante` | Texto de los valores de una variante (`Talla M / Color Negro`), para el catálogo, el carrito y `PedidoDetalle.DescripcionVariante` |
+| `FU_Catalogo_LeerValoresAtributo` | Lee el arreglo JSON de `IDValorAtributo` de una variante; el SP rechaza con 50001 los inválidos, inexistentes y atributos repetidos |
+| `FU_Catalogo_ProductoJson`, `FU_Catalogo_VarianteJson` | Foto JSON del producto (con o sin variantes) y de la variante para `Bitacora.ValorAnterior` / `ValorNuevo` |
+| `FU_Sistema_PatronBusqueda` | Patrón `LIKE` del parámetro `q` de los listados, con `[`, `%` y `_` escapados para que se busquen literales |
 
 Decisiones de los reportes:
 
@@ -828,6 +877,7 @@ Decisiones de los reportes:
 | `ReservaExistencia` | `UNIQUE (IDCarrito, IDVariante) WHERE Estado = 'ACTIVA'` | Una sola reserva activa por línea del carrito |
 | `Carrito` | `UNIQUE (TokenInvitado) WHERE TokenInvitado IS NOT NULL` | Carrito de invitado |
 | `Carrito` | `(Estado, FechaUltimaActividad)` | Carritos abandonados |
+| `Carrito` | `(IDCupon) WHERE IDCupon IS NOT NULL` | Cupones aplicados en carritos (`SP_Cupones_Eliminar`) |
 | `Bitacora` | `(Modulo, Fecha DESC)` | Consulta con filtro por módulo |
 
 ### Diagrama entidad-relación

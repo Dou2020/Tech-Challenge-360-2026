@@ -36,7 +36,7 @@ function aRol(valor: string): Rol {
   throw new Error(`Rol desconocido devuelto por la base: ${valor}`);
 }
 
-function aUsuario(fila: FilaUsuario): Usuario {
+export function aUsuario(fila: FilaUsuario): Usuario {
   return {
     idUsuario: fila.IDUsuario,
     correo: fila.Correo,

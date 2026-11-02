@@ -10,7 +10,6 @@ export const claves = {
   versionada: (namespace: NamespaceCache, version: number, resto: string) =>
     `${PREFIJO}:${namespace}:v${version}:${resto}`,
   usuario: (idUsuario: number) => `${PREFIJO}:usuario:${idUsuario}`,
-  metodosEnvio: () => `${PREFIJO}:checkout:metodos-envio`,
   configuracion: () => `${PREFIJO}:configuracion`,
 
   // --- Sesiones y autenticación (fail-closed) ---

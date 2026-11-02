@@ -10,6 +10,23 @@ servers:
 tags:
   - name: Sistema
   - name: Autenticación
+  - name: Catálogo público
+  - name: Categorías
+    description: Solo Administrador
+  - name: Productos
+    description: Solo Administrador
+  - name: Variantes
+    description: Solo Administrador
+  - name: Atributos
+    description: Solo Administrador
+  - name: Inventario
+    description: Operador y Administrador
+  - name: Direcciones
+    description: Solo Cliente; una dirección ajena responde 404
+  - name: Carrito
+    description: Invitado (X-Cart-Token) o Cliente; nunca se cachea
+  - name: Cupones
+    description: Solo Administrador
 paths:
   /health:
     get:
@@ -144,6 +161,1220 @@ paths:
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
+  /catalogo/categorias:
+    get:
+      tags: [Catálogo público]
+      summary: Categorías activas con la cantidad de productos visibles
+      responses:
+        '200':
+          description: Arreglo de categorías, por nombre
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CategoriaPublica' }
+  /catalogo/productos:
+    get:
+      tags: [Catálogo público]
+      summary: Búsqueda paginada de productos visibles (sin caché)
+      description: |
+        Visible = producto activo, categoría activa y al menos una variante activa.
+        precioMin/precioMax filtran sobre el precio mínimo del producto. Sin caché: trae `disponible`.
+      parameters:
+        - {
+            name: q,
+            in: query,
+            schema: { type: string, maxLength: 150 },
+            description: Nombre,
+            descripción,
+            categoría o SKU,
+          }
+        - { name: idCategoria, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: precioMin, in: query, schema: { $ref: '#/components/schemas/Monto' } }
+        - { name: precioMax, in: query, schema: { $ref: '#/components/schemas/Monto' } }
+        - name: disponible
+          in: query
+          description: true con existencia disponible, false agotados; sin el filtro, todos
+          schema: { type: string, enum: ['true', 'false'] }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                precio:asc,
+                precio:desc,
+                nombre:asc,
+                nombre:desc,
+                fechaCreacion:asc,
+                fechaCreacion:desc,
+              ]
+            default: fechaCreacion:desc
+      responses:
+        '200':
+          description: Página de productos
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProductoCatalogo' }
+        '400': { $ref: '#/components/responses/Error' }
+  /catalogo/productos/{id}:
+    get:
+      tags: [Catálogo público]
+      summary: Detalle público con variantes activas y existencia disponible (sin caché)
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      responses:
+        '200':
+          description: Producto visible
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProductoPublico' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404':
+          description: NO_ENCONTRADO (no existe, inactivo, categoría inactiva o sin variantes activas)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /metodos-envio:
+    get:
+      tags: [Catálogo público]
+      summary: Métodos de envío activos, por costo
+      responses:
+        '200':
+          description: Arreglo de métodos de envío
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MetodoEnvio' }
+  /categorias:
+    get:
+      tags: [Categorías]
+      summary: Lista paginada de categorías, incluye inactivas
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { $ref: '#/components/parameters/Activo' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                nombre:asc,
+                nombre:desc,
+                activo:asc,
+                activo:desc,
+                cantidadProductos:asc,
+                cantidadProductos:desc,
+              ]
+            default: nombre:asc
+      responses:
+        '200':
+          description: Página de categorías
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Categoria' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Categorías]
+      summary: Crea una categoría
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoriaEntrada' }
+      responses:
+        '201':
+          description: Categoría creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categoria' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409':
+          description: DUPLICADO (nombre repetido)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /categorias/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Categorías]
+      summary: Detalle de una categoría
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Categoría
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categoria' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Categorías]
+      summary: Reemplaza nombre y descripción (omitir descripcion la borra)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoriaEntrada' }
+      responses:
+        '200':
+          description: Categoría actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categoria' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Categorías]
+      summary: Elimina una categoría sin productos ni cupones
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Eliminada
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: EN_USO (tiene productos, aun inactivos, o cupones)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /categorias/{id}/estado:
+    patch:
+      tags: [Categorías]
+      summary: Activa o desactiva (desactivar oculta sus productos de la tienda)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Estado' }
+      responses:
+        '200':
+          description: Categoría con el estado nuevo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Categoria' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /productos:
+    get:
+      tags: [Productos]
+      summary: Lista paginada de productos, incluye inactivos
+      security:
+        - bearerAuth: []
+      parameters:
+        - {
+            name: q,
+            in: query,
+            schema: { type: string, maxLength: 150 },
+            description: Nombre o SKU,
+          }
+        - { name: idCategoria, in: query, schema: { type: integer, minimum: 1 } }
+        - { $ref: '#/components/parameters/Activo' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                nombre:asc,
+                nombre:desc,
+                categoria:asc,
+                categoria:desc,
+                precio:asc,
+                precio:desc,
+                existencia:asc,
+                existencia:desc,
+                fechaCreacion:asc,
+                fechaCreacion:desc,
+              ]
+            default: fechaCreacion:desc
+      responses:
+        '200':
+          description: Página de productos
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProductoListado' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Productos]
+      summary: Crea el producto con sus variantes en una transacción
+      description: |
+        La existencia inicial entra como movimiento de kardex INVENTARIO_INICIAL.
+        Dos valores del mismo atributo en una variante, o dos variantes con la misma
+        combinación → 400 VALIDACION. SKU repetido → 409 DUPLICADO. Categoría inexistente → 404.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductoNuevo' }
+      responses:
+        '201':
+          description: Producto creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /productos/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Productos]
+      summary: Detalle de gestión con todas las variantes y existencias
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Producto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Productos]
+      summary: Reemplaza nombre, descripción y categoría
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductoEntrada' }
+      responses:
+        '200':
+          description: Producto actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Productos]
+      summary: Elimina un producto sin ventas, kardex ni reservas
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Eliminado (con sus imágenes, variantes y líneas de carrito)
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: PRODUCTO_CON_VENTAS (se debe desactivar) o EN_USO (tiene kardex o reservas)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /productos/{id}/estado:
+    patch:
+      tags: [Productos]
+      summary: Activa o desactiva (un producto inactivo no se ve en la tienda)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Estado' }
+      responses:
+        '200':
+          description: Producto con el estado nuevo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /productos/{id}/imagenes:
+    post:
+      tags: [Productos]
+      summary: Agrega una imagen por URL
+      description: Si el producto no tenía principal, la nueva lo es; esPrincipal true reemplaza la anterior.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImagenEntrada' }
+      responses:
+        '201':
+          description: Producto con sus imágenes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /productos/{id}/imagenes/{idImagen}:
+    delete:
+      tags: [Productos]
+      summary: Quita una imagen (si era la principal, pasa a la siguiente por orden)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { name: idImagen, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '204':
+          description: Imagen eliminada
+        '404':
+          description: NO_ENCONTRADO (también si la imagen es de otro producto)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /productos/{id}/variantes:
+    post:
+      tags: [Productos]
+      summary: Agrega una variante al producto
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VarianteNueva' }
+      responses:
+        '201':
+          description: Variante creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variante' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /variantes/{id}:
+    put:
+      tags: [Variantes]
+      summary: Actualiza SKU y valores de atributo (la existencia no se edita aquí)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VarianteActualizada' }
+      responses:
+        '200':
+          description: Variante actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variante' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /variantes/{id}/precio:
+    patch:
+      tags: [Variantes]
+      summary: Cambia el precio (queda en la bitácora; no altera pedidos ya realizados)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [precio]
+              properties:
+                precio: { $ref: '#/components/schemas/Monto' }
+      responses:
+        '200':
+          description: Variante con el precio nuevo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variante' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /variantes/{id}/estado:
+    patch:
+      tags: [Variantes]
+      summary: Activa o desactiva la variante
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Estado' }
+      responses:
+        '200':
+          description: Variante con el estado nuevo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Variante' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /atributos:
+    get:
+      tags: [Atributos]
+      summary: Atributos con sus valores
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Arreglo de atributos
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Atributo' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Atributos]
+      summary: Crea un atributo
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre]
+              properties:
+                nombre: { type: string, minLength: 1, maxLength: 50, example: Material }
+      responses:
+        '201':
+          description: Atributo creado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  idAtributo: { type: integer }
+                  nombre: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /atributos/{id}/valores:
+    post:
+      tags: [Atributos]
+      summary: Agrega un valor a un atributo
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [valor]
+              properties:
+                valor: { type: string, minLength: 1, maxLength: 50, example: Algodón }
+      responses:
+        '201':
+          description: Valor creado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  idValorAtributo: { type: integer }
+                  idAtributo: { type: integer }
+                  atributo: { type: string }
+                  valor: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /inventario/tipos-movimiento:
+    get:
+      tags: [Inventario]
+      summary: Tipos de movimiento para el filtro del kardex
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tipos, primero los que suman
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TipoMovimiento' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /inventario/existencias:
+    get:
+      tags: [Inventario]
+      summary: Existencias por variante (incluye inactivas); sin caché
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          description: SKU o nombre del producto
+          schema: { type: string, maxLength: 150 }
+        - { name: idCategoria, in: query, schema: { type: integer, minimum: 1 } }
+        - name: bajoStock
+          in: query
+          description: true disponible ≤ umbral, false mayor; sin el filtro, todas
+          schema: { type: string, enum: ['true', 'false'] }
+        - { $ref: '#/components/parameters/Activo' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                sku:asc,
+                sku:desc,
+                producto:asc,
+                producto:desc,
+                categoria:asc,
+                categoria:desc,
+                existenciaFisica:asc,
+                existenciaFisica:desc,
+                existenciaReservada:asc,
+                existenciaReservada:desc,
+                existenciaDisponible:asc,
+                existenciaDisponible:desc,
+              ]
+            default: existenciaDisponible:asc
+      responses:
+        '200':
+          description: Página de existencias
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Existencia' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /inventario/variantes/{idVariante}/kardex:
+    get:
+      tags: [Inventario]
+      summary: Kardex de una variante
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: idVariante
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - { $ref: '#/components/parameters/Desde' }
+        - { $ref: '#/components/parameters/Hasta' }
+        - name: tipo
+          in: query
+          description: Código del tipo de movimiento, sin distinguir mayúsculas
+          schema: { type: string, maxLength: 30, example: AJUSTE_SALIDA }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [fecha:asc, fecha:desc], default: fecha:desc }
+      responses:
+        '200':
+          description: Página de movimientos
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Movimiento' }
+        '400':
+          description: VALIDACION (fecha mal formada, desde > hasta, tipo inexistente, sort)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /inventario/entradas:
+    post:
+      tags: [Inventario]
+      summary: Entrada por compra (kardex ENTRADA_COMPRA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idVariante, cantidad]
+              properties:
+                idVariante: { type: integer, minimum: 1 }
+                cantidad: { type: integer, minimum: 1, maximum: 1000000 }
+                motivo:
+                  type: [string, 'null']
+                  maxLength: 300
+                  description: Sin él queda 'Entrada por compra'
+      responses:
+        '201':
+          description: Movimiento registrado y existencia resultante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MovimientoRegistrado' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /inventario/ajustes:
+    post:
+      tags: [Inventario]
+      summary: Ajuste manual (kardex AJUSTE_ENTRADA o AJUSTE_SALIDA)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idVariante, tipo, cantidad, motivo]
+              properties:
+                idVariante: { type: integer, minimum: 1 }
+                tipo: { type: string, enum: [ENTRADA, SALIDA] }
+                cantidad: { type: integer, minimum: 1, maximum: 1000000 }
+                motivo:
+                  { type: string, minLength: 1, maxLength: 300, example: Producto dañado en bodega }
+      responses:
+        '201':
+          description: Movimiento registrado y existencia resultante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MovimientoRegistrado' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '422':
+          description: EXISTENCIA_NEGATIVA (la salida deja la existencia en negativo o bajo lo reservado)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /direcciones:
+    get:
+      tags: [Direcciones]
+      summary: Direcciones activas del cliente (sin paginar)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Direcciones por idDireccion
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Direccion' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Direcciones]
+      summary: Crea una dirección
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DireccionEntrada' }
+      responses:
+        '201':
+          description: Dirección creada
+          headers:
+            Location:
+              schema: { type: string, example: /api/direcciones/5 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Direccion' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /direcciones/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Direcciones]
+      summary: Una dirección propia y activa
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dirección
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Direccion' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404':
+          description: NO_ENCONTRADO (inexistente, dada de baja o de otro cliente)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [Direcciones]
+      summary: Reemplaza todos los campos (omitir un opcional lo borra)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DireccionEntrada' }
+      responses:
+        '200':
+          description: Dirección actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Direccion' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Direcciones]
+      summary: Baja lógica (los pedidos conservan su copia)
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Dada de baja
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /carrito:
+    get:
+      tags: [Carrito]
+      summary: Carrito actual (vacío con idCarrito null si no existe)
+      description: Con Authorization manda el usuario (solo Cliente; otro rol 403) y el X-Cart-Token se ignora.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/XCartToken' }
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Carrito]
+      summary: Vacía el carrito y quita el cupón
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/XCartToken' }
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /carrito/items:
+    post:
+      tags: [Carrito]
+      summary: Agrega una variante (suma si ya está); crea el carrito
+      description: Al invitado sin carrito le devuelve tokenInvitado. Variante inactiva o inexistente 404; más de lo disponible 409 STOCK_INSUFICIENTE.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/XCartToken' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idVariante, cantidad]
+              properties:
+                idVariante: { type: integer, minimum: 1 }
+                cantidad: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /carrito/items/{idVariante}:
+    parameters:
+      - name: idVariante
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    patch:
+      tags: [Carrito]
+      summary: Cambia la cantidad de una línea
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/XCartToken' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cantidad]
+              properties:
+                cantidad: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Carrito]
+      summary: Quita una línea (conserva el cupón)
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/XCartToken' }
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /carrito/cupon:
+    post:
+      tags: [Carrito]
+      summary: Aplica un cupón (reemplaza al anterior)
+      description: Un invitado recibe 401. Un cupón inválido responde 422 con su código (CUPON_*).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codigo]
+              properties:
+                codigo: { type: string, maxLength: 30, example: BIENVENIDA10 }
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Carrito]
+      summary: Quita el cupón (sin cupón no es error)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Carrito completo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Carrito' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /carrito/fusionar:
+    post:
+      tags: [Carrito]
+      summary: Pasa el carrito de invitado al del cliente
+      description: >-
+        El token va en el body o, si no viene, en el header X-Cart-Token. Suma recortando a lo
+        disponible; repetirla o un token inexistente no cambia nada.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/XCartToken' }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tokenInvitado: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Carrito del cliente más el resumen de la fusión
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CarritoFusionado' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+  /cupones:
+    get:
+      tags: [Cupones]
+      summary: Lista paginada de cupones
+      security:
+        - bearerAuth: []
+      parameters:
+        - {
+            name: q,
+            in: query,
+            description: Código (contiene),
+            schema: { type: string, maxLength: 100 },
+          }
+        - { $ref: '#/components/parameters/Activo' }
+        - {
+            name: vigente,
+            in: query,
+            description: Solo mira las fechas,
+            schema: { type: string, enum: ['true', 'false'] },
+          }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          description: 'campo:asc|desc con codigo, fechaInicio, fechaFin, usosActuales o valor'
+          schema: { type: string, default: 'codigo:asc' }
+      responses:
+        '200':
+          description: Página de cupones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Cupon' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Cupones]
+      summary: Crea un cupón (activo, sin usos)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CuponEntrada' }
+      responses:
+        '201':
+          description: Cupón creado
+          headers:
+            Location:
+              schema: { type: string, example: /api/cupones/9 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cupon' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /cupones/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Cupones]
+      summary: Detalle de un cupón
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cupón
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cupon' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Cupones]
+      summary: Reemplaza lo editable (no cambia activo ni usos)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CuponEntrada' }
+      responses:
+        '200':
+          description: Cupón actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cupon' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Cupones]
+      summary: Elimina un cupón sin pedidos ni carritos
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Eliminado
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: EN_USO (algún pedido, aunque cancelado, o carrito lo tiene)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /cupones/{id}/estado:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [Cupones]
+      summary: Activa o desactiva
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [activo]
+              properties:
+                activo: { type: boolean }
+      responses:
+        '200':
+          description: Cupón actualizado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cupon' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /cupones/{id}/usos:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Cupones]
+      summary: Usos del cupón (excluye pedidos cancelados)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          description: 'campo:asc|desc con fecha o descuento'
+          schema: { type: string, default: 'fecha:desc' }
+      responses:
+        '200':
+          description: Página de usos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/UsoCupon' }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+                  total: { type: integer }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     bearerAuth:
@@ -161,6 +1392,45 @@ components:
     XCache:
       description: HIT si la respuesta salió de Redis, MISS si salió de la base
       schema: { type: string, enum: [HIT, MISS] }
+  parameters:
+    XCartToken:
+      name: X-Cart-Token
+      in: header
+      required: false
+      description: Token del carrito de invitado (UUID). Se ignora si hay Authorization
+      schema: { type: string, format: uuid }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Activo:
+      name: activo
+      in: query
+      description: Sin el filtro, todos
+      schema: { type: string, enum: ['true', 'false'] }
+    Desde:
+      name: desde
+      in: query
+      description: >-
+        Inclusive. YYYY-MM-DD (desde las 00:00 de ese día en Guatemala, UTC-6) o instante ISO 8601
+        con zona
+      schema: { type: string, example: '2026-11-01' }
+    Hasta:
+      name: hasta
+      in: query
+      description: >-
+        Inclusive. YYYY-MM-DD (hasta las 23:59:59.999 de ese día en Guatemala, UTC-6) o instante
+        ISO 8601 con zona
+      schema: { type: string, example: '2026-11-30' }
   responses:
     Error:
       description: Error con el formato estándar (ver el catálogo de códigos en API.md §4)
@@ -248,3 +1518,416 @@ components:
         page: { type: integer, minimum: 1 }
         pageSize: { type: integer, minimum: 1, maximum: 100 }
         total: { type: integer, minimum: 0 }
+    Monto:
+      type: string
+      pattern: '^\d{1,10}(\.\d{1,2})?$'
+      description: Monto en quetzales con IVA, como string decimal (las respuestas siempre llevan 2 decimales)
+      example: '149.00'
+    ValorVariante:
+      type: object
+      properties:
+        idAtributo: { type: integer }
+        atributo: { type: string, example: Talla }
+        idValorAtributo: { type: integer }
+        valor: { type: string, example: M }
+    Imagen:
+      type: object
+      properties:
+        idProductoImagen: { type: integer }
+        url: { type: string, format: uri }
+        orden: { type: integer, minimum: 0, maximum: 255 }
+        esPrincipal: { type: boolean }
+    CategoriaPublica:
+      type: object
+      properties:
+        idCategoria: { type: integer }
+        nombre: { type: string }
+        descripcion: { type: [string, 'null'] }
+        cantidadProductos: { type: integer, description: Productos visibles en la tienda }
+    MetodoEnvio:
+      type: object
+      properties:
+        idMetodoEnvio: { type: integer }
+        nombre: { type: string }
+        costo: { $ref: '#/components/schemas/Monto' }
+        diasEstimados: { type: integer }
+    ProductoCatalogo:
+      type: object
+      properties:
+        idProducto: { type: integer }
+        nombre: { type: string }
+        descripcion: { type: [string, 'null'] }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        precioMinimo: { $ref: '#/components/schemas/Monto' }
+        precioMaximo: { $ref: '#/components/schemas/Monto' }
+        disponible:
+          { type: boolean, description: Alguna variante activa tiene existencia disponible }
+        imagenPrincipal: { type: [string, 'null'] }
+        fechaCreacion: { type: string, format: date-time }
+    ProductoPublico:
+      type: object
+      properties:
+        idProducto: { type: integer }
+        nombre: { type: string }
+        descripcion: { type: [string, 'null'] }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        precioMinimo: { $ref: '#/components/schemas/Monto' }
+        precioMaximo: { $ref: '#/components/schemas/Monto' }
+        disponible: { type: boolean }
+        fechaCreacion: { type: string, format: date-time }
+        imagenes:
+          type: array
+          items: { $ref: '#/components/schemas/Imagen' }
+        variantes:
+          type: array
+          description: Solo variantes activas
+          items:
+            type: object
+            properties:
+              idVariante: { type: integer }
+              sku: { type: string }
+              precio: { $ref: '#/components/schemas/Monto' }
+              existenciaDisponible: { type: integer }
+              descripcion: { type: [string, 'null'], example: Talla M / Color Negro }
+              valores:
+                type: array
+                items: { $ref: '#/components/schemas/ValorVariante' }
+    Estado:
+      type: object
+      required: [activo]
+      properties:
+        activo: { type: boolean }
+    CategoriaEntrada:
+      type: object
+      required: [nombre]
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 100 }
+        descripcion: { type: [string, 'null'], maxLength: 500 }
+    Categoria:
+      type: object
+      properties:
+        idCategoria: { type: integer }
+        nombre: { type: string }
+        descripcion: { type: [string, 'null'] }
+        activo: { type: boolean }
+        cantidadProductos: { type: integer }
+        cantidadCupones: { type: integer }
+    ProductoEntrada:
+      type: object
+      required: [idCategoria, nombre]
+      properties:
+        idCategoria: { type: integer, minimum: 1 }
+        nombre: { type: string, minLength: 1, maxLength: 150 }
+        descripcion: { type: [string, 'null'], maxLength: 4000 }
+    VarianteNueva:
+      type: object
+      required: [sku, precio]
+      properties:
+        sku: { type: string, minLength: 1, maxLength: 50 }
+        precio: { $ref: '#/components/schemas/Monto' }
+        existenciaInicial: { type: integer, minimum: 0, default: 0 }
+        valores:
+          type: array
+          description: idValorAtributo, como máximo uno por atributo
+          items: { type: integer, minimum: 1 }
+          default: []
+    VarianteActualizada:
+      type: object
+      required: [sku]
+      properties:
+        sku: { type: string, minLength: 1, maxLength: 50 }
+        valores:
+          type: array
+          description: Ausente conserva los actuales; [] los quita todos
+          items: { type: integer, minimum: 1 }
+    ProductoNuevo:
+      allOf:
+        - { $ref: '#/components/schemas/ProductoEntrada' }
+        - type: object
+          required: [variantes]
+          properties:
+            variantes:
+              type: array
+              minItems: 1
+              maxItems: 50
+              items: { $ref: '#/components/schemas/VarianteNueva' }
+    ImagenEntrada:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri, maxLength: 500, description: http:// o https:// }
+        orden: { type: integer, minimum: 0, maximum: 255, default: 0 }
+        esPrincipal: { type: boolean, default: false }
+    Variante:
+      type: object
+      properties:
+        idVariante: { type: integer }
+        idProducto: { type: integer }
+        sku: { type: string }
+        precio: { $ref: '#/components/schemas/Monto' }
+        existenciaFisica: { type: integer }
+        existenciaReservada: { type: integer, description: Solo reservas vigentes }
+        existenciaDisponible: { type: integer }
+        activo: { type: boolean }
+        descripcion: { type: [string, 'null'] }
+        valores:
+          type: array
+          items: { $ref: '#/components/schemas/ValorVariante' }
+    Producto:
+      type: object
+      properties:
+        idProducto: { type: integer }
+        nombre: { type: string }
+        descripcion: { type: [string, 'null'] }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        categoriaActiva: { type: boolean }
+        activo: { type: boolean }
+        fechaCreacion: { type: string, format: date-time }
+        fechaModificacion: { type: [string, 'null'], format: date-time }
+        tieneVentas: { type: boolean }
+        puedeEliminarse: { type: boolean, description: Sin ventas, kardex ni reservas }
+        variantes:
+          type: array
+          items: { $ref: '#/components/schemas/Variante' }
+        imagenes:
+          type: array
+          items: { $ref: '#/components/schemas/Imagen' }
+    ProductoListado:
+      type: object
+      properties:
+        idProducto: { type: integer }
+        nombre: { type: string }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        activo: { type: boolean }
+        cantidadVariantes: { type: integer }
+        cantidadVariantesActivas: { type: integer }
+        precioMinimo: { oneOf: [{ $ref: '#/components/schemas/Monto' }, { type: 'null' }] }
+        precioMaximo: { oneOf: [{ $ref: '#/components/schemas/Monto' }, { type: 'null' }] }
+        existenciaFisica: { type: integer }
+        existenciaReservada: { type: integer }
+        existenciaDisponible: { type: integer }
+        imagenPrincipal: { type: [string, 'null'] }
+        fechaCreacion: { type: string, format: date-time }
+        fechaModificacion: { type: [string, 'null'], format: date-time }
+    Atributo:
+      type: object
+      properties:
+        idAtributo: { type: integer }
+        nombre: { type: string, example: Talla }
+        cantidadValores: { type: integer }
+        valores:
+          type: array
+          items:
+            type: object
+            properties:
+              idValorAtributo: { type: integer }
+              valor: { type: string, example: M }
+              cantidadVariantes: { type: integer }
+    TipoMovimiento:
+      type: object
+      properties:
+        idTipoMovimientoInventario: { type: integer }
+        codigo: { type: string, example: AJUSTE_SALIDA }
+        nombre: { type: string, example: Ajuste de salida }
+        signo: { type: integer, enum: [1, -1] }
+    Existencia:
+      type: object
+      properties:
+        idVariante: { type: integer }
+        sku: { type: string }
+        idProducto: { type: integer }
+        producto: { type: string }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        descripcion: { type: [string, 'null'], example: Talla M / Color Negro }
+        precio: { $ref: '#/components/schemas/Monto' }
+        existenciaFisica: { type: integer }
+        existenciaReservada: { type: integer, description: Solo reservas vigentes }
+        existenciaDisponible: { type: integer }
+        bajoStock: { type: boolean, description: existenciaDisponible ≤ umbralBajoStock }
+        umbralBajoStock: { type: integer, example: 5 }
+        activo: { type: boolean }
+        productoActivo: { type: boolean }
+        categoriaActiva: { type: boolean }
+    Movimiento:
+      type: object
+      properties:
+        idMovimientoInventario:
+          { type: integer, format: int64, description: BIGINT; en JSON como número }
+        idVariante: { type: integer }
+        fecha: { type: string, format: date-time }
+        codigoTipoMovimiento: { type: string, example: AJUSTE_SALIDA }
+        nombreTipoMovimiento: { type: string }
+        signo: { type: integer, enum: [1, -1] }
+        cantidad: { type: integer, minimum: 1 }
+        existenciaAnterior: { type: integer }
+        existenciaNueva: { type: integer, description: existenciaAnterior + signo × cantidad }
+        motivo: { type: string }
+        idUsuario: { type: integer }
+        usuario: { type: string }
+        idPedido: { type: [integer, 'null'] }
+        numeroPedido: { type: [string, 'null'] }
+        idDevolucion: { type: [integer, 'null'] }
+    MovimientoRegistrado:
+      allOf:
+        - { $ref: '#/components/schemas/Movimiento' }
+        - type: object
+          description: Existencia de la variante después del movimiento
+          properties:
+            sku: { type: string }
+            existenciaFisica: { type: integer }
+            existenciaReservada: { type: integer }
+            existenciaDisponible: { type: integer }
+    DireccionEntrada:
+      type: object
+      required: [alias, nombreDestinatario, telefono, linea1, municipio, departamento]
+      properties:
+        alias: { type: string, minLength: 1, maxLength: 50, example: Casa }
+        nombreDestinatario: { type: string, minLength: 1, maxLength: 150 }
+        telefono: { type: string, maxLength: 20, pattern: '^\+?[\d\s-]{8,20}$', example: 5555-1234 }
+        linea1: { type: string, minLength: 1, maxLength: 200 }
+        linea2: { type: [string, 'null'], maxLength: 200 }
+        municipio: { type: string, minLength: 1, maxLength: 100 }
+        departamento: { type: string, minLength: 1, maxLength: 100 }
+        codigoPostal: { type: [string, 'null'], pattern: '^\d{5}$', example: '01001' }
+        referencias: { type: [string, 'null'], maxLength: 300 }
+    Direccion:
+      allOf:
+        - type: object
+          properties:
+            idDireccion: { type: integer }
+        - { $ref: '#/components/schemas/DireccionEntrada' }
+
+    CuponCarrito:
+      type: object
+      properties:
+        idCupon: { type: integer }
+        codigo: { type: string }
+        descripcion: { type: [string, 'null'] }
+        tipoDescuento: { type: string, enum: [PORCENTAJE, MONTO_FIJO] }
+        valor: { $ref: '#/components/schemas/Monto' }
+        idCategoria: { type: [integer, 'null'] }
+        categoria: { type: [string, 'null'] }
+        aplicado: { type: boolean, description: false si el cupón guardado ya no vale }
+        codigoError: { type: [string, 'null'], example: CUPON_VENCIDO }
+        mensajeError: { type: [string, 'null'] }
+    ItemCarrito:
+      type: object
+      properties:
+        idCarritoDetalle: { type: integer }
+        idVariante: { type: integer }
+        sku: { type: string }
+        idProducto: { type: integer }
+        producto: { type: string }
+        idCategoria: { type: integer }
+        categoria: { type: string }
+        variante: { type: [string, 'null'] }
+        imagen: { type: [string, 'null'] }
+        precioUnitario: { $ref: '#/components/schemas/Monto' }
+        cantidad: { type: integer }
+        importe: { $ref: '#/components/schemas/Monto' }
+        descuentoLinea: { $ref: '#/components/schemas/Monto' }
+        importeNeto: { $ref: '#/components/schemas/Monto' }
+        elegibleCupon: { type: boolean }
+        existenciaDisponible: { type: integer, description: Sin contar la reserva propia }
+        vendible: { type: boolean }
+        excedeDisponible: { type: boolean }
+        requiereAjuste: { type: boolean }
+        fechaAgregado: { type: string, format: date-time }
+    Carrito:
+      type: object
+      properties:
+        idCarrito: { type: [integer, 'null'] }
+        tokenInvitado: { type: string, format: uuid, description: Solo a invitados }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ItemCarrito' }
+        cupon:
+          oneOf:
+            - { $ref: '#/components/schemas/CuponCarrito' }
+            - { type: 'null' }
+        cantidadLineas: { type: integer }
+        cantidadUnidades: { type: integer }
+        subtotal: { $ref: '#/components/schemas/Monto' }
+        descuento: { $ref: '#/components/schemas/Monto' }
+        total: { $ref: '#/components/schemas/Monto' }
+        porcentajeIVA: { $ref: '#/components/schemas/Monto' }
+        montoIVA: { $ref: '#/components/schemas/Monto' }
+        lineasRequierenAjuste: { type: integer }
+    CarritoFusionado:
+      allOf:
+        - { $ref: '#/components/schemas/Carrito' }
+        - type: object
+          properties:
+            fusion:
+              type: array
+              items:
+                type: object
+                properties:
+                  idVariante: { type: integer }
+                  sku: { type: string }
+                  cantidadInvitado: { type: integer }
+                  cantidadAnterior: { type: integer }
+                  cantidadFinal: { type: integer }
+                  cantidadAgregada: { type: integer }
+                  recortada: { type: boolean }
+    CuponEntrada:
+      type: object
+      required: [codigo, tipoDescuento, valor, fechaInicio, fechaFin, limiteUsosTotal]
+      properties:
+        codigo:
+          {
+            type: string,
+            maxLength: 30,
+            pattern: '^[A-Za-z0-9_-]+$',
+            description: Se guarda en mayúsculas,
+          }
+        descripcion: { type: [string, 'null'], maxLength: 300 }
+        tipoDescuento: { type: string, enum: [PORCENTAJE, MONTO_FIJO] }
+        valor: { $ref: '#/components/schemas/Monto' }
+        idCategoria: { type: [integer, 'null'], description: Sin ella aplica a todo el carrito }
+        montoMinimo: { $ref: '#/components/schemas/Monto' }
+        fechaInicio: { type: string, format: date-time, description: ISO 8601 con zona }
+        fechaFin: { type: string, format: date-time, description: Posterior a fechaInicio }
+        limiteUsosTotal: { type: integer, minimum: 1 }
+        limiteUsosPorCliente: { type: integer, minimum: 1, default: 1 }
+    Cupon:
+      type: object
+      properties:
+        idCupon: { type: integer }
+        codigo: { type: string }
+        descripcion: { type: [string, 'null'] }
+        tipoDescuento: { type: string, enum: [PORCENTAJE, MONTO_FIJO] }
+        valor: { $ref: '#/components/schemas/Monto' }
+        idCategoria: { type: [integer, 'null'] }
+        categoria: { type: [string, 'null'] }
+        montoMinimo: { $ref: '#/components/schemas/Monto' }
+        fechaInicio: { type: string, format: date-time }
+        fechaFin: { type: string, format: date-time }
+        limiteUsosTotal: { type: integer }
+        limiteUsosPorCliente: { type: integer }
+        usosActuales: { type: integer }
+        usosDisponibles: { type: integer }
+        activo: { type: boolean }
+        vigente: { type: boolean, description: Solo mira las fechas }
+        agotado: { type: boolean }
+        cantidadPedidos: { type: integer, description: Incluye cancelados }
+        cantidadCarritos: { type: integer }
+        puedeEliminarse: { type: boolean }
+    UsoCupon:
+      type: object
+      properties:
+        idUsoCupon: { type: integer }
+        idPedido: { type: integer }
+        numeroPedido: { type: string }
+        idUsuario: { type: integer }
+        cliente: { type: string }
+        correo: { type: string }
+        descuento: { $ref: '#/components/schemas/Monto' }
+        totalPedido: { $ref: '#/components/schemas/Monto' }
+        estadoPedido: { type: string }
+        fecha: { type: string, format: date-time }

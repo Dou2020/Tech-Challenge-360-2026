@@ -19,11 +19,19 @@
 
     Cupones: las vigencias son relativas a la fecha de ejecución, así BIENVENIDA10 y VERANO25
     siguen vigentes y VENCIDO5 vencido sin importar cuándo se cree la base.
-    AGOTADO5 nace con UsosActuales = LimiteUsosTotal sin filas en UsoCupon, porque aún no hay
-    pedidos de ejemplo: es el único contador de la semilla que no sale de su tabla de origen.
+    AGOTADO5 nace con UsosActuales = LimiteUsosTotal sin filas en UsoCupon, porque ningún pedido de
+    ejemplo lo usa: es el único contador de la semilla que no sale de su tabla de origen.
 
-    PENDIENTE: pedidos de ejemplo (con su detalle, pago, historial, kardex de venta y uso de
-    cupón), cuando existan los SPs de pedidos (012_sp_pedidos.sql).
+    Pedidos de ejemplo (último bloque): siete pedidos de cliente3@shopcart.gt (usuario 6) creados llamando a
+    los SPs reales (SP_Inventario_ReservarExistencia, SP_Pedidos_CrearPedido, SP_Pedidos_CambiarEstado,
+    SP_Pedidos_Cancelar, SP_Pedidos_RegistrarDevolucion), así el kardex, los saldos, el uso de cupón, el pago, el
+    historial y la bitácora salen de la misma lógica que en producción. Usan variantes distintas de la 4 y de las
+    que usan las pruebas, y el cliente 6 en lugar de los clientes 3 y 4. Los SPs ponen la fecha actual; como sa se
+    reescriben las fechas (con los triggers de inmutabilidad deshabilitados dentro de la transacción de la semilla y
+    vueltos a habilitar antes del COMMIT) para repartir los pedidos en varios días, uno de ellos a las 02:00 UTC
+    (20:00 del día anterior en Guatemala) para probar la agrupación por fecha local. Las existencias anterior y nueva
+    del kardex no cambian: solo se mueve el INVENTARIO_INICIAL de esas variantes a 30 días atrás para que el kardex
+    quede en orden cronológico. Al final un bloque comprueba que cada saldo coincide con su fuente.
 */
 USE [$(DbName)];
 GO
@@ -61,12 +69,16 @@ FROM (VALUES
         -- Cliente#2026; desactivado, para probar USUARIO_INACTIVO
         (5, N'Cliente', N'inactivo@shopcart.gt',
          N'$argon2id$v=19$m=65536,p=4,t=3$jjdFcGI+ighPuAZu69yCDw$fnGvzodDAvqJCzAOAgOvN72qwVmCYCrxxkLszudHvMU',
-         N'Carla', N'Ruiz', NULL, 0)
+         N'Carla', N'Ruiz', NULL, 0),
+        -- Cliente#2026; tercer cliente, dueño de los pedidos de ejemplo (mismo hash que cliente@shopcart.gt)
+        (6, N'Cliente', N'cliente3@shopcart.gt',
+         N'$argon2id$v=19$m=65536,p=4,t=3$42gzU+Uin/DGdqpX5qsodQ$ZPCrug7DUw96bnyoRiFyLAzupEsE7hQLreH/OF+okIk',
+         N'Diego', N'Ramírez', N'55510006', 1)
      ) AS u (Orden, Rol, Correo, HashContrasena, Nombre, Apellido, Telefono, Activo)
 INNER JOIN dbo.Rol AS r ON r.Nombre = u.Rol
 ORDER BY u.Orden;
 
-IF @@ROWCOUNT <> 5
+IF @@ROWCOUNT <> 6
     THROW 50000, N'Semilla: faltan roles en el catálogo; ejecuta 085_datos_catalogos.sql.', 1;
 
 DECLARE @IDAdmin INT = (SELECT IDUsuario FROM dbo.Usuario WHERE Correo = N'admin@shopcart.gt');
@@ -83,7 +95,9 @@ FROM (VALUES
         (3, N'cliente2@shopcart.gt', N'Casa',    N'Bruno García', N'55510004', N'3a. calle 4-15, zona 1',    NULL,
          N'Antigua Guatemala', N'Sacatepéquez', N'03001', N'Portón negro'),
         (4, N'inactivo@shopcart.gt', N'Casa',    N'Carla Ruiz',   N'55510005', N'Calzada Roosevelt 22-43, zona 11', NULL,
-         N'Mixco', N'Guatemala', N'01057', NULL)
+         N'Mixco', N'Guatemala', N'01057', NULL),
+        (5, N'cliente3@shopcart.gt', N'Casa',    N'Diego Ramírez', N'55510006', N'12 calle 3-40, zona 14', N'Casa 7',
+         N'Guatemala', N'Guatemala', N'01014', N'Portón blanco')
      ) AS d (Orden, Correo, Alias, NombreDestinatario, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal, Referencias)
 INNER JOIN dbo.Usuario AS us ON us.Correo = d.Correo
 ORDER BY d.Orden;
@@ -264,6 +278,246 @@ ORDER BY c.Orden;
 
 IF EXISTS (SELECT 1 FROM dbo.Cupon WHERE Codigo = N'VERANO25' AND IDCategoria IS NULL)
     THROW 50000, N'Semilla: la categoría de VERANO25 no existe.', 1;
+
+COMMIT TRANSACTION;
+GO
+
+/* =========================================================
+   Pedidos de ejemplo
+   =========================================================
+   Siete pedidos del cliente 6, en orden cronológico (los IDPedido siguen ese orden):
+     1  hace 12 días 15:30 UTC  ENTREGADO         2 x CAM-BAS-NEG-M + 1 x PAN-JOG-GRI-M, Estándar
+     2  hace  9 días 02:00 UTC  ENTREGADO         PAN-JEA-AZU-30 + ACC-GOR-NEG-U, Express  (20:00 del día anterior en Guatemala)
+     3  hace  8 días 14:00 UTC  CANCELADO         4 x CAM-BAS-BLA-M con VERANO25 (la cancelación libera el cupón)
+     4  hace  6 días 16:00 UTC  ENTREGADO         4 x CAM-BAS-BLA-M + ACC-GOR-ROJ-U con VERANO25, Estándar
+     5  hace  4 días 18:00 UTC  DEVUELTO_PARCIAL  3 x CAM-BAS-AZU-L + 2 x ACC-GOR-ROJ-U; devuelve 1 x CAM-BAS-AZU-L
+     6  hace  2 días 09:00 UTC  EN_PREPARACION    PAN-JOG-NEG-L + PAN-JEA-NEG-34, Express
+     7  hace  1 día  10:00 UTC  PAGADO            CAM-BAS-NEG-M + PAN-JEA-AZU-32, Recoger en tienda
+   Las fechas son relativas al día de ejecución. Cada pedido pasa por los SPs (carrito directo como sa; reservar,
+   pagar, cambiar estado, cancelar y devolver por los SPs). Los result sets que devuelven los SPs salen en la
+   consola de sqlcmd; no afectan los datos. */
+BEGIN TRANSACTION;
+
+-- Los triggers de inmutabilidad se deshabilitan solo para reescribir fechas; se vuelven a habilitar antes del COMMIT.
+DISABLE TRIGGER dbo.TR_Bitacora_ImpedirCambios ON dbo.Bitacora;
+DISABLE TRIGGER dbo.TR_Inventario_ImpedirCambiosKardex ON dbo.MovimientoInventario;
+
+DECLARE @Hoy DATETIME2(3) = CONVERT(DATETIME2(3), CONVERT(DATE, SYSUTCDATETIME()));
+DECLARE @IDCliente INT = (SELECT IDUsuario FROM dbo.Usuario WHERE Correo = N'cliente3@shopcart.gt');
+DECLARE @IDOperador INT = (SELECT IDUsuario FROM dbo.Usuario WHERE Correo = N'operador@shopcart.gt');
+DECLARE @IDDireccion INT = (SELECT MIN(IDDireccion) FROM dbo.Direccion WHERE IDUsuario = @IDCliente);
+
+DECLARE @Pedido TABLE (
+    Orden       INT           NOT NULL PRIMARY KEY,
+    DiasAtras   INT           NOT NULL,
+    MinutoDia   INT           NOT NULL,   -- minutos desde las 00:00 UTC
+    Cupon       NVARCHAR(30)  NULL,
+    Envio       NVARCHAR(100) NOT NULL
+);
+DECLARE @Linea TABLE (
+    Orden      INT          NOT NULL,
+    SKU        NVARCHAR(50) NOT NULL,
+    Cantidad   INT          NOT NULL,
+    Devolver   INT          NULL
+);
+-- Pasos después de crear el pedido: Accion ESTADO (CambiarEstado), CANCELAR o DEVOLVER; MinutosDespues se
+-- cuenta desde la creación del pedido.
+DECLARE @Paso TABLE (
+    Orden          INT           NOT NULL,
+    Secuencia      INT           NOT NULL,
+    Accion         NVARCHAR(10)  NOT NULL,
+    Estado         NVARCHAR(30)  NULL,
+    MinutosDespues INT           NOT NULL,
+    Comentario     NVARCHAR(300) NOT NULL,
+    PRIMARY KEY (Orden, Secuencia)
+);
+
+INSERT INTO @Pedido (Orden, DiasAtras, MinutoDia, Cupon, Envio)
+VALUES (1, 12,  930, NULL,       N'Estándar'),
+       (2,  9,  120, NULL,       N'Express'),
+       (3,  8,  840, N'VERANO25', N'Recoger en tienda'),
+       (4,  6,  960, N'VERANO25', N'Estándar'),
+       (5,  4, 1080, NULL,       N'Estándar'),
+       (6,  2,  540, NULL,       N'Express'),
+       (7,  1,  600, NULL,       N'Recoger en tienda');
+
+INSERT INTO @Linea (Orden, SKU, Cantidad, Devolver)
+VALUES (1, N'CAM-BAS-NEG-M',  2, NULL),
+       (1, N'PAN-JOG-GRI-M',  1, NULL),
+       (2, N'PAN-JEA-AZU-30', 1, NULL),
+       (2, N'ACC-GOR-NEG-U',  1, NULL),
+       (3, N'CAM-BAS-BLA-M',  4, NULL),
+       (4, N'CAM-BAS-BLA-M',  4, NULL),
+       (4, N'ACC-GOR-ROJ-U',  1, NULL),
+       (5, N'CAM-BAS-AZU-L',  3, 1),
+       (5, N'ACC-GOR-ROJ-U',  2, NULL),
+       (6, N'PAN-JOG-NEG-L',  1, NULL),
+       (6, N'PAN-JEA-NEG-34', 1, NULL),
+       (7, N'CAM-BAS-NEG-M',  1, NULL),
+       (7, N'PAN-JEA-AZU-32', 1, NULL);
+
+INSERT INTO @Paso (Orden, Secuencia, Accion, Estado, MinutosDespues, Comentario)
+VALUES (1, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación'),
+       (1, 2, N'ESTADO',   N'DESPACHADO',     1440, N'Entregado a la transportista'),
+       (1, 3, N'ESTADO',   N'ENTREGADO',      2880, N'Entregado al cliente'),
+       (2, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación'),
+       (2, 2, N'ESTADO',   N'DESPACHADO',     1440, N'Entregado a la transportista'),
+       (2, 3, N'ESTADO',   N'ENTREGADO',      2880, N'Entregado al cliente'),
+       (3, 1, N'CANCELAR', NULL,              120,  N'Cambié de opinión'),
+       (4, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación'),
+       (4, 2, N'ESTADO',   N'DESPACHADO',     1440, N'Entregado a la transportista'),
+       (4, 3, N'ESTADO',   N'ENTREGADO',      2880, N'Entregado al cliente'),
+       (5, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación'),
+       (5, 2, N'ESTADO',   N'DESPACHADO',     1440, N'Entregado a la transportista'),
+       (5, 3, N'ESTADO',   N'ENTREGADO',      2880, N'Entregado al cliente'),
+       (5, 4, N'DEVOLVER', NULL,              4320, N'Talla incorrecta'),
+       (6, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación');
+
+DECLARE @Orden INT = 0, @Secuencia INT;
+DECLARE @Fecha DATETIME2(3), @FechaPaso DATETIME2(3);
+DECLARE @Cupon NVARCHAR(30), @Envio NVARCHAR(100), @IDCupon INT, @IDEnvio INT, @IDCarrito INT, @IDPedido INT;
+DECLARE @Clave UNIQUEIDENTIFIER, @Accion NVARCHAR(10), @Estado NVARCHAR(30), @Minutos INT, @Comentario NVARCHAR(300);
+DECLARE @Lineas NVARCHAR(MAX);
+DECLARE @MaxRes INT, @MaxHist INT, @MaxMov BIGINT, @MaxBit BIGINT, @MaxDev INT;
+
+WHILE 1 = 1
+BEGIN
+    SELECT TOP (1) @Orden = Orden,
+           @Fecha = DATEADD(MINUTE, MinutoDia, DATEADD(DAY, -DiasAtras, @Hoy)),
+           @Cupon = Cupon, @Envio = Envio
+    FROM @Pedido
+    WHERE Orden > @Orden
+    ORDER BY Orden;
+
+    IF @@ROWCOUNT = 0
+        BREAK;
+
+    SELECT @IDCupon = IDCupon FROM dbo.Cupon WHERE Codigo = @Cupon;
+    SELECT @IDEnvio = IDMetodoEnvio FROM dbo.MetodoEnvio WHERE Nombre = @Envio;
+
+    IF @IDEnvio IS NULL OR (@Cupon IS NOT NULL AND @IDCupon IS NULL)
+        THROW 50000, N'Semilla: falta un método de envío o un cupón de los pedidos de ejemplo.', 1;
+
+    SET @IDCupon = CASE WHEN @Cupon IS NULL THEN NULL ELSE @IDCupon END;
+    SET @Clave = CONVERT(UNIQUEIDENTIFIER, CONCAT(N'5eed0000-0000-4000-8000-0000000000', RIGHT(CONCAT(N'00', @Orden), 2)));
+
+    -- Carrito del cliente con su cupón y sus líneas
+    INSERT INTO dbo.Carrito (IDUsuario, IDCupon, FechaCreacion, FechaUltimaActividad)
+    VALUES (@IDCliente, @IDCupon, @Fecha, @Fecha);
+
+    SET @IDCarrito = SCOPE_IDENTITY();
+
+    INSERT INTO dbo.CarritoDetalle (IDCarrito, IDVariante, Cantidad, FechaAgregado)
+    SELECT @IDCarrito, v.IDVariante, l.Cantidad, @Fecha
+    FROM @Linea AS l
+    INNER JOIN dbo.Variante AS v ON v.SKU = l.SKU
+    WHERE l.Orden = @Orden
+    ORDER BY v.IDVariante;
+
+    IF @@ROWCOUNT <> (SELECT COUNT(*) FROM @Linea WHERE Orden = @Orden)
+        THROW 50000, N'Semilla: un SKU de los pedidos de ejemplo no existe.', 1;
+
+    -- Reservar y pagar
+    SELECT @MaxRes = ISNULL(MAX(IDReservaExistencia), 0) FROM dbo.ReservaExistencia;
+    SELECT @MaxHist = ISNULL(MAX(IDHistorialEstadoPedido), 0) FROM dbo.HistorialEstadoPedido;
+    SELECT @MaxMov = ISNULL(MAX(IDMovimientoInventario), 0) FROM dbo.MovimientoInventario;
+    SELECT @MaxBit = ISNULL(MAX(IDBitacora), 0) FROM dbo.Bitacora;
+
+    EXEC dbo.SP_Inventario_ReservarExistencia @IDUsuarioSolicitante = @IDCliente, @IDDireccion = @IDDireccion,
+                                              @IDMetodoEnvio = @IDEnvio;
+
+    EXEC dbo.SP_Pedidos_CrearPedido @IDUsuarioSolicitante = @IDCliente, @ClaveIdempotencia = @Clave,
+                                    @IDDireccion = @IDDireccion, @IDMetodoEnvio = @IDEnvio,
+                                    @MetodoPago = N'TARJETA', @TitularTarjeta = N'Diego Ramírez',
+                                    @UltimosTarjeta = '4242';
+
+    SELECT @IDPedido = IDPedido FROM dbo.Pedido WHERE ClaveIdempotencia = @Clave;
+
+    -- Fecha de creación: pedido, pago, uso de cupón, reserva confirmada, historial, kardex y bitácora del pago
+    UPDATE dbo.Pedido SET FechaCreacion = @Fecha WHERE IDPedido = @IDPedido;
+    UPDATE dbo.Pago SET Fecha = @Fecha WHERE IDPedido = @IDPedido;
+    UPDATE dbo.UsoCupon SET Fecha = @Fecha WHERE IDPedido = @IDPedido;
+    UPDATE dbo.ReservaExistencia
+    SET FechaCreacion = DATEADD(MINUTE, -5, @Fecha), FechaExpiracion = DATEADD(MINUTE, 10, @Fecha)
+    WHERE IDReservaExistencia > @MaxRes;
+    UPDATE dbo.HistorialEstadoPedido SET Fecha = @Fecha WHERE IDHistorialEstadoPedido > @MaxHist;
+    UPDATE dbo.MovimientoInventario SET Fecha = @Fecha WHERE IDMovimientoInventario > @MaxMov;
+    UPDATE dbo.Bitacora SET Fecha = @Fecha WHERE IDBitacora > @MaxBit;
+    UPDATE dbo.Carrito SET FechaUltimaActividad = @Fecha WHERE IDCarrito = @IDCarrito;
+
+    -- Pasos posteriores
+    SET @Secuencia = 0;
+    WHILE 1 = 1
+    BEGIN
+        SELECT TOP (1) @Secuencia = Secuencia, @Accion = Accion, @Estado = Estado,
+               @Minutos = MinutosDespues, @Comentario = Comentario
+        FROM @Paso
+        WHERE Orden = @Orden AND Secuencia > @Secuencia
+        ORDER BY Secuencia;
+
+        IF @@ROWCOUNT = 0
+            BREAK;
+
+        SET @FechaPaso = DATEADD(MINUTE, @Minutos, @Fecha);
+
+        SELECT @MaxHist = ISNULL(MAX(IDHistorialEstadoPedido), 0) FROM dbo.HistorialEstadoPedido;
+        SELECT @MaxMov = ISNULL(MAX(IDMovimientoInventario), 0) FROM dbo.MovimientoInventario;
+        SELECT @MaxBit = ISNULL(MAX(IDBitacora), 0) FROM dbo.Bitacora;
+        SELECT @MaxDev = ISNULL(MAX(IDDevolucion), 0) FROM dbo.Devolucion;
+
+        IF @Accion = N'ESTADO'
+            EXEC dbo.SP_Pedidos_CambiarEstado @IDUsuarioSolicitante = @IDOperador, @IDPedido = @IDPedido,
+                                              @CodigoEstado = @Estado, @Comentario = @Comentario;
+        ELSE IF @Accion = N'CANCELAR'
+            EXEC dbo.SP_Pedidos_Cancelar @IDUsuarioSolicitante = @IDCliente, @IDPedido = @IDPedido,
+                                         @Motivo = @Comentario;
+        ELSE
+        BEGIN
+            SET @Lineas = (SELECT pd.IDPedidoDetalle AS idPedidoDetalle, l.Devolver AS cantidad
+                           FROM @Linea AS l
+                           INNER JOIN dbo.PedidoDetalle AS pd ON pd.IDPedido = @IDPedido AND pd.SKU = l.SKU
+                           WHERE l.Orden = @Orden AND l.Devolver IS NOT NULL
+                           ORDER BY pd.IDPedidoDetalle
+                           FOR JSON PATH);
+
+            EXEC dbo.SP_Pedidos_RegistrarDevolucion @IDUsuarioSolicitante = @IDOperador, @IDPedido = @IDPedido,
+                                                    @Motivo = @Comentario, @Lineas = @Lineas;
+        END;
+
+        UPDATE dbo.HistorialEstadoPedido SET Fecha = @FechaPaso WHERE IDHistorialEstadoPedido > @MaxHist;
+        UPDATE dbo.MovimientoInventario SET Fecha = @FechaPaso WHERE IDMovimientoInventario > @MaxMov;
+        UPDATE dbo.Bitacora SET Fecha = @FechaPaso WHERE IDBitacora > @MaxBit;
+        UPDATE dbo.Devolucion SET Fecha = @FechaPaso WHERE IDDevolucion > @MaxDev;
+    END;
+END;
+
+-- El inventario inicial de las variantes vendidas pasa a 30 días atrás: el kardex queda en orden cronológico.
+UPDATE dbo.MovimientoInventario
+SET Fecha = DATEADD(DAY, -30, @Hoy)
+WHERE Motivo = N'Inventario inicial (datos semilla)'
+  AND IDVariante IN (SELECT IDVariante FROM dbo.PedidoDetalle);
+
+ENABLE TRIGGER dbo.TR_Bitacora_ImpedirCambios ON dbo.Bitacora;
+ENABLE TRIGGER dbo.TR_Inventario_ImpedirCambiosKardex ON dbo.MovimientoInventario;
+
+-- Comprobación: cada saldo coincide con su fuente.
+IF EXISTS (
+    SELECT 1
+    FROM dbo.Variante AS v
+    OUTER APPLY (SELECT SUM(Signo * Cantidad) AS Saldo FROM dbo.MovimientoInventario WHERE IDVariante = v.IDVariante) AS k
+    OUTER APPLY (SELECT SUM(Cantidad) AS Reservada FROM dbo.ReservaExistencia WHERE IDVariante = v.IDVariante AND Estado = N'ACTIVA') AS r
+    WHERE v.ExistenciaFisica <> ISNULL(k.Saldo, 0)
+       OR v.ExistenciaReservada <> ISNULL(r.Reservada, 0)
+)
+    THROW 50000, N'Semilla: una existencia no coincide con el kardex o con las reservas.', 1;
+
+IF EXISTS (
+    SELECT 1
+    FROM dbo.Cupon AS c
+    WHERE c.Codigo <> N'AGOTADO5'
+      AND c.UsosActuales <> (SELECT COUNT(*) FROM dbo.UsoCupon WHERE IDCupon = c.IDCupon)
+)
+    THROW 50000, N'Semilla: UsosActuales de un cupón no coincide con UsoCupon.', 1;
 
 COMMIT TRANSACTION;
 GO

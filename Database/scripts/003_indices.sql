@@ -38,6 +38,8 @@ CREATE UNIQUE INDEX UX_Carrito_IDUsuario_Activo ON dbo.Carrito (IDUsuario) WHERE
 -- Carritos abandonados.
 CREATE INDEX IX_Carrito_Estado_FechaUltimaActividad ON dbo.Carrito (Estado, FechaUltimaActividad);
 CREATE INDEX IX_CarritoDetalle_IDVariante ON dbo.CarritoDetalle (IDVariante);
+-- Carritos con un cupón aplicado (SP_Cupones_Eliminar y los conteos de SP_Cupones_*).
+CREATE INDEX IX_Carrito_IDCupon ON dbo.Carrito (IDCupon) WHERE IDCupon IS NOT NULL;
 GO
 
 /* Pedidos */
