@@ -1,0 +1,126 @@
+# CI de backend y frontend y despliegue en el servidor propio.
+#
+# - Pull requests y pushes: typecheck, lint, formato y pruebas (las de integración levantan
+#   SQL Server y Redis con testcontainers en el runner de GitHub).
+# - Push a main (o ejecución manual sobre main): si todo pasa, despliega con docker compose en el
+#   servidor a través de un runner self-hosted con la etiqueta "shopcart".
+#
+# La guía para preparar el servidor, el runner y el túnel de Cloudflare está en el README.
+
+name: CI y despliegue
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: Backend/.nvmrc
+          cache: npm
+          cache-dependency-path: Backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx prettier --check .
+      - run: npm run test:unit
+      # globalSetup levanta SQL Server 2022 y Redis con el Docker del runner, crea ShopCart_Test
+      # y ejecuta Database/pruebas.
+      - run: npm run test:integration
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: Frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npx prettier --check .
+      - run: npm test
+      - run: npm run build
+
+  despliegue:
+    name: Despliegue
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, shopcart]
+    environment: produccion
+    timeout-minutes: 30
+    concurrency:
+      group: despliegue
+      cancel-in-progress: false
+    env:
+      # El .env del servidor vive fuera del repo (secretos reales, APP_URL_PUBLICA, FRONTEND_PORT…).
+      ENV_FILE: ${{ vars.SHOPCART_ENV_FILE || '/opt/shopcart/.env' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Revisar el .env del servidor
+        run: |
+          if [ ! -r "$ENV_FILE" ]; then
+            echo "::error::No existe o no se puede leer $ENV_FILE. Créalo a partir de .env.example (ver README)."
+            exit 1
+          fi
+          if grep -Eiq '^[[:space:]]*DB_RESET[[:space:]]*=[[:space:]]*["'\'']?true' "$ENV_FILE"; then
+            echo "::error::$ENV_FILE tiene DB_RESET=true: el despliegue borraría la base. Ponlo en false."
+            exit 1
+          fi
+
+      - name: Validar la configuración de compose
+        run: docker compose --env-file "$ENV_FILE" --profile app config -q
+
+      - name: Construir y levantar
+        run: docker compose --env-file "$ENV_FILE" --profile app up -d --build --remove-orphans
+
+      - name: Esperar a que la API responda a través de nginx
+        run: |
+          destino="$(docker compose --env-file "$ENV_FILE" --profile app port frontend 80)"
+          url="http://${destino/0.0.0.0/127.0.0.1}/api/health"
+          for _ in $(seq 1 36); do
+            if curl -fsS "$url" > /dev/null; then
+              echo "API lista en $url"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::$url no respondió en 3 minutos."
+          exit 1
+
+      - name: Estado y logs si algo falló
+        if: failure()
+        run: |
+          docker compose --env-file "$ENV_FILE" --profile app ps -a
+          docker compose --env-file "$ENV_FILE" --profile app logs --tail 200 backend frontend db-init
+
+      - name: Limpiar imágenes viejas
+        if: success()
+        run: docker image prune -f

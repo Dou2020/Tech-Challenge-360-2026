@@ -141,7 +141,9 @@ docker compose --profile app up -d --build
 | `frontend` | `app` | `FRONTEND_PORT` (8080) | Sitio servido por nginx; reenvía `/api` (también `/api/imagenes`) al backend |
 | `cloudflared` | `tunel` | — | Túnel de Cloudflare hacia `frontend`: `docker compose --profile app --profile tunel up -d` con `TUNNEL_TOKEN` en `.env`. Pon la URL pública del túnel en `APP_URL_PUBLICA` y `CORS_ORIGIN` |
 
-El registro y la recuperación de contraseña mandan un correo con un enlace. En desarrollo ábrelo en la bandeja de Mailpit; con el túnel o en producción configura `SMTP_*` con un proveedor real. nginx limita el cuerpo de las peticiones a 1 MB por defecto: para subir imágenes de hasta `IMAGENES_MAX_MB` hay que poner `client_max_body_size` en la sección `/api/` de `Frontend/nginx.conf`.
+Todos los puertos se publican en `PUERTOS_HOST` (por defecto `127.0.0.1`), así que solo se alcanzan desde la misma máquina: SQL Server, Redis y la bandeja de Mailpit, que muestra los enlaces de contraseña, no quedan expuestos en la red. Con `PUERTOS_HOST=0.0.0.0` se publican en todas las interfaces. No lo uses en un servidor: Docker se salta las reglas de `ufw`.
+
+El registro y la recuperación de contraseña mandan un correo con un enlace. En desarrollo ábrelo en la bandeja de Mailpit; con el túnel o en producción configura `SMTP_*` con un proveedor real. Las imágenes subidas se guardan en el disco del servidor (volumen `imagenes`), no en un almacenamiento externo. La sección `/api/` de `Frontend/nginx.conf` ya acepta cuerpos de hasta 6 MB (`client_max_body_size 6m`), por encima de `IMAGENES_MAX_MB` (5), para que un archivo demasiado grande lo rechace el backend con su 413 `ARCHIVO_DEMASIADO_GRANDE`; si se sube `IMAGENES_MAX_MB`, hay que subir también ese límite.
 
 Comandos útiles:
 
@@ -154,6 +156,15 @@ Comandos útiles:
 | `docker compose down -v` | Detener todo y borrar el volumen de la base |
 
 `docker compose up` no borra la base en cada arranque: `db-init` la crea solo si no existe. En equipos con Apple Silicon, la imagen de SQL Server corre emulada (`platform: linux/amd64`).
+
+#### Integración y despliegue continuos
+
+El workflow `.github/workflows/ci-despliegue.yml` se ejecuta en cada pull request y en cada push a `main`:
+- **Backend:** typecheck, lint, formato, pruebas unitarias y pruebas de integración (testcontainers levanta SQL Server y Redis, y además corre `Database/pruebas`).
+- **Frontend:** typecheck, lint, formato, pruebas y build.
+- **Despliegue:** si todo pasa en `main`, el job `despliegue` corre en un runner self-hosted del servidor (etiqueta `shopcart`). Ejecuta `docker compose --profile app up -d --build` con el `.env` del servidor (`/opt/shopcart/.env`, fuera del repo) y espera a que `/api/health` responda a través de nginx.
+
+El sitio se publica con un túnel de Cloudflare gestionado en el host (`cloudflared` como servicio de systemd). Las copias de referencia de su configuración están en `.cloudflared/` y las credenciales del túnel nunca se versionan. El despliegue no migra una base existente: un cambio de tablas requiere `DB_RESET=true … run --rm db-init` manual, que borra los datos.
 
 ### Opción manual
 

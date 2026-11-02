@@ -3,3 +3,5 @@ node_modules/
 dist/
 coverage/
 Backend/datos/
+# Credenciales de túneles de Cloudflare (cloudflared tunnel create)
+.cloudflared/*.json

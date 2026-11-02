@@ -1,0 +1,20 @@
+# Unidad de systemd del túnel de ShopCart. Copia de referencia: se instala en
+# /etc/systemd/system/cloudflared-shopcart.service.
+# Es una unidad propia porque `cloudflared service install` siempre crea cloudflared.service con
+# /etc/cloudflared/config.yml, y esa ya la puede usar otro túnel del mismo servidor.
+# Ajusta la ruta del binario a la que da `which cloudflared`.
+
+[Unit]
+Description=Cloudflare Tunnel (ShopCart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+TimeoutStartSec=0
+Type=notify
+ExecStart=/usr/bin/cloudflared --no-autoupdate --config /etc/cloudflared/shopcart.yml tunnel run
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

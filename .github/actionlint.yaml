@@ -1,0 +1,4 @@
+# Etiquetas propias del runner self-hosted del servidor (ver el job "despliegue").
+self-hosted-runner:
+  labels:
+    - shopcart
