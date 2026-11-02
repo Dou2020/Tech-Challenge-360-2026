@@ -12,6 +12,10 @@ export const claves = {
   usuario: (idUsuario: number) => `${PREFIJO}:usuario:${idUsuario}`,
   configuracion: () => `${PREFIJO}:configuracion`,
 
+  // --- Eventos en tiempo real (pub/sub; no guarda datos) ---
+  /** Canal por el que se avisa a los dashboards que los reportes cambiaron. */
+  canalReportes: () => `${PREFIJO}:eventos:reportes`,
+
   // --- Sesiones y autenticación (fail-closed) ---
   /** Hash con { idUsuario, familia } por cada refresh token emitido (también los ya rotados). */
   sesionToken: (hashToken: string) => `${PREFIJO}:sesion:token:${hashToken}`,

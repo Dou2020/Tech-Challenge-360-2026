@@ -27,8 +27,11 @@ import type {
 
 /**
  * Reportes: solo lectura. Se cachean (cache-aside, fail-open) porque no muestran existencia ni
- * reservas; `cache.invalidar('reportes')` la hacen los servicios de pedidos y checkout después de
- * confirmar la transacción. Un reporte nunca se calcula en Node: los montos vienen del SP.
+ * reservas; `cache.invalidar('reportes')` la hacen, después de confirmar la transacción, los
+ * servicios de pedidos y checkout, la actualización de categorías y productos (la vista une su
+ * nombre y categoría actuales) y `PUT /api/configuracion/:clave`. Los carritos abandonados quedan
+ * con TTL a propósito: un carrito se vuelve abandonado por el paso del tiempo, sin escritura alguna.
+ * Un reporte nunca se calcula en Node: los montos vienen del SP.
  */
 
 /** `YYYY-MM-DD` → parámetro DATE. Se envía como medianoche UTC para que el driver no lo corra de día. */

@@ -1,4 +1,5 @@
 import request from 'supertest';
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/config/database.js';
@@ -297,5 +298,186 @@ describe('Caché de reportes (Redis)', () => {
     // Assert
     expect(primera.headers['x-cache']).toBe('MISS');
     expect(segunda.headers['x-cache']).toBe('HIT');
+  });
+});
+
+describe('Invalidación de la caché de reportes por catálogo y configuración', () => {
+  /** Hoy ± 1 día: cubre la diferencia entre la fecha UTC y la de Guatemala. */
+  const rangoHoy = (): string => {
+    const hoy = new Date().toISOString().slice(0, 10);
+    return rango(dia(hoy, -1), dia(hoy, 1));
+  };
+  const rutaCategorias = () => `/api/reportes/ventas-por-categoria?${rangoHoy()}`;
+  const rutaTop = () => `/api/reportes/productos-mas-vendidos?limite=100&${rangoHoy()}`;
+  const sufijo = () => randomUUID().slice(0, 8).toUpperCase();
+
+  interface Escenario {
+    idCategoria: number;
+    idProducto: number;
+    nombreProducto: string;
+  }
+
+  const crearCategoria = async (nombre: string): Promise<number> => {
+    const r = await admin.post('/api/categorias').send({ nombre });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return r.body.idCategoria as number;
+  };
+
+  /** Categoría propia con un producto propio vendido y entregado hoy. */
+  const ventaEntregada = async (): Promise<Escenario> => {
+    const idCategoria = await crearCategoria(`Cat reportes ${sufijo()}`);
+    const { idProducto } = await crearVariante(admin, 5);
+    const nombreProducto = `Prod reportes ${sufijo()}`;
+    const mover = await admin
+      .put(`/api/productos/${idProducto}`)
+      .send({ idCategoria, nombre: nombreProducto });
+    expect(mover.status, JSON.stringify(mover.body)).toBe(200);
+    const comprador = await nuevoCliente(app);
+    const idVariante = (mover.body.variantes as { idVariante: number }[])[0]!.idVariante;
+    const idPedido = await comprar(comprador, await metodoEnvio(app), [
+      { idVariante, cantidad: 3 },
+    ]);
+    await avanzarPedido(operador, idPedido, 'EN_PREPARACION', 'DESPACHADO', 'ENTREGADO');
+    return { idCategoria, idProducto, nombreProducto };
+  };
+
+  /** Deja la clave vigente poblada y confirma que la segunda lectura es HIT. */
+  const calentar = async (ruta: string): Promise<void> => {
+    await admin.get(ruta);
+    expect((await admin.get(ruta)).headers['x-cache']).toBe('HIT');
+  };
+
+  type FilaCategoria = { idCategoria: number; categoria: string; unidadesNetas: number };
+  type FilaProducto = { idProducto: number; producto: string; idCategoria: number };
+
+  it('renombrar la categoría con PUT → ventas-por-categoria pasa de HIT a MISS con el nombre nuevo', async () => {
+    // Arrange
+    const { idCategoria } = await ventaEntregada();
+    await calentar(rutaCategorias());
+    const nombreNuevo = `Cat renombrada ${sufijo()}`;
+
+    // Act
+    const put = await admin.put(`/api/categorias/${idCategoria}`).send({ nombre: nombreNuevo });
+    const reporte = await admin.get(rutaCategorias());
+
+    // Assert
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(reporte.headers['x-cache']).toBe('MISS');
+    const fila = (reporte.body as FilaCategoria[]).find((c) => c.idCategoria === idCategoria);
+    expect(fila).toMatchObject({ categoria: nombreNuevo, unidadesNetas: 3 });
+  });
+
+  it('mover el producto a otra categoría con PUT → ventas-por-categoria es MISS y las ventas pasan a la nueva', async () => {
+    // Arrange
+    const { idCategoria, idProducto, nombreProducto } = await ventaEntregada();
+    const idCategoriaNueva = await crearCategoria(`Cat destino ${sufijo()}`);
+    await calentar(rutaCategorias());
+
+    // Act
+    const put = await admin
+      .put(`/api/productos/${idProducto}`)
+      .send({ idCategoria: idCategoriaNueva, nombre: nombreProducto });
+    const reporte = await admin.get(rutaCategorias());
+
+    // Assert
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(reporte.headers['x-cache']).toBe('MISS');
+    const filas = reporte.body as FilaCategoria[];
+    expect(filas.find((c) => c.idCategoria === idCategoriaNueva)?.unidadesNetas).toBe(3);
+    expect(filas.find((c) => c.idCategoria === idCategoria)).toBeUndefined();
+  });
+
+  it('renombrar el producto con PUT → productos-mas-vendidos pasa de HIT a MISS con el nombre nuevo', async () => {
+    // Arrange
+    const { idCategoria, idProducto } = await ventaEntregada();
+    await calentar(rutaTop());
+    const nombreNuevo = `Prod renombrado ${sufijo()}`;
+
+    // Act
+    const put = await admin
+      .put(`/api/productos/${idProducto}`)
+      .send({ idCategoria, nombre: nombreNuevo });
+    const reporte = await admin.get(rutaTop());
+
+    // Assert
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(reporte.headers['x-cache']).toBe('MISS');
+    const fila = (reporte.body as FilaProducto[]).find((p) => p.idProducto === idProducto);
+    expect(fila?.producto).toBe(nombreNuevo);
+  });
+
+  it('PUT /api/configuracion/HorasCarritoAbandonado → el siguiente resumen es MISS', async () => {
+    // Arrange
+    const ruta = `/api/reportes/resumen?${rangoHoy()}`;
+    const lista = await admin.get('/api/configuracion');
+    const original = (lista.body as { clave: string; valor: string }[]).find(
+      (p) => p.clave === 'HorasCarritoAbandonado',
+    )!.valor;
+    const nuevo = String(Number(original) + 1);
+    await calentar(ruta);
+
+    try {
+      // Act
+      const put = await admin
+        .put('/api/configuracion/HorasCarritoAbandonado')
+        .send({ valor: nuevo });
+      const reporte = await admin.get(ruta);
+
+      // Assert
+      expect(put.status, JSON.stringify(put.body)).toBe(200);
+      expect(reporte.headers['x-cache']).toBe('MISS');
+    } finally {
+      await admin.put('/api/configuracion/HorasCarritoAbandonado').send({ valor: original });
+    }
+  });
+
+  it.each([
+    ['categoría', (e: Escenario) => `/api/categorias/${e.idCategoria}/estado`],
+    ['producto', (e: Escenario) => `/api/productos/${e.idProducto}/estado`],
+  ])('el PATCH de estado de una %s deja el reporte en HIT', async (_nombre, ruta) => {
+    // Arrange
+    const escenario = await ventaEntregada();
+    await calentar(rutaCategorias());
+
+    // Act
+    const patch = await admin.patch(ruta(escenario)).send({ activo: false });
+    const reporte = await admin.get(rutaCategorias());
+
+    // Assert
+    expect(patch.status, JSON.stringify(patch.body)).toBe(200);
+    expect(reporte.headers['x-cache']).toBe('HIT');
+  });
+
+  it('un PUT de categoría que falla por nombre duplicado (409) deja el reporte en HIT', async () => {
+    // Arrange
+    const { idCategoria } = await ventaEntregada();
+    const otra = `Cat otra ${sufijo()}`;
+    await crearCategoria(otra);
+    await calentar(rutaCategorias());
+
+    // Act
+    const put = await admin.put(`/api/categorias/${idCategoria}`).send({ nombre: otra });
+    const reporte = await admin.get(rutaCategorias());
+
+    // Assert
+    expect(put.status).toBe(409);
+    expect(put.body.error.code).toBe('DUPLICADO');
+    expect(reporte.headers['x-cache']).toBe('HIT');
+  });
+
+  it('un PUT de producto que falla porque no existe (404) deja el reporte en HIT', async () => {
+    // Arrange
+    const { idCategoria } = await ventaEntregada();
+    await calentar(rutaTop());
+
+    // Act
+    const put = await admin
+      .put('/api/productos/2147483647')
+      .send({ idCategoria, nombre: `Fantasma ${sufijo()}` });
+    const reporte = await admin.get(rutaTop());
+
+    // Assert
+    expect(put.status).toBe(404);
+    expect(reporte.headers['x-cache']).toBe('HIT');
   });
 });

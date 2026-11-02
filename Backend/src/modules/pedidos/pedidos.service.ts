@@ -1,4 +1,5 @@
 import { cache } from '../../shared/cache/cache.js';
+import { eventos, type TipoEventoPedido } from '../../shared/eventos/eventos.js';
 import { aIso, rangoFechas } from '../../shared/utils/fechas.js';
 import { aMonto } from '../../shared/utils/montos.js';
 import {
@@ -45,6 +46,24 @@ function aResumen(f: FilaPedidoListado): PedidoResumen {
 }
 
 /** Ensambla los 3 result sets: pedido, líneas congeladas y transiciones posibles. */
+/**
+ * Invalida los reportes y avisa a los dashboards abiertos, en ese orden: así la petición
+ * que dispare el aviso responde MISS con datos frescos. Devuelve el mismo `pedido`.
+ */
+async function invalidarYAvisar<T extends { idPedido: number; estado: string }>(
+  tipo: TipoEventoPedido,
+  pedido: T,
+): Promise<T> {
+  await cache.invalidar('reportes');
+  await eventos.publicar({
+    tipo,
+    idPedido: pedido.idPedido,
+    estado: pedido.estado,
+    fecha: new Date().toISOString(),
+  });
+  return pedido;
+}
+
 export function armarDetalle({
   pedido: p,
   lineas,
@@ -203,8 +222,7 @@ export const pedidosService = {
     motivo: string | null,
   ): Promise<PedidoDetalle> {
     const resultado = await pedidosRepository.cancelar(idUsuario, idPedido, motivo);
-    await cache.invalidar('reportes');
-    return armarDetalle(resultado);
+    return invalidarYAvisar('CANCELADO', armarDetalle(resultado));
   },
 
   async cambiarEstado(
@@ -219,8 +237,7 @@ export const pedidosService = {
       estado,
       comentario,
     );
-    await cache.invalidar('reportes');
-    return armarDetalle(resultado);
+    return invalidarYAvisar('ESTADO', armarDetalle(resultado));
   },
 
   async registrarDevolucion(
@@ -230,7 +247,7 @@ export const pedidosService = {
     lineas: LineaDevolucion[],
   ): Promise<DevolucionRegistrada> {
     const f = await pedidosRepository.registrarDevolucion(idUsuario, idPedido, motivo, lineas);
-    await cache.invalidar('reportes');
+    await invalidarYAvisar('DEVOLUCION', { idPedido: f.IDPedido, estado: f.EstadoPedido });
     return {
       idDevolucion: f.IDDevolucion,
       idPedido: f.IDPedido,

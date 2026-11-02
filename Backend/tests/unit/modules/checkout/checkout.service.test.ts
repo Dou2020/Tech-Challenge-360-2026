@@ -7,6 +7,7 @@ import {
 } from '../../../../src/modules/checkout/checkout.service.js';
 import type { FilaResumenCheckout } from '../../../../src/modules/checkout/checkout.types.js';
 import { cache } from '../../../../src/shared/cache/cache.js';
+import { eventos } from '../../../../src/shared/eventos/eventos.js';
 import { AppError } from '../../../../src/shared/errors/AppError.js';
 
 vi.mock('../../../../src/modules/checkout/checkout.repository.js', () => ({
@@ -18,6 +19,7 @@ vi.mock('../../../../src/modules/checkout/checkout.repository.js', () => ({
   },
 }));
 vi.mock('../../../../src/shared/cache/cache.js', () => ({ cache: { invalidar: vi.fn() } }));
+vi.mock('../../../../src/shared/eventos/eventos.js', () => ({ eventos: { publicar: vi.fn() } }));
 
 const repo = vi.mocked(checkoutRepository);
 const DATOS = {
@@ -163,6 +165,12 @@ describe('checkoutService.pagar', () => {
     });
     expect(repo.crearPedido).toHaveBeenCalledWith(7, CLAVE, DATOS);
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
+    expect(eventos.publicar).toHaveBeenCalledWith(
+      expect.objectContaining({ tipo: 'CREADO', idPedido: 9, estado: 'PAGADO' }),
+    );
+    expect(vi.mocked(cache.invalidar).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(eventos.publicar).mock.invocationCallOrder[0]!,
+    );
   });
 
   it('repetición: no creado y no invalida la caché', async () => {
@@ -175,6 +183,7 @@ describe('checkoutService.pagar', () => {
     // Assert
     expect(resultado.creado).toBe(false);
     expect(cache.invalidar).not.toHaveBeenCalled();
+    expect(eventos.publicar).not.toHaveBeenCalled();
   });
 
   it('si el SP falla no invalida la caché', async () => {

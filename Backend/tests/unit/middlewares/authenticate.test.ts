@@ -56,6 +56,8 @@ describe('authenticate', () => {
       rol: 'Cliente',
       sid: SID,
       jti: expect.any(String),
+      iat: expect.any(Number),
+      exp: expect.any(Number),
     });
     expect(estaRevocado).toHaveBeenCalledWith(
       expect.objectContaining({ idUsuario: 12, sid: SID, iat: expect.any(Number) }),
@@ -172,7 +174,14 @@ describe('authenticateOpcional', () => {
 
     expect(respuesta.status).toBe(200);
     expect(respuesta.body).toEqual({
-      usuario: { idUsuario: 12, rol: 'Cliente', sid: SID, jti: expect.any(String) },
+      usuario: {
+        idUsuario: 12,
+        rol: 'Cliente',
+        sid: SID,
+        jti: expect.any(String),
+        iat: expect.any(Number),
+        exp: expect.any(Number),
+      },
       tokenCarrito: null,
     });
   });

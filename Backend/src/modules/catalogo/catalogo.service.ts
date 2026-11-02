@@ -54,6 +54,11 @@ import type {
  * cambian lo cacheado: las categorías visibles y su `cantidadProductos` dependen de categorías,
  * productos (estado, categoría, alta y baja) y del estado y alta de variantes. Precios, SKU,
  * valores de atributo e imágenes no aparecen en lo cacheado.
+ *
+ * Actualizar una categoría o un producto también invalida `reportes`: VW_Reportes_VentasNetas une
+ * el nombre y la categoría actuales, así que renombrar o mover un producto cambia
+ * `ventas-por-categoria` y `productos-mas-vendidos`. Eliminar no lo invalida: los SP bloquean la
+ * baja de un producto con ventas y de una categoría con productos, así que no hay ventas que cambiar.
  */
 export const CLAVES_CACHE_CATALOGO = {
   categorias: 'categorias',
@@ -61,6 +66,9 @@ export const CLAVES_CACHE_CATALOGO = {
 } as const;
 
 const invalidarCatalogo = () => cache.invalidar('catalogo');
+
+/** Siempre, sin comparar campos: son escrituras raras de un administrador. */
+const invalidarReportes = () => cache.invalidar('reportes');
 
 /** Borra los archivos de imágenes propias (las URL externas se ignoran). Un fallo solo se registra. */
 async function borrarArchivos(urls: string[]): Promise<void> {
@@ -312,6 +320,7 @@ export const catalogoService = {
       await catalogoRepository.actualizarCategoria(idUsuario, idCategoria, datos),
     );
     await invalidarCatalogo();
+    await invalidarReportes();
     return categoria;
   },
 
@@ -364,6 +373,7 @@ export const catalogoService = {
       await catalogoRepository.actualizarProducto(idUsuario, idProducto, datos),
     );
     await invalidarCatalogo();
+    await invalidarReportes();
     return producto;
   },
 

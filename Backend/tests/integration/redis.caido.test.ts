@@ -55,6 +55,7 @@ describe('Redis detenido: rutas autenticadas (fail-closed)', () => {
   it.each([
     '/api/reportes/resumen',
     '/api/reportes/ventas-por-categoria',
+    '/api/reportes/stream',
     '/api/bitacora',
     '/api/configuracion',
   ])(

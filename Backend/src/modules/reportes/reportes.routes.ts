@@ -9,6 +9,7 @@ import { carritosQuery, rangoQuery, topProductosQuery, ventasQuery } from './rep
 export const reportesRoutes = Router();
 
 reportesRoutes.use(authenticate, authorize('Administrador'));
+reportesRoutes.get('/stream', c.stream);
 reportesRoutes.get('/resumen', validate({ query: rangoQuery }), c.resumen);
 reportesRoutes.get('/ventas', validate({ query: ventasQuery }), c.ventas);
 reportesRoutes.get('/ventas-por-categoria', validate({ query: rangoQuery }), c.ventasPorCategoria);

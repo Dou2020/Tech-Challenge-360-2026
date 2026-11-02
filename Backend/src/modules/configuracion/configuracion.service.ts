@@ -27,6 +27,8 @@ export const configuracionService = {
     const fila = await configuracionRepository.actualizar(idUsuario, clave, valor);
     // Después de que el SP confirmó.
     await cache.borrar(claves.configuracion());
+    // Los reportes leen parámetros (p. ej. HorasCarritoAbandonado). Siempre, sin comparar el valor.
+    await cache.invalidar('reportes');
     return aParametro(fila);
   },
 };

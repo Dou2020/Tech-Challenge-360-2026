@@ -386,6 +386,29 @@ Formas de respuesta (montos como string, `periodoInicio` como `YYYY-MM-DD`, fech
 | `productos-mas-vendidos` | Arreglo `[{ idProducto, producto, idCategoria, categoria, unidadesNetas, ventaNeta }]` por unidades netas descendente |
 | `carritos-abandonados` | `{ items, page, pageSize, total }` con `items[]`: `{ idCarrito, idUsuario, tipo (CLIENTE o INVITADO), cliente, correo, cantidadLineas, cantidadUnidades, subtotal, descuento, valor, fechaCreacion, fechaUltimaActividad, horasInactivo }`. En un invitado `idUsuario`, `cliente` y `correo` son `null` y no se expone su token. `valor` no incluye envío. `desde`/`hasta` filtran por la fecha local de la última actividad |
 
+#### Tiempo real: `GET /api/reportes/stream`
+| Método | Ruta | Acceso | Descripción | Procedimiento |
+| :--- | :--- | :--- | :--- | :--- |
+| GET | `/api/reportes/stream` | Admin | Server-Sent Events: avisa que los reportes cambiaron | Ninguno (no lee la base) |
+
+El stream **no lleva montos**: es solo un aviso. Al recibir un `pedido`, el dashboard vuelve a pedir `/api/reportes/*`; la caché ya se invalidó antes de publicar, así que esa petición responde `X-Cache: MISS` con datos frescos.
+
+- **Autenticación:** el `Authorization: Bearer <accessToken>` de siempre, leído con `fetch` (nunca en la URL, que quedaría en los logs). Sin token → 401; Operador y Cliente → 403.
+- **Respuesta 200:** `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform` y `X-Accel-Buffering: no` (nginx no bufferea).
+- **Eventos:**
+
+| Evento | Cuándo | `data` |
+| :--- | :--- | :--- |
+| `conectado` | Al abrir (va precedido de `retry: 5000`) | `{"fecha":"2026-11-02T20:15:00.000Z"}` |
+| `pedido` | Se creó (`CREADO`), canceló (`CANCELADO`), cambió de estado (`ESTADO`) o devolvió (`DEVOLUCION`) un pedido. Una repetición del pago con la misma `Idempotency-Key` no emite | `{"tipo":"CREADO","idPedido":123,"estado":"PAGADO","fecha":"2026-11-02T20:15:00.000Z"}` |
+| `fin` | El servidor cierra la conexión | `{"motivo":"REVOCADO"}`, `{"motivo":"TOKEN_EXPIRADO"}` o `{"motivo":"SERVIDOR_DETENIDO"}` |
+
+- **Latido:** cada 25 s llega el comentario `: ping`, que mantiene viva la conexión a través de nginx y del túnel. En ese mismo latido se revisa la revocación del token: si se revocó (logout, desactivación, cambio de rol o de contraseña) o Redis no responde, se envía `fin` con `REVOCADO` y se cierra.
+- **`fin` y reconexión:** con `TOKEN_EXPIRADO` (el access token vence a los 15 min) el cliente renueva el token (`POST /api/auth/refresh`) y vuelve a conectar. Con `REVOCADO` debe volver a iniciar sesión. Con `SERVIDOR_DETENIDO` reconecta tras unos segundos.
+- **Sin reproducción de eventos perdidos** (no hay `Last-Event-ID`): al (re)conectar el cliente vuelve a pedir los reportes y queda al día.
+- **Errores:** 429 `DEMASIADAS_SOLICITUDES` si el usuario ya tiene 5 conexiones abiertas; 503 `SERVICIO_NO_DISPONIBLE` si Redis no responde (la autenticación es fail-closed y el reparto de eventos usa Redis). Ambos se responden antes de abrir el stream, con el formato de error normal.
+- **Reparto:** Redis pub/sub en el canal `shopcart:eventos:reportes`, así funciona con varias instancias del backend. El publicador es fail-open: si Redis falla se registra el error y la escritura (ya confirmada) no falla.
+
 ### Bitácora — `/api/bitacora`
 Solo lectura: no existe ningún endpoint que modifique o elimine registros, y la tabla además está protegida con un trigger.
 
@@ -839,9 +862,9 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 
 | Extra | Endpoint o mecanismo |
 | :--- | :--- |
-| Dashboard en tiempo real | `GET /api/reportes/stream` (Server-Sent Events, Admin). Emite un evento cuando se crea, cancela o devuelve un pedido |
+| Dashboard en tiempo real | `GET /api/reportes/stream` (Server-Sent Events, Admin), implementado. Emite un evento cuando se crea, cancela, cambia de estado o devuelve un pedido. Se autentica con `Authorization: Bearer` (el `EventSource` del navegador no permite headers: el frontend lee el stream con `fetch` y `ReadableStream`). Ver [Reportes](#reportes--apireportes) |
 | Exportación a Excel o PDF | Se genera en el frontend (`ReportTable`) con los datos de `/api/reportes/*`; no requiere endpoint nuevo |
-| Caché de reportes | Caché en Redis por endpoint y filtros. Se invalida por versión (`INCR shopcart:reportes:version`) al crear, cancelar o cambiar de estado un pedido y al registrar una devolución, siempre después de confirmar la transacción. Las respuestas llevan `X-Cache: HIT` o `MISS` |
+| Caché de reportes | Caché en Redis por endpoint y filtros. Se invalida por versión (`INCR shopcart:reportes:version`) al crear, cancelar o cambiar de estado un pedido, al registrar una devolución, al actualizar una categoría o un producto y en `PUT /api/configuracion/{clave}`, siempre después de confirmar la transacción. Las respuestas llevan `X-Cache: HIT` o `MISS` |
 | Rate limiting | `POST /api/auth/login` y `POST /api/auth/registro`: `RATE_LIMIT_AUTH_MAX` (10) intentos por IP cada 15 minutos, y `/api/auth/contrasena/{olvido,verificar,establecer}`: `RATE_LIMIT_CONTRASENA_MAX` (10), con un contador por endpoint → `429 DEMASIADAS_SOLICITUDES` con `Retry-After` y headers `RateLimit-*`. Los contadores viven en Redis (`rate-limit-redis`, claves `shopcart:ratelimit:{login\|registro\|contrasena-olvido\|contrasena-verificar\|contrasena-establecer}:{ip}`). Se configura con `RATE_LIMIT_AUTH_MAX` (0 lo desactiva) y `RATE_LIMIT_AUTH_VENTANA_MIN`. Si Redis no responde, el limitador deja pasar la solicitud: no abre un hueco, porque login y registro responden `503` por su cuenta (fail-closed) |
 
 ---

@@ -23,12 +23,7 @@ export function aSegundos(duracion: string): number {
 export const DURACION_ACCESS_SEG = aSegundos(env.JWT_ACCESS_EXPIRES_IN);
 
 /** Claims del access token ya verificado. */
-export interface ClaimsAccessToken extends UsuarioAutenticado {
-  /** Emitido (segundos Unix). */
-  iat: number;
-  /** Expira (segundos Unix). */
-  exp: number;
-}
+export type ClaimsAccessToken = UsuarioAutenticado;
 
 const esquemaClaims = z.object({
   sub: z.string().regex(/^\d+$/),

@@ -421,6 +421,7 @@ Backend/
 │   │   └── liberarReservas.job.ts  # Ejecuta SP_Inventario_LiberarReservasVencidas periódicamente
 │   ├── shared/
 │   │   ├── cache/                # cache.ts (getOrSet, invalidar) y claves.ts (claves y namespaces)
+│   │   ├── eventos/              # eventos.ts: aviso de cambios en pedidos por Redis pub/sub (publicar, suscribir)
 │   │   ├── correo/               # correo.ts (SMTP con nodemailer o bandeja en memoria) y plantillas.ts (HTML y texto)
 │   │   ├── almacenamiento/       # imagenes.ts: guarda imágenes en disco (bytes mágicos, nombre UUID) y las borra
 │   │   ├── errors/               # AppError y catálogo de códigos de error
@@ -509,11 +510,12 @@ Todas las claves llevan el prefijo `shopcart:`.
 
 | Namespace | Se invalida al |
 | :--- | :--- |
-| `reportes` | Crear, cancelar o cambiar de estado un pedido, y registrar una devolución |
+| `reportes` | Crear, cancelar o cambiar de estado un pedido, registrar una devolución, actualizar una categoría o un producto (la vista de ventas une su nombre y categoría actuales) y `PUT /api/configuracion/:clave` |
 | `catalogo` | Crear, modificar, activar/desactivar o eliminar categorías y productos; crear o activar/desactivar variantes (lo que cambia qué categorías y cuántos productos se ven). Precios, SKU, valores de atributo e imágenes no están en lo cacheado |
 | `usuario:{id}` | Actualizar perfil, rol o estado del usuario |
 | `configuracion` | `PUT /api/configuracion/:clave` |
 
+- Los carritos abandonados se dejan con TTL a propósito: un carrito se vuelve abandonado por el paso del tiempo, sin ninguna escritura, e invalidar en cada escritura del carrito (muy frecuentes) anularía la caché. Queda acotado a `CACHE_TTL_REPORTES_SEG`.
 - La existencia disponible **nunca** se cachea: la búsqueda y el detalle de productos del catálogo público traen `disponible` y `existenciaDisponible`, así que se leen de la base en cada petición.
 - Las respuestas cacheadas llevan el header `X-Cache: HIT` o `X-Cache: MISS`.
 
@@ -525,6 +527,8 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Rate limit por IP | Deja pasar la solicitud; login y registro igual responden `503` por la fila anterior |
 | Caché | *Fail-open*: se registra el error y se lee de la base |
 | `GET /api/health` | Reporta `redis: "down"` |
+
+**Eventos en tiempo real (pub/sub):** `POST` de pago, cancelación, cambio de estado y devolución publican un aviso en el canal `shopcart:eventos:reportes` después de invalidar la caché de reportes; `GET /api/reportes/stream` (SSE, solo Administrador) lo reenvía a los dashboards abiertos. El mensaje no guarda datos de negocio (solo `tipo`, `idPedido`, `estado` y `fecha`) y Redis no lo conserva. El publicador es *fail-open*: si Redis falla se registra el error y la escritura, ya confirmada en SQL Server, no falla. El suscriptor es una conexión dedicada (`duplicate()`) que se abre en la primera suscripción; si no conecta, el stream responde `503 SERVICIO_NO_DISPONIBLE`.
 
 **Configuración del servidor** (en `docker-compose.yml`): persistencia AOF (`appendonly yes`, `appendfsync everysec`) para no perder sesiones al reiniciar, y `maxmemory 256mb` con `maxmemory-policy noeviction` para que Redis nunca expulse sesiones. Si la memoria se llena, fallan las escrituras de caché (que es fail-open) y no las sesiones existentes.
 
@@ -540,7 +544,7 @@ Backend/tests/
 │   ├── jobs/                     # liberarReservas.job: sin solapamiento; un error no tumba el proceso
 │   ├── middlewares/              # authenticate, authorize, validate, errorHandler, notFound, idempotencyKey, guestCart
 │   ├── modules/<modulo>/         # <modulo>.service (repositorio simulado con vi.mock) y <modulo>.schemas (zod)
-│   └── shared/                   # cache/ y utils/ (paginación, montos, fechas, contraseñas)
+│   └── shared/                   # cache/, eventos/ y utils/ (paginación, montos, fechas, contraseñas)
 ├── integration/                  # Endpoints de punta a punta con supertest
 │   ├── auth.test.ts
 │   ├── contrasena.test.ts        # Registro sin contraseña, olvido, verificar y establecer

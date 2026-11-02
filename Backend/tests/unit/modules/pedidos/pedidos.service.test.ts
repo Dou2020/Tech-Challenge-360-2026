@@ -3,6 +3,7 @@ import { pedidosRepository } from '../../../../src/modules/pedidos/pedidos.repos
 import { armarDetalle, pedidosService } from '../../../../src/modules/pedidos/pedidos.service.js';
 import type { ResultadoDetallePedidoSp } from '../../../../src/modules/pedidos/pedidos.types.js';
 import { cache } from '../../../../src/shared/cache/cache.js';
+import { eventos } from '../../../../src/shared/eventos/eventos.js';
 
 vi.mock('../../../../src/modules/pedidos/pedidos.repository.js', () => ({
   pedidosRepository: {
@@ -17,6 +18,7 @@ vi.mock('../../../../src/modules/pedidos/pedidos.repository.js', () => ({
   },
 }));
 vi.mock('../../../../src/shared/cache/cache.js', () => ({ cache: { invalidar: vi.fn() } }));
+vi.mock('../../../../src/shared/eventos/eventos.js', () => ({ eventos: { publicar: vi.fn() } }));
 
 const repo = vi.mocked(pedidosRepository);
 const FECHA = new Date('2026-11-01T15:30:00.000Z');
@@ -135,9 +137,9 @@ describe('pedidosService', () => {
   });
 
   it.each([
-    ['cancelar', () => pedidosService.cancelar(6, 3, null)],
-    ['cambiarEstado', () => pedidosService.cambiarEstado(2, 3, 'EN_PREPARACION', null)],
-  ])('%s devuelve el detalle e invalida reportes', async (_nombre, accion) => {
+    ['cancelar', 'CANCELADO', () => pedidosService.cancelar(6, 3, null)],
+    ['cambiarEstado', 'ESTADO', () => pedidosService.cambiarEstado(2, 3, 'EN_PREPARACION', null)],
+  ])('%s devuelve el detalle, invalida reportes y publica el evento', async (_n, tipo, accion) => {
     // Arrange
     repo.cancelar.mockResolvedValue(detalleSp);
     repo.cambiarEstado.mockResolvedValue(detalleSp);
@@ -148,6 +150,12 @@ describe('pedidosService', () => {
     // Assert
     expect(r.idPedido).toBe(3);
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
+    expect(eventos.publicar).toHaveBeenCalledWith(
+      expect.objectContaining({ tipo, idPedido: 3, estado: detalleSp.pedido.Estado }),
+    );
+    expect(vi.mocked(cache.invalidar).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(eventos.publicar).mock.invocationCallOrder[0]!,
+    );
   });
 
   it('registrarDevolucion invalida reportes y da forma camelCase', async () => {
@@ -174,6 +182,9 @@ describe('pedidosService', () => {
       estadoPedido: 'DEVUELTO_PARCIAL',
     });
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
+    expect(eventos.publicar).toHaveBeenCalledWith(
+      expect.objectContaining({ tipo: 'DEVOLUCION', estado: 'DEVUELTO_PARCIAL' }),
+    );
   });
 
   it('si el SP falla (409) no invalida la caché', async () => {
@@ -186,6 +197,7 @@ describe('pedidosService', () => {
     // Assert
     await expect(accion).rejects.toThrow('50040');
     expect(cache.invalidar).not.toHaveBeenCalled();
+    expect(eventos.publicar).not.toHaveBeenCalled();
   });
 
   it('listarDevoluciones agrupa las líneas por devolución', async () => {

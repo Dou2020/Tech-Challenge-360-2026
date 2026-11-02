@@ -325,7 +325,69 @@ describe('catalogoService: invalidación de la caché', () => {
     // Assert
     expect(producto.idProducto).toBe(20);
     expect(repo.actualizarProducto).toHaveBeenCalledWith(ADMIN, 20, datos);
-    expect(orden).toEqual(['sp', 'invalidar']);
+    expect(cacheSimulada.invalidar).toHaveBeenCalledWith('catalogo');
+    expect(orden).toEqual(['sp', 'invalidar', 'invalidar']);
+  });
+
+  it('actualizar una categoría invalida catalogo y reportes después del SP, en ese orden', async () => {
+    // Arrange
+    const orden: string[] = [];
+    repo.actualizarCategoria.mockImplementation(async () => {
+      orden.push('sp');
+      return filaCategoria;
+    });
+    cacheSimulada.invalidar.mockImplementation(async (ns) => {
+      orden.push(`invalidar:${ns}`);
+    });
+
+    // Act
+    await catalogoService.actualizarCategoria(ADMIN, 9, { nombre: 'Calzado', descripcion: null });
+
+    // Assert
+    expect(orden).toEqual(['sp', 'invalidar:catalogo', 'invalidar:reportes']);
+  });
+
+  it('actualizar un producto invalida reportes', async () => {
+    // Arrange
+    repo.actualizarProducto.mockResolvedValue(detalle);
+
+    // Act
+    await catalogoService.actualizarProducto(ADMIN, 20, {
+      nombre: 'Sudadero',
+      descripcion: null,
+      idCategoria: 2,
+    });
+
+    // Assert
+    expect(cacheSimulada.invalidar).toHaveBeenCalledWith('reportes');
+  });
+
+  it('si el SP de actualizar el producto falla no invalida reportes ni catalogo', async () => {
+    // Arrange
+    repo.actualizarProducto.mockRejectedValue(new AppError('NO_ENCONTRADO', 'No existe.'));
+
+    // Act & Assert
+    await expect(
+      catalogoService.actualizarProducto(ADMIN, 99, {
+        nombre: 'X',
+        descripcion: null,
+        idCategoria: 1,
+      }),
+    ).rejects.toMatchObject({ code: 'NO_ENCONTRADO' });
+    expect(cacheSimulada.invalidar).not.toHaveBeenCalled();
+  });
+
+  it('eliminar una categoría o un producto no invalida reportes: los SP bloquean si hay ventas', async () => {
+    // Arrange
+    repo.eliminarCategoria.mockResolvedValue();
+    repo.eliminarProducto.mockResolvedValue([]);
+
+    // Act
+    await catalogoService.eliminarCategoria(ADMIN, 9);
+    await catalogoService.eliminarProducto(ADMIN, 20);
+
+    // Assert
+    expect(cacheSimulada.invalidar).not.toHaveBeenCalledWith('reportes');
   });
 
   it('si el SP de cambiar estado del producto falla no invalida', async () => {

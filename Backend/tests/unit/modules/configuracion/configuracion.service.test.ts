@@ -13,6 +13,7 @@ vi.mock('../../../../src/shared/cache/cache.js', () => ({
       hit: false,
     })),
     borrar: vi.fn(),
+    invalidar: vi.fn(),
   },
 }));
 
@@ -54,5 +55,34 @@ describe('configuracionService', () => {
     expect(parametro.valor).toBe('20');
     expect(repo.actualizar).toHaveBeenCalledWith(1, 'MinutosReserva', '20');
     expect(cache.borrar).toHaveBeenCalledWith('shopcart:configuracion');
+  });
+
+  it('actualizar invalida reportes después de borrar la caché de configuración', async () => {
+    // Arrange
+    const orden: string[] = [];
+    repo.actualizar.mockResolvedValue({ ...fila, Valor: '20' });
+    vi.mocked(cache.borrar).mockImplementation(async () => {
+      orden.push('borrar');
+    });
+    vi.mocked(cache.invalidar).mockImplementation(async () => {
+      orden.push('invalidar');
+    });
+
+    // Act
+    await configuracionService.actualizar(1, 'HorasCarritoAbandonado', '48');
+
+    // Assert
+    expect(cache.invalidar).toHaveBeenCalledWith('reportes');
+    expect(orden).toEqual(['borrar', 'invalidar']);
+  });
+
+  it('si el SP falla no borra ni invalida nada', async () => {
+    // Arrange
+    repo.actualizar.mockRejectedValue(new Error('SP falló'));
+
+    // Act & Assert
+    await expect(configuracionService.actualizar(1, 'X', '1')).rejects.toThrow('SP falló');
+    expect(cache.borrar).not.toHaveBeenCalled();
+    expect(cache.invalidar).not.toHaveBeenCalled();
   });
 });

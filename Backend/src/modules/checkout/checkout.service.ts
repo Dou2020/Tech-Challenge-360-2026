@@ -1,4 +1,5 @@
 import { cache } from '../../shared/cache/cache.js';
+import { eventos } from '../../shared/eventos/eventos.js';
 import { AppError, type DetalleError } from '../../shared/errors/AppError.js';
 import { CODIGO_POR_THROW } from '../../shared/errors/codigos.js';
 import { aIsoOpcional } from '../../shared/utils/fechas.js';
@@ -144,7 +145,16 @@ export const checkoutService = {
     const fila = await checkoutRepository.crearPedido(idUsuario, claveIdempotencia, datos);
     const creado = !fila.Repetido;
     // Solo un pedido nuevo cambia los reportes; se invalida después de que el SP confirmó.
-    if (creado) await cache.invalidar('reportes');
+    if (creado) {
+      await cache.invalidar('reportes');
+      // Después de invalidar: el dashboard que reaccione al aviso lee la versión nueva.
+      await eventos.publicar({
+        tipo: 'CREADO',
+        idPedido: fila.IDPedido,
+        estado: fila.Estado,
+        fecha: new Date().toISOString(),
+      });
+    }
     return {
       creado,
       pedido: {

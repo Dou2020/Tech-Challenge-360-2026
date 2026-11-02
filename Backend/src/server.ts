@@ -3,6 +3,8 @@ import { closePool } from './config/database.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeRedis, connectRedis } from './config/redis.js';
+import { cerrarConexionesStream } from './modules/reportes/reportes.stream.js';
+import { eventos } from './shared/eventos/eventos.js';
 import {
   detenerJobLiberarReservas,
   iniciarJobLiberarReservas,
@@ -27,9 +29,12 @@ async function cerrar(senal: string): Promise<void> {
   cerrando = true;
   logger.info(`${senal} recibido: cerrando el servidor`);
   server.close();
+  // Los streams SSE no terminan solos: se cierran para que server.close() no espere.
+  cerrarConexionesStream();
   // Primero el job (espera su pasada en curso), después el pool que usa.
   await detenerJobLiberarReservas();
-  await Promise.allSettled([closePool(), closeRedis()]);
+  await Promise.allSettled([eventos.cerrarSuscriptor(), closePool()]);
+  await closeRedis();
   process.exit(0);
 }
 

@@ -17,7 +17,14 @@ async function usuarioDelHeader(header: string | undefined): Promise<UsuarioAute
     throw new AppError('NO_AUTENTICADO', 'La sesión fue cerrada o revocada.');
   }
 
-  return { idUsuario: claims.idUsuario, rol: claims.rol, jti: claims.jti, sid: claims.sid };
+  return {
+    idUsuario: claims.idUsuario,
+    rol: claims.rol,
+    jti: claims.jti,
+    sid: claims.sid,
+    iat: claims.iat,
+    exp: claims.exp,
+  };
 }
 
 /**

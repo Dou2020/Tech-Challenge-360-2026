@@ -2,14 +2,19 @@
 # instala en /etc/cloudflared/shopcart.yml y lo usa la unidad cloudflared-shopcart.service.
 # Reemplaza <UUID-del-tunel> por el que imprime `cloudflared tunnel create shopcart`.
 # El JSON de credenciales nunca se versiona (.gitignore: .cloudflared/*.json).
+# Los puertos deben coincidir con FRONTEND_PORT y BACKEND_PORT del .env del servidor.
 
 tunnel: <UUID-del-tunel>
 credentials-file: /etc/cloudflared/<UUID-del-tunel>.json
 
 ingress:
-  # Un solo hostname: nginx sirve la SPA y reenvía /api al backend, así la cookie del refresh
-  # token (SameSite=Strict, Path=/api/auth) queda en el mismo origen.
-  - hostname: shopcart.iglesiasinai.org
-    service: http://localhost:8090 # = FRONTEND_PORT del .env del servidor
+  # Tienda y consola: nginx sirve la SPA y reenvía /api al backend, así la cookie del refresh
+  # token (SameSite=Strict, Path=/api/auth) queda en el mismo origen. APP_URL_PUBLICA y
+  # CORS_ORIGIN apuntan a este hostname.
+  - hostname: shopcart.dou2020.com
+    service: http://localhost:9010 # = FRONTEND_PORT
+  # Acceso directo a la API (p. ej. Swagger en /api/docs), sin pasar por nginx. El frontend no lo usa.
+  - hostname: api-shopcart.dou2020.com
+    service: http://localhost:4000 # = BACKEND_PORT
   # Catch-all obligatorio: cloudflared no arranca si el ingress no termina con una regla sin hostname.
   - service: http_status:404

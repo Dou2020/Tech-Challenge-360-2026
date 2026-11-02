@@ -9,6 +9,10 @@ export interface UsuarioAutenticado {
   jti: string;
   /** Familia de la sesión (refresh token). */
   sid: string;
+  /** Emitido (segundos Unix). */
+  iat: number;
+  /** Expira (segundos Unix). */
+  exp: number;
 }
 
 declare module 'express-serve-static-core' {
