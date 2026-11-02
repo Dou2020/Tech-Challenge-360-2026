@@ -1,7 +1,8 @@
 /** Fila de SP_Usuarios_ObtenerCredencialPorId (incluye al usuario inactivo). */
 export interface FilaCredencial {
   IDUsuario: number;
-  HashContrasena: string;
+  /** NULL si el usuario aún no creó su contraseña. */
+  HashContrasena: string | null;
   Activo: boolean;
 }
 

@@ -260,12 +260,16 @@ export const catalogoRepository = {
     );
   },
 
-  /** 50050 PRODUCTO_CON_VENTAS; 50051 EN_USO si tiene kardex o reservas. */
-  async eliminarProducto(idUsuario: number, idProducto: number): Promise<void> {
-    await executeSp('SP_Productos_Eliminar', [
+  /**
+   * 50050 PRODUCTO_CON_VENTAS; 50051 EN_USO si tiene kardex o reservas.
+   * Devuelve las Url de las imágenes que tenía (0..n) para borrar sus archivos.
+   */
+  async eliminarProducto(idUsuario: number, idProducto: number): Promise<string[]> {
+    const { filas } = await executeSp<{ Url: string }>('SP_Productos_Eliminar', [
       solicitante(idUsuario),
       idParam('IDProducto', idProducto),
     ]);
+    return filas.map((fila) => fila.Url);
   },
 
   async agregarImagen(
@@ -284,13 +288,18 @@ export const catalogoRepository = {
     );
   },
 
-  /** 50004 también si la imagen es de otro producto. */
-  async eliminarImagen(idUsuario: number, idProducto: number, idImagen: number): Promise<void> {
-    await executeSp('SP_Productos_EliminarImagen', [
+  /** 50004 también si la imagen es de otro producto. Devuelve la Url borrada. */
+  async eliminarImagen(
+    idUsuario: number,
+    idProducto: number,
+    idImagen: number,
+  ): Promise<string | undefined> {
+    const { filas } = await executeSp<{ Url: string }>('SP_Productos_EliminarImagen', [
       solicitante(idUsuario),
       idParam('IDProducto', idProducto),
       idParam('IDProductoImagen', idImagen),
     ]);
+    return filas[0]?.Url;
   },
 
   // --- Variantes --------------------------------------------------------------

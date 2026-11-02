@@ -1,12 +1,13 @@
 import { cache } from '../../shared/cache/cache.js';
 import { claves } from '../../shared/cache/claves.js';
-import { hashearContrasena } from '../../shared/utils/contrasenas.js';
 import {
   respuestaPaginada,
   type Paginacion,
   type RespuestaPaginada,
 } from '../../shared/utils/paginacion.js';
+import { AppError } from '../../shared/errors/AppError.js';
 import { aUsuario } from '../auth/auth.service.js';
+import { enviarEnlaceContrasena } from '../auth/enlacesContrasena.js';
 import type { Usuario } from '../auth/auth.types.js';
 import { exigirRedis } from '../auth/redisFailClosed.js';
 import { revocacionStore } from '../auth/revocacion.store.js';
@@ -46,10 +47,50 @@ export const usuariosService = {
     return aUsuario(await usuariosRepository.obtenerPorId(idUsuario));
   },
 
+  /**
+   * Crea el usuario sin contraseña y le manda la invitación con el enlace para crearla. El envío
+   * es en segundo plano. Sin Redis (donde vive el token) se rechaza antes de escribir en la base.
+   * Si el envío del token fallara después, el usuario queda creado y pendiente: el Administrador
+   * puede reenviar la invitación.
+   */
   async crear(idSolicitante: number, datos: DatosUsuarioNuevo): Promise<Usuario> {
-    const { contrasena, ...resto } = datos;
-    const hashContrasena = await hashearContrasena(contrasena);
-    return aUsuario(await usuariosRepository.crear(idSolicitante, { ...resto, hashContrasena }));
+    exigirRedis();
+    const usuario = aUsuario(await usuariosRepository.crear(idSolicitante, datos));
+    await enviarEnlaceContrasena('invitacion', {
+      idUsuario: usuario.idUsuario,
+      correo: usuario.correo,
+      nombre: usuario.nombre,
+      rol: usuario.rol,
+    });
+    return usuario;
+  },
+
+  /**
+   * Reenvía el enlace para crear la contraseña (el anterior queda invalidado).
+   * 409 CONTRASENA_YA_CREADA si el usuario ya la creó (para eso existe la recuperación);
+   * 403 USUARIO_INACTIVO si está desactivado: no se invita a una cuenta desactivada.
+   */
+  async reenviarInvitacion(idUsuario: number): Promise<void> {
+    exigirRedis();
+    const usuario = aUsuario(await usuariosRepository.obtenerPorId(idUsuario));
+    if (!usuario.contrasenaPendiente) {
+      throw new AppError(
+        'CONTRASENA_YA_CREADA',
+        'El usuario ya creó su contraseña. Si la olvidó, puede recuperarla desde el inicio de sesión.',
+      );
+    }
+    if (!usuario.activo) {
+      throw new AppError(
+        'USUARIO_INACTIVO',
+        'El usuario está desactivado: actívalo antes de reenviarle la invitación.',
+      );
+    }
+    await enviarEnlaceContrasena(usuario.rol === 'Cliente' ? 'bienvenida' : 'invitacion', {
+      idUsuario: usuario.idUsuario,
+      correo: usuario.correo,
+      nombre: usuario.nombre,
+      rol: usuario.rol,
+    });
   },
 
   async actualizar(

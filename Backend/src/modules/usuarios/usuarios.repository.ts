@@ -43,15 +43,11 @@ export const usuariosRepository = {
     return authRepository.obtenerPorId(idUsuario);
   },
 
-  /** 50001 (datos o rol Cliente), 2627 → DUPLICADO si el correo ya existe. */
-  async crear(
-    idSolicitante: number,
-    datos: Omit<DatosUsuarioNuevo, 'contrasena'> & { hashContrasena: string },
-  ): Promise<FilaUsuario> {
+  /** Sin contraseña (hash NULL). 50001 (datos o rol Cliente), 2627 → DUPLICADO si el correo existe. */
+  async crear(idSolicitante: number, datos: DatosUsuarioNuevo): Promise<FilaUsuario> {
     const resultado = await executeSp<FilaUsuario>('SP_Usuarios_Crear', [
       solicitante(idSolicitante),
       { nombre: 'Correo', tipo: sql.NVarChar(150), valor: datos.correo },
-      { nombre: 'HashContrasena', tipo: sql.NVarChar(255), valor: datos.hashContrasena },
       { nombre: 'Nombre', tipo: sql.NVarChar(100), valor: datos.nombre },
       { nombre: 'Apellido', tipo: sql.NVarChar(100), valor: datos.apellido },
       { nombre: 'Telefono', tipo: sql.NVarChar(20), valor: datos.telefono },

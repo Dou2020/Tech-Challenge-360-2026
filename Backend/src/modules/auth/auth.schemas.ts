@@ -11,7 +11,7 @@ export const correo = z
 export const texto = (maximo: number) =>
   z.string().trim().min(1, 'Es obligatorio.').max(maximo, `Máximo ${maximo} caracteres.`);
 
-/** Política de contraseña de registro, creación de usuarios y cambio de contraseña. */
+/** Política de contraseña: crear, restablecer y cambiar la contraseña. */
 export const contrasenaNueva = z
   .string()
   .min(8, 'Debe tener al menos 8 caracteres.')
@@ -31,9 +31,9 @@ export const telefono = z.preprocess(
     .transform((valor) => valor ?? null),
 );
 
+/** El registro no lleva contraseña: se crea con el enlace que llega por correo. */
 export const registroSchema = z.object({
   correo,
-  contrasena: contrasenaNueva,
   nombre: texto(100),
   apellido: texto(100),
   telefono,
@@ -45,5 +45,17 @@ export const loginSchema = z.object({
   contrasena: z.string().min(1, 'Es obligatoria.').max(128, 'Máximo 128 caracteres.'),
 });
 
+export const olvidoSchema = z.object({ correo });
+
+/** Sin formato fijo: un token mal formado se responde como TOKEN_CONTRASENA_INVALIDO. */
+const token = z.string().trim().min(1, 'Es obligatorio.').max(200, 'Máximo 200 caracteres.');
+
+export const verificarTokenSchema = z.object({ token });
+
+export const establecerContrasenaSchema = z.object({ token, contrasena: contrasenaNueva });
+
 export type RegistroBody = z.infer<typeof registroSchema>;
 export type LoginBody = z.infer<typeof loginSchema>;
+export type OlvidoBody = z.infer<typeof olvidoSchema>;
+export type VerificarTokenBody = z.infer<typeof verificarTokenSchema>;
+export type EstablecerContrasenaBody = z.infer<typeof establecerContrasenaSchema>;

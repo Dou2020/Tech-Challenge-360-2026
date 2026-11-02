@@ -75,3 +75,15 @@ export const limitarRegistro = crearLimitador({
   limite: env.RATE_LIMIT_AUTH_MAX,
   ventanaMin: env.RATE_LIMIT_AUTH_VENTANA_MIN,
 });
+
+/** Rutas de contraseña (olvido, verificar, establecer): RATE_LIMIT_CONTRASENA_MAX por IP, un contador por ruta. */
+const limitadorContrasena = (nombre: string) =>
+  crearLimitador({
+    nombre: `contrasena-${nombre}`,
+    limite: env.RATE_LIMIT_CONTRASENA_MAX,
+    ventanaMin: env.RATE_LIMIT_AUTH_VENTANA_MIN,
+  });
+
+export const limitarOlvido = limitadorContrasena('olvido');
+export const limitarVerificarToken = limitadorContrasena('verificar');
+export const limitarEstablecerContrasena = limitadorContrasena('establecer');

@@ -29,7 +29,7 @@ CREATE TABLE dbo.Usuario (
     IDUsuario         INT IDENTITY(1,1) NOT NULL,
     IDRol             INT               NOT NULL,
     Correo            NVARCHAR(150)     NOT NULL,
-    HashContrasena    NVARCHAR(255)     NOT NULL,
+    HashContrasena    NVARCHAR(255)     NULL,  -- NULL: contraseña pendiente de crear (enlace de un solo uso por correo)
     Nombre            NVARCHAR(100)     NOT NULL,
     Apellido          NVARCHAR(100)     NOT NULL,
     Telefono          NVARCHAR(20)      NULL,

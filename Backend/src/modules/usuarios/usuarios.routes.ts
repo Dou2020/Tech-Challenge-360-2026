@@ -18,6 +18,7 @@ usuariosRoutes.use(authenticate, authorize('Administrador'));
 usuariosRoutes.get('/', validate({ query: listarUsuariosQuery }), c.listar);
 usuariosRoutes.get('/:id', validate({ params: paramsUsuario }), c.obtener);
 usuariosRoutes.post('/', validate({ body: crearUsuarioBody }), c.crear);
+usuariosRoutes.post('/:id/invitacion', validate({ params: paramsUsuario }), c.reenviarInvitacion);
 usuariosRoutes.put(
   '/:id',
   validate({ params: paramsUsuario, body: actualizarUsuarioBody }),

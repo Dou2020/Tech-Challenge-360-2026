@@ -48,7 +48,11 @@ export const perfilService = {
     // Sin Redis no se pueden revocar las otras sesiones: se rechaza antes de tocar la base.
     exigirRedis();
     const credencial = await perfilRepository.obtenerCredencial(idUsuario);
-    if (!(await verificarContrasena(credencial.HashContrasena, datos.contrasenaActual))) {
+    // Cuenta sin contraseña (hash NULL): ninguna contraseña actual puede ser la correcta.
+    if (
+      !credencial.HashContrasena ||
+      !(await verificarContrasena(credencial.HashContrasena, datos.contrasenaActual))
+    ) {
       throw errorCampo('contrasenaActual', MENSAJE_ACTUAL);
     }
     if (datos.contrasenaActual === datos.contrasenaNueva) {

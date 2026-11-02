@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { booleanoQuery, filtroTexto, paramsId } from '../../shared/utils/esquemas.js';
 import { camposPaginacion } from '../../shared/utils/paginacion.js';
-import { contrasenaNueva, correo, telefono, texto } from '../auth/auth.schemas.js';
+import { correo, telefono, texto } from '../auth/auth.schemas.js';
 import { ROLES } from '../auth/auth.types.js';
 
 const MENSAJE_ROL = `Debe ser uno de: ${ROLES.join(', ')}.`;
@@ -18,10 +18,12 @@ export const listarUsuariosQuery = z.object({
 
 export const paramsUsuario = paramsId;
 
-/** Solo se crean Operadores y Administradores: los Clientes se registran solos. */
+/**
+ * Solo se crean Operadores y Administradores: los Clientes se registran solos. Sin contraseña:
+ * el usuario la crea con el enlace de invitación que recibe por correo.
+ */
 export const crearUsuarioBody = z.object({
   correo,
-  contrasena: contrasenaNueva,
   nombre: texto(100),
   apellido: texto(100),
   telefono,

@@ -1189,7 +1189,8 @@ GO
 -- Borra también sus imágenes, sus variantes con sus valores y las líneas de carrito que las tengan.
 -- Bloquea el producto y sus variantes antes de comprobar: un pedido en curso sobre una de ellas
 -- (que bloquea la variante con UPDLOCK) termina primero y entonces se ve su venta.
--- Bitácora: ELIMINAR del Producto con la foto de sus variantes en ValorAnterior. Sin result set.
+-- Bitácora: ELIMINAR del Producto con la foto de sus variantes en ValorAnterior.
+-- Result set único (tras el commit): Url de cada imagen borrada (0..n filas) para que el backend borre los archivos.
 CREATE OR ALTER PROCEDURE dbo.SP_Productos_Eliminar
     @IDUsuarioSolicitante INT,
     @IDProducto           INT
@@ -1199,6 +1200,7 @@ BEGIN
     SET XACT_ABORT ON;
 
     DECLARE @Anterior NVARCHAR(MAX);
+    DECLARE @Urls TABLE (Url NVARCHAR(500) NOT NULL);
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -1240,13 +1242,17 @@ BEGIN
         WHERE v.IDProducto = @IDProducto;
 
         DELETE FROM dbo.Variante WHERE IDProducto = @IDProducto;
-        DELETE FROM dbo.ProductoImagen WHERE IDProducto = @IDProducto;
+        DELETE FROM dbo.ProductoImagen
+        OUTPUT deleted.Url INTO @Urls (Url)
+        WHERE IDProducto = @IDProducto;
         DELETE FROM dbo.Producto WHERE IDProducto = @IDProducto;
 
         INSERT INTO dbo.Bitacora (IDUsuario, Modulo, Entidad, IDRegistro, Accion, ValorAnterior, ValorNuevo)
         VALUES (@IDUsuarioSolicitante, N'Catalogo', N'Producto', @IDProducto, N'ELIMINAR', @Anterior, NULL);
 
         COMMIT TRANSACTION;
+
+        SELECT Url FROM @Urls;
     END TRY
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
@@ -1255,7 +1261,8 @@ BEGIN
 END;
 GO
 
--- POST /api/productos/:id/imagenes: agrega una imagen por URL (http:// o https://).
+-- POST /api/productos/:id/imagenes: agrega una imagen por URL (http:// o https://) o por la URL relativa
+-- que genera el backend: /api/imagenes/productos/<uuid>.(jpg|png|webp), uuid en hex con guiones (8-4-4-4-12).
 -- @EsPrincipal = 1 quita la marca a la principal anterior (UX_ProductoImagen_Principal permite una).
 -- Si el producto no tenía imagen principal, la nueva lo es aunque @EsPrincipal = 0.
 -- Bitácora: CREAR de ProductoImagen. Resultado: los 4 result sets de SP_Productos_ObtenerPorId.
@@ -1282,8 +1289,16 @@ BEGIN
 
         EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
 
-        IF @Url IS NULL OR (@Url NOT LIKE N'http://_%' AND @Url NOT LIKE N'https://_%')
-            THROW 50001, N'La URL de la imagen debe empezar con http:// o https://.', 1;
+        IF @Url IS NULL OR NOT (
+               @Url LIKE N'http://_%' OR @Url LIKE N'https://_%'
+               OR @Url COLLATE Latin1_General_100_CI_AI LIKE
+                  N'/api/imagenes/productos/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].jpg'
+               OR @Url COLLATE Latin1_General_100_CI_AI LIKE
+                  N'/api/imagenes/productos/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].png'
+               OR @Url COLLATE Latin1_General_100_CI_AI LIKE
+                  N'/api/imagenes/productos/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].webp'
+           )
+            THROW 50001, N'La URL de la imagen debe empezar con http:// o https://, o ser una imagen subida (/api/imagenes/productos/<uuid>.jpg|png|webp).', 1;
 
         IF @Orden NOT BETWEEN 0 AND 255
             THROW 50001, N'El orden de la imagen debe estar entre 0 y 255.', 1;
@@ -1326,7 +1341,8 @@ GO
 
 -- DELETE /api/productos/:id/imagenes/:idImagen. Una imagen de otro producto → 50004.
 -- Si era la principal, la siguiente por Orden pasa a serlo.
--- Bitácora: ELIMINAR de ProductoImagen. Sin result set.
+-- Bitácora: ELIMINAR de ProductoImagen.
+-- Result set único (tras el commit): una fila con Url de la imagen borrada.
 CREATE OR ALTER PROCEDURE dbo.SP_Productos_EliminarImagen
     @IDUsuarioSolicitante INT,
     @IDProducto           INT,
@@ -1338,6 +1354,7 @@ BEGIN
 
     DECLARE @EraPrincipal BIT;
     DECLARE @Anterior NVARCHAR(MAX);
+    DECLARE @UrlEliminada NVARCHAR(500);
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -1359,6 +1376,8 @@ BEGIN
                          FROM dbo.ProductoImagen WHERE IDProductoImagen = @IDProductoImagen
                          FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
 
+        SELECT @UrlEliminada = Url FROM dbo.ProductoImagen WHERE IDProductoImagen = @IDProductoImagen;
+
         DELETE FROM dbo.ProductoImagen WHERE IDProductoImagen = @IDProductoImagen;
 
         IF @EraPrincipal = 1
@@ -1375,6 +1394,8 @@ BEGIN
         VALUES (@IDUsuarioSolicitante, N'Catalogo', N'ProductoImagen', @IDProductoImagen, N'ELIMINAR', @Anterior, NULL);
 
         COMMIT TRANSACTION;
+
+        SELECT @UrlEliminada AS Url;
     END TRY
     BEGIN CATCH
         IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;

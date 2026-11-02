@@ -19,6 +19,8 @@ tags:
     description: Solo Administrador
   - name: Atributos
     description: Solo Administrador
+  - name: Imágenes
+    description: Archivos subidos al servidor; públicos
   - name: Inventario
     description: Operador y Administrador
   - name: Direcciones
@@ -60,29 +62,124 @@ paths:
   /auth/registro:
     post:
       tags: [Autenticación]
-      summary: Registra un Cliente y abre su sesión (igual que el login)
+      summary: Registra un Cliente sin contraseña y le manda el enlace para crearla
       description: |
+        Siempre responde 202 con el mismo cuerpo, exista o no el correo (no revela qué correos
+        tienen cuenta; ya no hay 409 DUPLICADO). El correo que sale cambia según el caso, y se
+        envía en segundo plano:
+        - correo nuevo: crea el Cliente sin contraseña y manda la bienvenida con el enlace
+          `{APP_URL_PUBLICA}/crear-contrasena#token=…`;
+        - existe y sigue sin contraseña: reenvía un enlace de creación nuevo (el anterior deja de servir);
+        - existe con contraseña: avisa "ya tienes una cuenta" con un enlace a `/recuperar-contrasena` (sin token);
+        - desactivado: no manda nada.
+        No abre sesión: el login responde 401 mientras la contraseña esté pendiente.
         Límite por IP: 10 solicitudes cada 15 minutos (429 DEMASIADAS_SOLICITUDES).
-        El correo se guarda sin espacios y en minúsculas.
+        El correo se guarda sin espacios y en minúsculas. Sin Redis → 503.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/Registro' }
       responses:
-        '201':
-          description: Cliente creado. Deja la cookie refreshToken.
-          headers:
-            Set-Cookie: { $ref: '#/components/headers/SetCookieRefresh' }
+        '202':
+          description: Solicitud recibida
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Sesion' }
+              schema: { $ref: '#/components/schemas/Mensaje' }
         '400': { $ref: '#/components/responses/Error' }
-        '409':
-          description: DUPLICADO (el correo ya está registrado)
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/contrasena/olvido:
+    post:
+      tags: [Autenticación]
+      summary: Pide el enlace para restablecer la contraseña
+      description: |
+        Siempre 202. Solo emite el token si el usuario existe y está activo: con contraseña manda
+        el enlace `…/restablecer-contrasena#token=…` (vigencia TOKEN_RESTABLECER_MIN, 60 min); si
+        aún estaba pendiente manda el de creación. No mira el bloqueo por intentos. Pedir uno
+        nuevo invalida el anterior. Límite por IP: RATE_LIMIT_CONTRASENA_MAX. Sin Redis → 503.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [correo]
+              properties:
+                correo: { type: string, format: email, maxLength: 150 }
+      responses:
+        '202':
+          description: Solicitud recibida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Mensaje' }
+        '400': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/contrasena/verificar:
+    post:
+      tags: [Autenticación]
+      summary: Dice para qué sirve un token de contraseña, sin consumirlo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Token válido
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposito, correo]
+                properties:
+                  proposito: { type: string, enum: [CREAR, RESTABLECER] }
+                  correo: { type: string, format: email }
+        '400':
+          description: TOKEN_CONTRASENA_INVALIDO (no existe, venció, ya se usó o lo reemplazó uno nuevo) o VALIDACION
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /auth/contrasena/establecer:
+    post:
+      tags: [Autenticación]
+      summary: Canjea el token y guarda la contraseña
+      description: |
+        El token es de un solo uso (canje atómico en Redis). Guarda el hash con
+        SP_Usuarios_CambiarContrasena, cierra todas las sesiones y access tokens del usuario,
+        borra su caché y limpia el bloqueo de login. No abre sesión. Una contraseña que incumple
+        la política es 400 VALIDACION y no consume el token. Si el SP rechaza después de canjear
+        (403 USUARIO_INACTIVO), el token ya se consumió.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, contrasena]
+              properties:
+                token: { type: string, maxLength: 200 }
+                contrasena:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  description: Al menos una letra y un número
+      responses:
+        '204':
+          description: Contraseña guardada
+        '400':
+          description: TOKEN_CONTRASENA_INVALIDO o VALIDACION
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
   /auth/login:
@@ -552,10 +649,59 @@ paths:
               schema: { $ref: '#/components/schemas/Producto' }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
+  /productos/{id}/imagenes/archivo:
+    post:
+      tags: [Productos]
+      summary: Sube una imagen al servidor
+      description: |
+        multipart/form-data con el archivo en el campo `imagen` y los campos de texto opcionales
+        `orden` y `esPrincipal`. El tipo se decide por los bytes del archivo (JPEG, PNG o WebP),
+        no por la extensión ni el Content-Type. Se guarda con nombre UUID y la URL es relativa:
+        `/api/imagenes/productos/<uuid>.<ext>`. Si el SP rechaza, el archivo se borra.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [imagen]
+              properties:
+                imagen:
+                  {
+                    type: string,
+                    format: binary,
+                    description: 'JPEG, PNG o WebP; máx. IMAGENES_MAX_MB (5 MB)',
+                  }
+                orden: { type: integer, minimum: 0, maximum: 255, default: 0 }
+                esPrincipal: { type: boolean, default: false }
+      responses:
+        '201':
+          description: Producto con sus imágenes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '413':
+          description: ARCHIVO_DEMASIADO_GRANDE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415':
+          description: TIPO_ARCHIVO_NO_PERMITIDO
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /productos/{id}/imagenes:
     post:
       tags: [Productos]
-      summary: Agrega una imagen por URL
+      summary: Agrega una imagen por URL externa
       description: Si el producto no tenía principal, la nueva lo es; esPrincipal true reemplaza la anterior.
       security:
         - bearerAuth: []
@@ -578,6 +724,7 @@ paths:
     delete:
       tags: [Productos]
       summary: Quita una imagen (si era la principal, pasa a la siguiente por orden)
+      description: Si era un archivo del servidor, lo borra del disco después de confirmar.
       security:
         - bearerAuth: []
       parameters:
@@ -588,6 +735,32 @@ paths:
           description: Imagen eliminada
         '404':
           description: NO_ENCONTRADO (también si la imagen es de otro producto)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /imagenes/productos/{archivo}:
+    get:
+      tags: [Imágenes]
+      summary: Descarga una imagen subida
+      description: |
+        Archivo estático de IMAGENES_DIR (público, sin listado ni archivos ocultos). Cabeceras:
+        Cache-Control public, max-age=31536000, immutable; X-Content-Type-Options nosniff;
+        Content-Security-Policy default-src 'none'. Lo que no existe responde 404 JSON.
+      parameters:
+        - name: archivo
+          in: path
+          required: true
+          schema: { type: string, example: 0f8fad5b-d9cb-469f-a165-70867728950e.png }
+      responses:
+        '200':
+          description: Imagen
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/Error' }
+        '416':
+          description: RANGO_NO_SATISFACIBLE (Range fuera del archivo)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1881,7 +2054,11 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
     post:
       tags: [Usuarios]
-      summary: Crea un Operador o Administrador
+      summary: Crea un Operador o Administrador y le manda la invitación
+      description: |
+        Sin contraseña: el usuario queda con contrasenaPendiente true y recibe un correo con el
+        enlace `…/crear-contrasena#token=…` (vigencia TOKEN_CREAR_HORAS, 72 h). Sin Redis → 503
+        sin crear nada.
       security:
         - bearerAuth: []
       requestBody:
@@ -1947,6 +2124,28 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+  /usuarios/{id}/invitacion:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [Usuarios]
+      summary: Reenvía el enlace para crear la contraseña
+      description: |
+        El enlace anterior deja de servir. Si el usuario ya creó su contraseña → 409
+        CONTRASENA_YA_CREADA; si está desactivado → 403 USUARIO_INACTIVO.
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Invitación enviada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Mensaje' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /usuarios/{id}/estado:
     parameters:
       - { $ref: '#/components/parameters/Id' }
@@ -2297,15 +2496,9 @@ components:
   schemas:
     Registro:
       type: object
-      required: [correo, contrasena, nombre, apellido]
+      required: [correo, nombre, apellido]
       properties:
         correo: { type: string, format: email, maxLength: 150, example: ana@correo.gt }
-        contrasena:
-          type: string
-          minLength: 8
-          maxLength: 128
-          description: Al menos una letra y un número
-          example: Segura2026
         nombre: { type: string, minLength: 1, maxLength: 100, example: Ana }
         apellido: { type: string, minLength: 1, maxLength: 100, example: López }
         telefono:
@@ -2313,6 +2506,11 @@ components:
           maxLength: 20
           pattern: '^\+?[\d\s-]{8,20}$'
           example: 5555-1234
+    Mensaje:
+      type: object
+      required: [mensaje]
+      properties:
+        mensaje: { type: string }
     Login:
       type: object
       required: [correo, contrasena]
@@ -2790,7 +2988,18 @@ components:
         fecha: { type: string, format: date-time }
     Usuario:
       type: object
-      required: [idUsuario, correo, nombre, apellido, telefono, rol, activo, fechaCreacion]
+      required:
+        [
+          idUsuario,
+          correo,
+          nombre,
+          apellido,
+          telefono,
+          rol,
+          activo,
+          fechaCreacion,
+          contrasenaPendiente,
+        ]
       properties:
         idUsuario: { type: integer }
         correo: { type: string, format: email }
@@ -2800,6 +3009,9 @@ components:
         rol: { type: string, enum: [Cliente, Operador, Administrador] }
         activo: { type: boolean }
         fechaCreacion: { type: string, format: date-time }
+        contrasenaPendiente:
+          type: boolean
+          description: true mientras no ha creado su contraseña (espera el enlace del correo)
     PerfilEntrada:
       type: object
       required: [nombre, apellido]
@@ -2809,10 +3021,10 @@ components:
         telefono: { type: [string, 'null'], maxLength: 20, pattern: '^\+?[\d\s-]{8,20}$' }
     UsuarioNuevo:
       type: object
-      required: [correo, contrasena, nombre, apellido, rol]
+      required: [correo, nombre, apellido, rol]
+      description: Sin contraseña; el usuario la crea con el enlace de la invitación enviada por correo
       properties:
         correo: { type: string, format: email, maxLength: 150 }
-        contrasena: { type: string, minLength: 8, maxLength: 128 }
         nombre: { type: string, maxLength: 100 }
         apellido: { type: string, maxLength: 100 }
         telefono: { type: [string, 'null'], maxLength: 20 }

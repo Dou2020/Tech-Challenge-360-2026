@@ -13,6 +13,7 @@ import type {
   FilaVariante,
   ResultSetsProducto,
 } from '../../../../src/modules/catalogo/catalogo.types.js';
+import { imagenes } from '../../../../src/shared/almacenamiento/imagenes.js';
 import { cache } from '../../../../src/shared/cache/cache.js';
 import { AppError } from '../../../../src/shared/errors/AppError.js';
 
@@ -30,10 +31,14 @@ vi.mock('../../../../src/modules/catalogo/catalogo.repository.js', () => ({
     cambiarEstadoProducto: vi.fn(),
     eliminarProducto: vi.fn(),
     agregarImagen: vi.fn(),
+    eliminarImagen: vi.fn(),
     cambiarPrecioVariante: vi.fn(),
     cambiarEstadoVariante: vi.fn(),
     listarAtributos: vi.fn(),
   },
+}));
+vi.mock('../../../../src/shared/almacenamiento/imagenes.js', () => ({
+  imagenes: { guardar: vi.fn(), borrar: vi.fn() },
 }));
 // Caché sin Redis: siempre carga de la base y lo informa como MISS.
 vi.mock('../../../../src/shared/cache/cache.js', () => ({
@@ -379,6 +384,101 @@ describe('catalogoService: invalidación de la caché', () => {
 
     expect(cambiada.precio).toBe('149.00');
     expect(cacheSimulada.invalidar).not.toHaveBeenCalled();
+  });
+});
+
+describe('imágenes subidas al servidor', () => {
+  const archivo = Buffer.from('contenido');
+  const datos = { orden: 0, esPrincipal: true };
+  const URL_PROPIA = '/api/imagenes/productos/0f8fad5b-d9cb-469f-a165-70867728950e.png';
+
+  it('subirImagen guarda el archivo y registra su URL relativa en el SP', async () => {
+    // Arrange
+    vi.mocked(imagenes.guardar).mockResolvedValue(URL_PROPIA);
+    repo.agregarImagen.mockResolvedValue(detalle);
+
+    // Act
+    const producto = await catalogoService.subirImagen(ADMIN, 20, archivo, datos);
+
+    // Assert
+    expect(repo.agregarImagen).toHaveBeenCalledWith(ADMIN, 20, { ...datos, url: URL_PROPIA });
+    expect(producto.idProducto).toBe(20);
+    expect(imagenes.borrar).not.toHaveBeenCalled();
+  });
+
+  it('subirImagen con un tipo no permitido responde 415 y no llama al SP', async () => {
+    // Arrange
+    vi.mocked(imagenes.guardar).mockResolvedValue(undefined);
+
+    // Act
+    const resultado = catalogoService.subirImagen(ADMIN, 20, archivo, datos);
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({
+      code: 'TIPO_ARCHIVO_NO_PERMITIDO',
+      status: 415,
+    });
+    expect(repo.agregarImagen).not.toHaveBeenCalled();
+  });
+
+  it('subirImagen borra el archivo si el SP rechaza', async () => {
+    // Arrange
+    vi.mocked(imagenes.guardar).mockResolvedValue(URL_PROPIA);
+    repo.agregarImagen.mockRejectedValue(new AppError('NO_ENCONTRADO', 'No existe.'));
+
+    // Act
+    const resultado = catalogoService.subirImagen(ADMIN, 20, archivo, datos);
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({ code: 'NO_ENCONTRADO' });
+    expect(imagenes.borrar).toHaveBeenCalledWith(URL_PROPIA);
+  });
+
+  it('eliminarImagen borra el archivo después de que el SP confirmó', async () => {
+    // Arrange
+    repo.eliminarImagen.mockResolvedValue(URL_PROPIA);
+
+    // Act
+    await catalogoService.eliminarImagen(ADMIN, 20, 5);
+
+    // Assert
+    expect(imagenes.borrar).toHaveBeenCalledWith(URL_PROPIA);
+  });
+
+  it('eliminarImagen no borra nada si el SP falla', async () => {
+    // Arrange
+    repo.eliminarImagen.mockRejectedValue(new AppError('NO_ENCONTRADO', 'No existe.'));
+
+    // Act
+    const resultado = catalogoService.eliminarImagen(ADMIN, 20, 5);
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({ code: 'NO_ENCONTRADO' });
+    expect(imagenes.borrar).not.toHaveBeenCalled();
+  });
+
+  it('eliminarProducto borra los archivos de todas sus imágenes e invalida la caché', async () => {
+    // Arrange
+    repo.eliminarProducto.mockResolvedValue([URL_PROPIA, 'https://img/externa.png']);
+
+    // Act
+    await catalogoService.eliminarProducto(ADMIN, 20);
+
+    // Assert
+    expect(imagenes.borrar).toHaveBeenCalledTimes(2);
+    expect(cacheSimulada.invalidar).toHaveBeenCalledWith('catalogo');
+  });
+
+  it('un fallo al borrar un archivo no hace fallar la operación', async () => {
+    // Arrange
+    repo.eliminarProducto.mockResolvedValue([URL_PROPIA]);
+    vi.mocked(imagenes.borrar).mockRejectedValueOnce(new Error('EACCES'));
+
+    // Act
+    const resultado = catalogoService.eliminarProducto(ADMIN, 20);
+
+    // Assert
+    await expect(resultado).resolves.toBeUndefined();
   });
 });
 

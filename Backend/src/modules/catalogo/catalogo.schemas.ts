@@ -131,6 +131,32 @@ export const imagenBody = z.object({
   esPrincipal: z.boolean({ error: 'Debe ser true o false.' }).default(false),
 });
 
+/**
+ * Campos de texto de la subida multipart (`orden`, `esPrincipal`): llegan como cadenas.
+ * Vacío o ausente usa el valor por defecto.
+ */
+const vacioAUndefined = (valor: unknown) =>
+  typeof valor === 'string' && valor.trim() === '' ? undefined : valor;
+
+export const imagenArchivoBody = z.object({
+  orden: z.preprocess(
+    vacioAUndefined,
+    z.coerce
+      .number({ error: 'Debe ser un entero entre 0 y 255.' })
+      .int('Debe ser un entero entre 0 y 255.')
+      .min(0, 'Debe ser un entero entre 0 y 255.')
+      .max(255, 'Debe ser un entero entre 0 y 255.')
+      .default(0),
+  ),
+  esPrincipal: z.preprocess(
+    vacioAUndefined,
+    z
+      .enum(['true', 'false'], { error: 'Debe ser true o false.' })
+      .transform((valor) => valor === 'true')
+      .default(false),
+  ),
+});
+
 export const paramsImagen = z.object({ id: esquemaId, idImagen: esquemaId });
 
 // --- Variantes ------------------------------------------------------------------
@@ -159,6 +185,7 @@ export type EstadoBody = z.infer<typeof estadoBody>;
 export type ProductoBody = z.infer<typeof productoBody>;
 export type CrearProductoBody = z.infer<typeof crearProductoBody>;
 export type ImagenBody = z.infer<typeof imagenBody>;
+export type ImagenArchivoBody = z.infer<typeof imagenArchivoBody>;
 export type ParamsImagen = z.infer<typeof paramsImagen>;
 export type CrearVarianteBody = z.infer<typeof crearVarianteBody>;
 export type ActualizarVarianteBody = z.infer<typeof actualizarVarianteBody>;

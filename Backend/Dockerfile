@@ -16,6 +16,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/docs/openapi.yaml ./src/docs/openapi.yaml
+# Imágenes de producto subidas: docker compose monta aquí el volumen "imagenes".
+RUN mkdir -p /app/datos/imagenes && chown -R node:node /app/datos
+ENV IMAGENES_DIR=/app/datos/imagenes
 USER node
 EXPOSE 4000
 # Las variables de entorno las entrega docker compose.

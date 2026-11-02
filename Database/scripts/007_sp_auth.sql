@@ -38,7 +38,6 @@ GO
 -- para DUPLICADO (Backend/API.md §4), no una validación omitida.
 CREATE OR ALTER PROCEDURE dbo.SP_Auth_RegistrarCliente
     @Correo         NVARCHAR(150),
-    @HashContrasena NVARCHAR(255),
     @Nombre         NVARCHAR(100),
     @Apellido       NVARCHAR(100),
     @Telefono       NVARCHAR(20) = NULL
@@ -62,9 +61,6 @@ BEGIN
         IF @Correo IS NULL OR @Correo NOT LIKE N'%_@_%._%'
             THROW 50001, N'El correo no tiene un formato válido.', 1;
 
-        IF @HashContrasena IS NULL OR LEN(@HashContrasena) = 0
-            THROW 50001, N'La contraseña es obligatoria.', 1;
-
         IF @Nombre IS NULL OR LEN(@Nombre) = 0
             THROW 50001, N'El nombre es obligatorio.', 1;
 
@@ -82,7 +78,8 @@ BEGIN
 
         -- 2-3. Escribir. Un correo repetido termina aquí con 2627 (UQ_Usuario_Correo) → DUPLICADO.
         INSERT INTO dbo.Usuario (IDRol, Correo, HashContrasena, Nombre, Apellido, Telefono, Activo)
-        VALUES (@IDRolCliente, @Correo, @HashContrasena, @Nombre, @Apellido, @Telefono, 1);
+        --    HashContrasena queda NULL: el cliente crea su contraseña con el enlace enviado por correo.
+        VALUES (@IDRolCliente, @Correo, NULL, @Nombre, @Apellido, @Telefono, 1);
 
         SET @IDUsuario = SCOPE_IDENTITY();
 
@@ -128,7 +125,8 @@ BEGIN
         u.Nombre,
         u.Apellido,
         r.Nombre AS Rol,
-        u.Activo
+        u.Activo,
+        CONVERT(BIT, CASE WHEN u.HashContrasena IS NULL THEN 1 ELSE 0 END) AS ContrasenaPendiente
     FROM dbo.Usuario AS u
     INNER JOIN dbo.Rol AS r ON r.IDRol = u.IDRol
     WHERE u.Correo = TRIM(@Correo);  -- CI_AI: no distingue mayúsculas ni tildes
@@ -159,7 +157,8 @@ BEGIN
         u.Telefono,
         r.Nombre AS Rol,
         u.Activo,
-        u.FechaCreacion
+        u.FechaCreacion,
+        CONVERT(BIT, CASE WHEN u.HashContrasena IS NULL THEN 1 ELSE 0 END) AS ContrasenaPendiente
     FROM dbo.Usuario AS u
     INNER JOIN dbo.Rol AS r ON r.IDRol = u.IDRol
     WHERE u.IDUsuario = @IDUsuario;
@@ -206,7 +205,7 @@ GO
 -- del usuario (cambió de rol o se desactivó) o invalidar su caché.
 
 -- Uso de PUT /api/perfil/contrasena: el backend verifica la contraseña actual contra este hash.
--- Devuelve IDUsuario, HashContrasena y Activo (nunca va a la bitácora ni a una respuesta HTTP).
+-- Devuelve IDUsuario, HashContrasena (NULL si la contraseña está pendiente) y Activo (nunca va a la bitácora ni a una respuesta HTTP).
 -- Usuario inexistente → 50004.
 CREATE OR ALTER PROCEDURE dbo.SP_Usuarios_ObtenerCredencialPorId
     @IDUsuario INT
@@ -276,7 +275,8 @@ BEGIN
 END;
 GO
 
--- PUT /api/perfil/contrasena: guarda el hash nuevo (argon2id, calculado por el backend).
+-- PUT /api/perfil/contrasena y establecer contraseña por token (el solicitante es el dueño del token;
+-- funciona también si el hash actual es NULL): guarda el hash nuevo (argon2id, calculado por el backend).
 -- Deja en la bitácora que la contraseña cambió, sin ningún valor de la contraseña ni del hash.
 -- Sin result set.
 CREATE OR ALTER PROCEDURE dbo.SP_Usuarios_CambiarContrasena
@@ -383,7 +383,8 @@ BEGIN
         u.Telefono,
         f.Rol,
         u.Activo,
-        u.FechaCreacion
+        u.FechaCreacion,
+        CONVERT(BIT, CASE WHEN u.HashContrasena IS NULL THEN 1 ELSE 0 END) AS ContrasenaPendiente
     FROM @Fila AS f
     INNER JOIN dbo.Usuario AS u ON u.IDUsuario = f.IDUsuario
     ORDER BY
@@ -410,7 +411,6 @@ GO
 CREATE OR ALTER PROCEDURE dbo.SP_Usuarios_Crear
     @IDUsuarioSolicitante INT,
     @Correo               NVARCHAR(150),
-    @HashContrasena       NVARCHAR(255),
     @Nombre               NVARCHAR(100),
     @Apellido             NVARCHAR(100),
     @Telefono             NVARCHAR(20) = NULL,
@@ -437,9 +437,6 @@ BEGIN
         IF @Correo IS NULL OR @Correo NOT LIKE N'%_@_%._%'
             THROW 50001, N'El correo no tiene un formato válido.', 1;
 
-        IF @HashContrasena IS NULL OR LEN(TRIM(@HashContrasena)) = 0
-            THROW 50001, N'La contraseña es obligatoria.', 1;
-
         IF @Nombre IS NULL
             THROW 50001, N'El nombre es obligatorio.', 1;
 
@@ -458,7 +455,8 @@ BEGIN
 
         -- 3. Escribir (correo repetido: 2627)
         INSERT INTO dbo.Usuario (IDRol, Correo, HashContrasena, Nombre, Apellido, Telefono, Activo)
-        VALUES (@IDRol, @Correo, @HashContrasena, @Nombre, @Apellido, @Telefono, 1);
+        --    HashContrasena queda NULL: el usuario crea su contraseña con el enlace enviado por correo.
+        VALUES (@IDRol, @Correo, NULL, @Nombre, @Apellido, @Telefono, 1);
 
         SET @IDUsuario = SCOPE_IDENTITY();
 
@@ -598,6 +596,7 @@ BEGIN
             r.Nombre AS Rol,
             u.Activo,
             u.FechaCreacion,
+            CONVERT(BIT, CASE WHEN u.HashContrasena IS NULL THEN 1 ELSE 0 END) AS ContrasenaPendiente,
             @RolCambio AS RolCambio,
             CONVERT(BIT, 0) AS ActivoCambio
         FROM dbo.Usuario AS u
@@ -699,6 +698,7 @@ BEGIN
             r.Nombre AS Rol,
             u.Activo,
             u.FechaCreacion,
+            CONVERT(BIT, CASE WHEN u.HashContrasena IS NULL THEN 1 ELSE 0 END) AS ContrasenaPendiente,
             CONVERT(BIT, 0) AS RolCambio,
             @ActivoCambio AS ActivoCambio
         FROM dbo.Usuario AS u

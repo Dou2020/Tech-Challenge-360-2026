@@ -25,6 +25,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
    - [Productos — `/api/productos`](#productos--apiproductos)
    - [Variantes — `/api/variantes`](#variantes--apivariantes)
    - [Atributos — `/api/atributos`](#atributos--apiatributos)
+   - [Imágenes subidas — `/api/imagenes`](#imágenes-subidas--apiimagenes)
    - [Inventario — `/api/inventario`](#inventario--apiinventario)
    - [Carrito — `/api/carrito`](#carrito--apicarrito)
    - [Checkout — `/api/checkout`](#checkout--apicheckout)
@@ -35,6 +36,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
    - [Configuración — `/api/configuracion`](#configuración--apiconfiguracion)
 3. [Ejemplos de los flujos críticos](#3-ejemplos-de-los-flujos-críticos)
    - [Login](#login)
+   - [Crear y recuperar la contraseña](#crear-y-recuperar-la-contraseña)
    - [Refresh](#refresh)
    - [Detalle público de un producto](#detalle-público-de-un-producto)
    - [Crear un producto](#crear-un-producto)
@@ -67,6 +69,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
 | Refresh token | Cookie `refreshToken` con `HttpOnly; Secure; SameSite=Strict; Path=/api/auth`, válida 7 días. Se rota en cada uso. La sesión se guarda en Redis (solo el hash SHA-256 del token) |
 | Revocación | El access token lleva `jti` y `sid` (sesión). Solo se acepta mientras su sesión exista en Redis y no esté revocado. Tras logout, reutilización del refresh, desactivación, cambio de contraseña o de rol, deja de aceptarse de inmediato aunque no haya expirado |
 | Bloqueo de login | Tras `LOGIN_MAX_INTENTOS` (5) fallos con el mismo correo, el login se bloquea `LOGIN_BLOQUEO_MIN` (15) minutos → `429 CUENTA_BLOQUEADA` con header `Retry-After` |
+| Contraseñas por correo | Ni el registro ni el alta de usuarios reciben contraseña: la cuenta nace **pendiente** y el usuario la crea con un enlace de un solo uso enviado por correo. El enlace lleva el token en el fragmento (`#token=…`). Los tokens viven en Redis (solo su SHA-256), vencen en `TOKEN_CREAR_HORAS` (72 h) o `TOKEN_RESTABLECER_MIN` (60 min) y emitir uno nuevo invalida el anterior. Ver [Crear y recuperar la contraseña](#crear-y-recuperar-la-contraseña) |
 | Carrito de invitado | Header `X-Cart-Token: <uuid>` |
 | Pago | Header `Idempotency-Key: <uuid v4>` obligatorio en `POST /api/checkout/pagar` |
 
@@ -157,7 +160,10 @@ El catálogo completo de códigos está en la [sección 4](#4-catálogo-de-códi
 ### Autenticación — `/api/auth`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/api/auth/registro` | Público | Registra un Cliente (`correo`, `contrasena` de 8+ caracteres con al menos una letra y un número, `nombre`, `apellido`, `telefono` opcional). Devuelve 201 con los tokens, igual que el login. Correo repetido: 409 `DUPLICADO` | `SP_Auth_RegistrarCliente` |
+| POST | `/api/auth/registro` | Público | Registra un Cliente **sin contraseña** (`correo`, `nombre`, `apellido`, `telefono` opcional) y le manda el correo de bienvenida con el enlace para crearla. Siempre responde **202** con el mismo cuerpo, exista o no el correo (no hay `DUPLICADO` ni sesión). Ver [Crear y recuperar la contraseña](#crear-y-recuperar-la-contraseña) | `SP_Auth_ObtenerUsuarioPorCorreo` + `SP_Auth_RegistrarCliente` |
+| POST | `/api/auth/contrasena/olvido` | Público | Pide el enlace para restablecer la contraseña (`{ correo }`). Siempre 202 | `SP_Auth_ObtenerUsuarioPorCorreo` + Redis |
+| POST | `/api/auth/contrasena/verificar` | Público | Dice para qué sirve un token y de quién es, sin consumirlo (`{ token }`): 200 `{ proposito, correo }` o 400 `TOKEN_CONTRASENA_INVALIDO` | Redis + `SP_Usuarios_ObtenerPorId` |
+| POST | `/api/auth/contrasena/establecer` | Público | Canjea el token y guarda la contraseña (`{ token, contrasena }`). Responde 204 y corta las sesiones del usuario | Redis + `SP_Usuarios_CambiarContrasena` |
 | POST | `/api/auth/login` | Público | Valida credenciales; crea la sesión en Redis, devuelve el access token y deja la cookie de refresh. Un usuario inactivo recibe 403; tras 5 fallos, 429 `CUENTA_BLOQUEADA` | `SP_Auth_ObtenerUsuarioPorCorreo` + Redis |
 | POST | `/api/auth/refresh` | Cookie | Rota el refresh token en Redis (script Lua atómico) y devuelve un access token nuevo con el rol y estado actuales del usuario. Si se reutiliza un token ya rotado, se revoca toda la sesión. Un usuario desactivado recibe 403 `USUARIO_INACTIVO` | Redis + `SP_Usuarios_ObtenerPorId` (con caché) |
 | POST | `/api/auth/logout` | Cookie | Revoca el access token del header `Authorization` (si viene) y la sesión de la cookie, y borra la cookie. Los demás access tokens de esa sesión también dejan de aceptarse. Responde 204, también sin sesión | Redis |
@@ -170,7 +176,7 @@ El catálogo completo de códigos está en la [sección 4](#4-catálogo-de-códi
 | PUT | `/api/perfil` | Autenticado | Actualiza nombre, apellido y teléfono | `SP_Usuarios_ActualizarPerfil` |
 | PUT | `/api/perfil/contrasena` | Autenticado | Cambia la contraseña (pide la actual) y revoca las demás sesiones | `SP_Usuarios_ObtenerCredencialPorId` + `SP_Usuarios_CambiarContrasena` |
 
-Cualquier rol autenticado; el usuario sale siempre del token. Un usuario es `{ idUsuario, correo, nombre, apellido, telefono, rol, activo, fechaCreacion }`.
+Cualquier rol autenticado; el usuario sale siempre del token. Un usuario es `{ idUsuario, correo, nombre, apellido, telefono, rol, activo, fechaCreacion, contrasenaPendiente }`. `contrasenaPendiente` es `true` mientras la cuenta no ha creado su contraseña (nunca verdadero para quien ya inició sesión).
 - `GET /api/perfil` responde 200 con el usuario (siempre leído de la base).
 - `PUT /api/perfil`: body `{ nombre, apellido, telefono? }` (máx. 100, 100 y 20; mismo formato de teléfono que el registro). Reemplaza los tres campos: omitir `telefono` lo borra. Responde 200 con el usuario y borra la caché del usuario.
 - `PUT /api/perfil/contrasena`: body `{ contrasenaActual, contrasenaNueva }`; la nueva sigue la política del registro (8+ caracteres, una letra y un número) y debe ser distinta de la actual. Responde **204**. Una contraseña actual incorrecta responde **400 `VALIDACION`** con `details: [{ field: "contrasenaActual" }]` y no 401, porque el frontend toma un 401 por access token vencido e intentaría renovar la sesión. Tras el SP se revocan **las demás** sesiones (access y refresh) y se conserva la actual: sigue funcionando y el frontend renueva su access token con el refresh.
@@ -182,10 +188,11 @@ Cualquier rol autenticado; el usuario sale siempre del token. Un usuario es `{ i
 | GET | `/api/usuarios/:id` | Admin | Detalle de un usuario | `SP_Usuarios_ObtenerPorId` |
 | POST | `/api/usuarios` | Admin | Crea un Operador o Administrador | `SP_Usuarios_Crear` |
 | PUT | `/api/usuarios/:id` | Admin | Actualiza nombre, apellido, teléfono y rol | `SP_Usuarios_Actualizar` |
+| POST | `/api/usuarios/:id/invitacion` | Admin | Reenvía el enlace para crear la contraseña a un usuario que aún no la creó (el enlace anterior deja de servir). Responde 202 `{ mensaje }`. Ya creó su contraseña: 409 `CONTRASENA_YA_CREADA`; desactivado: 403 `USUARIO_INACTIVO`; inexistente: 404 | `SP_Usuarios_ObtenerPorId` + Redis |
 | PATCH | `/api/usuarios/:id/estado` | Admin | Activa o desactiva (`{ "activo": false }`). Desactivar revoca sus sesiones y access tokens. Un Admin no puede desactivarse a sí mismo ni al último Administrador activo (409 `EN_USO`) | `SP_Usuarios_CambiarEstado` |
 
 Usuario: el mismo objeto del perfil. `GET /api/usuarios` filtra por `q` (literal en "nombre apellido" y correo), `rol` y `activo`, y ordena por `nombre`, `correo`, `rol` o `fechaCreacion` (default `nombre:asc`).
-- `POST`: body `{ correo, contrasena, nombre, apellido, telefono?, rol }` con `rol` = `Operador` o `Administrador` (`Cliente` → 400; los clientes se registran solos). La contraseña inicial sigue la política del registro. Responde 201 con `Location`. Correo repetido: 409 `DUPLICADO`.
+- `POST`: body `{ correo, nombre, apellido, telefono?, rol }` con `rol` = `Operador` o `Administrador` (`Cliente` → 400; los clientes se registran solos). **No lleva contraseña**: el usuario queda con `contrasenaPendiente: true` y recibe un correo de invitación con el enlace para crearla (vigencia `TOKEN_CREAR_HORAS`). Responde 201 con `Location`. Correo repetido: 409 `DUPLICADO`. Sin Redis (donde vive el token): 503 sin crear nada.
 - `PUT`: body `{ nombre, apellido, telefono?, rol? }`; el correo no cambia, sin `rol` se conserva y sin `telefono` se borra. Quitar el rol Administrador a sí mismo o al último Administrador activo: 409 `EN_USO`.
 - `PATCH .../estado`: body `{ activo: boolean }`.
 - Tras el SP, si cambió el rol o el estado, se revocan las sesiones y los access tokens del usuario: su access token responde 401 al instante y su refresh token deja de servir (403 `USUARIO_INACTIVO` si está desactivado). Siempre se borra su caché. Un usuario inexistente responde 404.
@@ -236,8 +243,9 @@ El detalle de gestión (`GET /:id` y las escrituras que no responden 204) es `{ 
 | PUT | `/api/productos/:id` | Admin | Reemplaza nombre, descripción (omitirla la borra) y categoría | `SP_Productos_Actualizar` |
 | PATCH | `/api/productos/:id/estado` | Admin | `{ "activo": false }` activa o desactiva; un producto inactivo deja de verse en la tienda | `SP_Productos_CambiarEstado` |
 | DELETE | `/api/productos/:id` | Admin | Elimina solo un producto sin historia. Con ventas: 409 `PRODUCTO_CON_VENTAS` (se debe desactivar). Sin ventas pero con kardex o reservas (en la práctica, si alguna vez tuvo existencia): 409 `EN_USO`. Borra imágenes, variantes y líneas de carrito. Responde 204 | `SP_Productos_Eliminar` |
-| POST | `/api/productos/:id/imagenes` | Admin | Agrega una imagen por URL: `url` (`http://` o `https://`, máx. 500), `orden` (0–255, default 0), `esPrincipal` (default `false`). Si el producto no tenía principal, la nueva lo es; con `esPrincipal: true` reemplaza a la anterior. Responde 201 con el detalle | `SP_Productos_AgregarImagen` |
-| DELETE | `/api/productos/:id/imagenes/:idImagen` | Admin | Quita una imagen (404 si es de otro producto). Si era la principal, pasa a la siguiente por `orden`. Responde 204 | `SP_Productos_EliminarImagen` |
+| POST | `/api/productos/:id/imagenes` | Admin | Agrega una imagen por URL externa: `url` (`http://` o `https://`, máx. 500), `orden` (0–255, default 0), `esPrincipal` (default `false`). Si el producto no tenía principal, la nueva lo es; con `esPrincipal: true` reemplaza a la anterior. Responde 201 con el detalle | `SP_Productos_AgregarImagen` |
+| POST | `/api/productos/:id/imagenes/archivo` | Admin | Sube una imagen al servidor. `multipart/form-data` con el archivo en el campo **`imagen`** (JPEG, PNG o WebP; máx. `IMAGENES_MAX_MB`, 5 MB) y los campos de texto opcionales `orden` (0–255, default 0) y `esPrincipal` (`true`/`false`, default `false`). El tipo se decide por los bytes del archivo, no por su extensión ni su `Content-Type`. Responde 201 con el detalle del producto; la URL guardada es relativa: `/api/imagenes/productos/<uuid>.<ext>`. Archivo de otro tipo: 415 `TIPO_ARCHIVO_NO_PERMITIDO`; demasiado grande: 413 `ARCHIVO_DEMASIADO_GRANDE`; sin archivo o campos inválidos: 400. Si el SP rechaza (p. ej. producto inexistente) el archivo se borra | `SP_Productos_AgregarImagen` |
+| DELETE | `/api/productos/:id/imagenes/:idImagen` | Admin | Quita una imagen (404 si es de otro producto). Si era la principal, pasa a la siguiente por `orden`. Si era un archivo del servidor, lo borra del disco después de confirmar. Responde 204 | `SP_Productos_EliminarImagen` |
 | POST | `/api/productos/:id/variantes` | Admin | Agrega una variante: `sku`, `precio`, `existenciaInicial` (default 0, entra al kardex), `valores` (`idValorAtributo`, como máximo uno por atributo y sin repetir la combinación de otra variante; si no: 400 `VALIDACION`). Responde 201 con la variante | `SP_Variantes_Crear` |
 
 ### Variantes — `/api/variantes`
@@ -255,6 +263,13 @@ La existencia **no** se modifica aquí: solo cambia por movimientos de inventari
 | GET | `/api/atributos` | Admin | Arreglo de atributos con sus valores: `[{ idAtributo, nombre, cantidadValores, valores: [{ idValorAtributo, valor, cantidadVariantes }] }]` (Talla: S, M, L; Color: Negro, Azul) | `SP_Atributos_Listar` |
 | POST | `/api/atributos` | Admin | Crea un atributo (`nombre`, único, máx. 50). Responde 201 con `{ idAtributo, nombre }` | `SP_Atributos_Crear` |
 | POST | `/api/atributos/:id/valores` | Admin | Agrega un valor (`valor`, único dentro del atributo, máx. 50). Responde 201 con `{ idValorAtributo, idAtributo, atributo, valor }` | `SP_Atributos_AgregarValor` |
+
+### Imágenes subidas — `/api/imagenes`
+| Método | Ruta | Acceso | Descripción |
+| :--- | :--- | :--- | :--- |
+| GET | `/api/imagenes/productos/<uuid>.<jpg\|png\|webp>` | Público | Descarga una imagen subida con `POST /api/productos/:id/imagenes/archivo`. Archivos estáticos del directorio `IMAGENES_DIR`, sin listado de directorios ni archivos ocultos. Cabeceras: `Cache-Control: public, max-age=31536000, immutable` (el nombre es un UUID: no cambia), `X-Content-Type-Options: nosniff` y `Content-Security-Policy: default-src 'none'`. Lo que no existe responde 404 con el JSON de error; un `Range` fuera del archivo, 416 `RANGO_NO_SATISFACIBLE` |
+
+Como la URL es relativa (`/api/...`), nginx y el túnel la sirven por el mismo proxy de `/api` que la API.
 
 ### Inventario — `/api/inventario`
 La existencia física solo cambia por movimientos de kardex: entradas y ajustes de este módulo, más los que generan pedidos, cancelaciones y devoluciones. Nada de este módulo se cachea, porque todo trae existencias. Las entradas y los ajustes tampoco invalidan la caché del catálogo: lo cacheado no depende de la existencia.
@@ -412,7 +427,49 @@ Set-Cookie: refreshToken=…; HttpOnly; Secure; SameSite=Strict; Path=/api/auth;
 ```
 Credenciales incorrectas → `401 CREDENCIALES_INVALIDAS` (el mismo mensaje si el correo no existe; también se verifica contra un hash ficticio para que la respuesta tarde lo mismo). Usuario desactivado → `403 USUARIO_INACTIVO`, solo si la contraseña es correcta. Al quinto fallo seguido con el mismo correo → `429 CUENTA_BLOQUEADA` con `Retry-After: 900`, y así durante 15 minutos aunque llegue la contraseña correcta; el contador se reinicia al iniciar sesión correctamente. El correo se compara sin espacios ni mayúsculas. Si Redis no responde → `503 SERVICIO_NO_DISPONIBLE`.
 
-`POST /api/auth/registro` responde igual, con `201 Created`.
+### Crear y recuperar la contraseña
+```http
+POST /api/auth/registro
+Content-Type: application/json
+
+{ "correo": "ana@ejemplo.gt", "nombre": "Ana", "apellido": "López", "telefono": "5555-1234" }
+```
+```http
+HTTP/1.1 202 Accepted
+
+{ "mensaje": "Si el correo puede registrarse, te enviamos un mensaje con el enlace para crear tu contraseña." }
+```
+El cuerpo y el status son los mismos para un correo nuevo, uno que sigue sin contraseña, uno que ya tiene cuenta y uno desactivado: la API no revela qué correos existen. Lo que cambia es el correo que sale (en segundo plano, sin esperar al SMTP):
+
+| Situación del correo | Correo que se envía |
+| :--- | :--- |
+| Nuevo | Bienvenida con el enlace `…/crear-contrasena#token=…` (el Cliente se crea sin contraseña) |
+| Existe y sigue pendiente | El mismo enlace de creación, nuevo (el anterior deja de servir) |
+| Existe con contraseña | "Ya tienes una cuenta", con un enlace a `…/recuperar-contrasena` (sin token) |
+| Desactivado | Ninguno |
+
+Un registro simultáneo del mismo correo (carrera en la base) también responde 202. Mientras la cuenta está pendiente, el login responde `401 CREDENCIALES_INVALIDAS` como si el correo no existiera.
+
+```http
+POST /api/auth/contrasena/olvido
+{ "correo": "ana@ejemplo.gt" }          →  202 { "mensaje": "…" }  (siempre)
+```
+Solo emite el token si el usuario existe y está activo. Con contraseña manda el enlace `…/restablecer-contrasena#token=…`; si aún estaba pendiente manda el de creación. No mira el bloqueo por intentos: quien se bloqueó es justo quien necesita recuperarla, y establecer la nueva lo desbloquea.
+
+```http
+POST /api/auth/contrasena/verificar
+{ "token": "N3x…" }                      →  200 { "proposito": "CREAR" | "RESTABLECER", "correo": "ana@ejemplo.gt" }
+                                            400 TOKEN_CONTRASENA_INVALIDO (desconocido, vencido, ya usado o reemplazado)
+```
+No consume el token: la UI lo usa para decidir si muestra el formulario.
+
+```http
+POST /api/auth/contrasena/establecer
+{ "token": "N3x…", "contrasena": "Nueva#2030" }   →  204
+```
+La contraseña sigue la política (8+ caracteres, una letra y un número; incumplirla es 400 `VALIDACION` y no consume el token). El token es de un solo uso (canje atómico en Redis). Después guarda el hash con `SP_Usuarios_CambiarContrasena` (bitácora `{"ContrasenaCambiada":true}`), **cierra todas las sesiones y access tokens del usuario**, borra su caché y limpia el bloqueo de login. No abre sesión: el frontend lleva al usuario al login. Si el SP rechaza después de canjear (p. ej. 403 `USUARIO_INACTIVO` porque lo desactivaron tras pedir el enlace), el token ya se consumió y hay que pedir otro.
+
+Las tres rutas están limitadas por IP (`RATE_LIMIT_CONTRASENA_MAX`, 10 cada 15 min, un contador por ruta) y responden 503 si Redis no responde. La URL base de los enlaces es `APP_URL_PUBLICA`.
 
 ### Refresh
 ```http
@@ -739,6 +796,7 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 | :--- | :---: | :---: | :--- |
 | `VALIDACION` | 400 | 50001 | Body, query o params no cumplen el esquema (zod) o una regla simple del SP |
 | `IDEMPOTENCY_KEY_REQUERIDA` | 400 | — | Falta `Idempotency-Key` en el pago (middleware) |
+| `TOKEN_CONTRASENA_INVALIDO` | 400 | — | El token de un enlace de contraseña no existe, venció, ya se usó o lo reemplazó uno más nuevo |
 | `NO_AUTENTICADO` | 401 | — | Falta el access token o no es válido |
 | `TOKEN_EXPIRADO` | 401 | — | El access token venció; el frontend hace refresh y reintenta |
 | `CREDENCIALES_INVALIDAS` | 401 | 50010 | Correo o contraseña incorrectos |
@@ -748,12 +806,16 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 | `USUARIO_INACTIVO` | 403 | 50012 | El usuario está desactivado. Además del login y el refresh, puede salir de cualquier SP que escribe (`@IDUsuarioSolicitante` desactivado) |
 | `NO_ENCONTRADO` | 404 | 50004 | El recurso no existe o no pertenece al cliente |
 | `DUPLICADO` | 409 | 2627 / 2601 | Correo, SKU, código de cupón o nombre de categoría repetido |
+| `CONTRASENA_YA_CREADA` | 409 | — | Se reenvía la invitación a un usuario que ya creó su contraseña |
 | `STOCK_INSUFICIENTE` | 409 | 50030 | La cantidad supera la existencia disponible |
 | `RESERVA_VENCIDA` | 409 | 50031 | Se intenta pagar con una reserva vencida o inexistente |
 | `TRANSICION_NO_PERMITIDA` | 409 | 50040 | Cambio de estado del pedido no definido en `TransicionEstadoPedido` |
 | `IDEMPOTENCIA_CONFLICTO` | 409 | 50021 | Misma `Idempotency-Key` con un contenido distinto |
 | `PRODUCTO_CON_VENTAS` | 409 | 50050 | Se intenta eliminar un producto con ventas (se debe desactivar) |
 | `EN_USO` | 409 | 50051 | Se intenta eliminar una categoría con productos o cupones, un cupón en uso o un producto sin ventas pero con kardex o reservas (si alguna vez tuvo existencia), o un Admin intenta desactivarse a sí mismo, desactivar al último Administrador activo o quitarle el rol a sí mismo o al último |
+| `ARCHIVO_DEMASIADO_GRANDE` | 413 | — | La imagen subida supera `IMAGENES_MAX_MB` |
+| `TIPO_ARCHIVO_NO_PERMITIDO` | 415 | — | El archivo subido no es JPEG, PNG ni WebP (se mira el contenido real) |
+| `RANGO_NO_SATISFACIBLE` | 416 | — | `Range` fuera del tamaño del archivo en `GET /api/imagenes/…` |
 | `CUPON_NO_EXISTE` | 422 | 50060 | El código no existe |
 | `CUPON_INACTIVO` | 422 | 50061 | El cupón está desactivado |
 | `CUPON_NO_VIGENTE` | 422 | 50062 | Aún no empieza su vigencia |
@@ -780,7 +842,7 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 | Dashboard en tiempo real | `GET /api/reportes/stream` (Server-Sent Events, Admin). Emite un evento cuando se crea, cancela o devuelve un pedido |
 | Exportación a Excel o PDF | Se genera en el frontend (`ReportTable`) con los datos de `/api/reportes/*`; no requiere endpoint nuevo |
 | Caché de reportes | Caché en Redis por endpoint y filtros. Se invalida por versión (`INCR shopcart:reportes:version`) al crear, cancelar o cambiar de estado un pedido y al registrar una devolución, siempre después de confirmar la transacción. Las respuestas llevan `X-Cache: HIT` o `MISS` |
-| Rate limiting | `POST /api/auth/login` y `POST /api/auth/registro`: 10 intentos por IP cada 15 minutos, con un contador por endpoint → `429 DEMASIADAS_SOLICITUDES` con `Retry-After` y headers `RateLimit-*`. Los contadores viven en Redis (`rate-limit-redis`, claves `shopcart:ratelimit:{login\|registro}:{ip}`). Se configura con `RATE_LIMIT_AUTH_MAX` (0 lo desactiva) y `RATE_LIMIT_AUTH_VENTANA_MIN`. Si Redis no responde, el limitador deja pasar la solicitud: no abre un hueco, porque login y registro responden `503` por su cuenta (fail-closed) |
+| Rate limiting | `POST /api/auth/login` y `POST /api/auth/registro`: `RATE_LIMIT_AUTH_MAX` (10) intentos por IP cada 15 minutos, y `/api/auth/contrasena/{olvido,verificar,establecer}`: `RATE_LIMIT_CONTRASENA_MAX` (10), con un contador por endpoint → `429 DEMASIADAS_SOLICITUDES` con `Retry-After` y headers `RateLimit-*`. Los contadores viven en Redis (`rate-limit-redis`, claves `shopcart:ratelimit:{login\|registro\|contrasena-olvido\|contrasena-verificar\|contrasena-establecer}:{ip}`). Se configura con `RATE_LIMIT_AUTH_MAX` (0 lo desactiva) y `RATE_LIMIT_AUTH_VENTANA_MIN`. Si Redis no responde, el limitador deja pasar la solicitud: no abre un hueco, porque login y registro responden `503` por su cuenta (fail-closed) |
 
 ---
 
@@ -798,6 +860,10 @@ Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan
 
 El enunciado deja estos puntos abiertos; se resolvieron así:
 
+- **Registro sin contraseña y respuesta única:** la contraseña se crea con un enlace de correo, así el registro responde 202 igual para cualquier correo y no sirve para averiguar quién tiene cuenta. El enlace lleva el token en el fragmento (`#token=`) y los tokens viven en Redis (fail-closed, un solo uso, uno vigente por usuario).
+- **Recuperar contraseña no mira el bloqueo de login** y, si la cuenta seguía pendiente, reenvía el enlace de creación.
+- **Invitación a un usuario desactivado:** 403 `USUARIO_INACTIVO` (hay que activarlo antes). A quien ya tiene contraseña: 409 `CONTRASENA_YA_CREADA`.
+- **Imágenes en el disco del servidor:** se suben al backend (`multer` en memoria, tipo por bytes mágicos, nombre UUID) y se publican en `/api/imagenes`; en Docker viven en el volumen `imagenes`. La URL guardada es relativa para que funcione detrás de nginx o del túnel de Cloudflare. El archivo se borra después de que el SP confirma el borrado de la imagen o del producto (best effort).
 - **Pago simulado:** no hay pasarela real. `POST /api/checkout/pagar` acepta los datos de pago y los aprueba; para probar un rechazo se usa una tarjeta que termina en `0000`.
 - **Carrito solo de Clientes (con sesión):** un Operador o Administrador con token recibe 403 `PROHIBIDO` en `/api/carrito`; el invitado usa `X-Cart-Token`. Si hay token de acceso y también `X-Cart-Token`, manda el usuario. El carrito no se cachea.
 - **Fusión:** `POST /api/carrito/fusionar` toma `tokenInvitado` del body o, si falta, de `X-Cart-Token`. El carrito del invitado queda `FUSIONADO` y repetirla no duplica nada.

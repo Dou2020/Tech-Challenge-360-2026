@@ -64,6 +64,8 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `rate-limit-redis` | 6.0 | Guarda los contadores de `express-rate-limit` en Redis: sobreviven reinicios y se comparten entre instancias |
 | `pino`, `pino-http` | 10.4 / 11.0 | Logs en JSON con un `requestId` por petición |
 | `swagger-ui-express`, `yaml` | 5.0 / 2.9 | Sirven `openapi.yaml` en `/api/docs` |
+| `nodemailer` | 10.1 | Envío SMTP de los correos de crear y recuperar contraseña. Trae sus propios tipos (no hace falta `@types/nodemailer`) |
+| `multer` | 2.4 | Lee la subida multipart de imágenes de producto (en memoria: el archivo se escribe a disco solo después de comprobar su tipo) |
 
 No se necesitan:
 - **`dotenv`**: Node 24 carga el `.env` con `--env-file`.
@@ -77,7 +79,7 @@ No se necesitan:
 | `typescript` | 6.0 | Compilador en modo `strict`. Se usa 6.0 y no 7.0 porque `typescript-eslint` 8.72 solo soporta TypeScript `< 6.1` |
 | `tsx` | 4.23 | Ejecuta TypeScript con recarga automática en `npm run dev` |
 | `@types/node` | 24 | Tipos de Node, en la misma línea que el runtime (Node 24 LTS) |
-| `@types/express`, `@types/mssql`, `@types/jsonwebtoken`, `@types/cookie-parser`, `@types/cors`, `@types/swagger-ui-express` | — | Tipos de las librerías de producción |
+| `@types/express`, `@types/mssql`, `@types/jsonwebtoken`, `@types/cookie-parser`, `@types/cors`, `@types/multer`, `@types/swagger-ui-express` | — | Tipos de las librerías de producción |
 | `eslint`, `@eslint/js`, `typescript-eslint` | 10.13 / 10.0 / 8.72 | Análisis estático con reglas para TypeScript |
 | `prettier` | 3.9 | Formato del código |
 
@@ -134,8 +136,12 @@ docker compose --profile app up -d --build
 | `sqlserver` | — | `SQL_PORT` (1433) | SQL Server 2022 Developer, datos en el volumen `sqlserver-data` |
 | `db-init` | — | — | Crea la base si no existe y termina |
 | `redis` | — | `REDIS_PORT` (6379) | Redis 7.4 con persistencia AOF, datos en el volumen `redis-data` |
-| `backend` | `app` | `BACKEND_PORT` (4000) | API; arranca cuando `db-init` terminó bien |
-| `frontend` | `app` | `FRONTEND_PORT` (8080) | Sitio servido por nginx; reenvía `/api` al backend |
+| `mailpit` | — | `MAILPIT_UI_PORT` (8025) | SMTP de desarrollo (puerto 1025 dentro de la red de compose): recibe los correos sin enviarlos. Bandeja web en `http://localhost:8025`, API en `/api/v1/messages` |
+| `backend` | `app` | `BACKEND_PORT` (4000) | API; arranca cuando `db-init` terminó bien. Las imágenes de producto subidas viven en el volumen `imagenes` |
+| `frontend` | `app` | `FRONTEND_PORT` (8080) | Sitio servido por nginx; reenvía `/api` (también `/api/imagenes`) al backend |
+| `cloudflared` | `tunel` | — | Túnel de Cloudflare hacia `frontend`: `docker compose --profile app --profile tunel up -d` con `TUNNEL_TOKEN` en `.env`. Pon la URL pública del túnel en `APP_URL_PUBLICA` y `CORS_ORIGIN` |
+
+El registro y la recuperación de contraseña mandan un correo con un enlace. En desarrollo ábrelo en la bandeja de Mailpit; con el túnel o en producción configura `SMTP_*` con un proveedor real. nginx limita el cuerpo de las peticiones a 1 MB por defecto: para subir imágenes de hasta `IMAGENES_MAX_MB` hay que poner `client_max_body_size` en la sección `/api/` de `Frontend/nginx.conf`.
 
 Comandos útiles:
 
@@ -252,6 +258,18 @@ Edita `.env` con los datos de tu entorno:
 | `LOGIN_BLOQUEO_MIN` | `15` | Minutos de bloqueo tras superar los intentos |
 | `RATE_LIMIT_AUTH_MAX` | `10` | Solicitudes por IP a login y a registro en cada ventana; `0` desactiva el límite |
 | `RATE_LIMIT_AUTH_VENTANA_MIN` | `15` | Duración de la ventana del rate limit |
+| `RATE_LIMIT_CONTRASENA_MAX` | `10` | Solicitudes por IP a cada ruta de contraseña (`olvido`, `verificar`, `establecer`) por ventana; `0` desactiva el límite |
+| `APP_URL_PUBLICA` | `http://localhost:5173` | URL pública del frontend, base de los enlaces de los correos (`/crear-contrasena#token=…`) |
+| `TOKEN_CREAR_HORAS` | `72` | Vigencia del enlace para crear la contraseña (registro e invitación) |
+| `TOKEN_RESTABLECER_MIN` | `60` | Vigencia del enlace para restablecer la contraseña |
+| `CORREO_TRANSPORTE` | `smtp` | `smtp` envía por SMTP; `memoria` guarda los correos en una bandeja (solo pruebas) |
+| `SMTP_HOST` | `localhost` | Servidor SMTP (Mailpit en desarrollo). Obligatoria con `smtp` |
+| `SMTP_PORT` | `1025` | Puerto SMTP |
+| `SMTP_SECURE` | `false` | `true` solo para TLS directo (puerto 465) |
+| `SMTP_USER`, `SMTP_PASSWORD` | *(vacías)* | Credenciales del proveedor SMTP. **Entre comillas** si llevan `#` |
+| `CORREO_REMITENTE` | `'ShopCart <no-reply@shopcart.local>'` | Remitente de los correos. Obligatoria con `smtp` |
+| `IMAGENES_DIR` | `./datos/imagenes` | Directorio donde se guardan las imágenes de producto subidas (en Docker, el volumen `imagenes`) |
+| `IMAGENES_MAX_MB` | `5` | Tamaño máximo de una imagen subida |
 
 Para generar un secreto:
 
@@ -364,14 +382,17 @@ Backend/
 │   │   ├── validate.ts           # Valida body/query/params con un esquema zod
 │   │   ├── idempotencyKey.ts     # Exige el header Idempotency-Key en el pago
 │   │   ├── guestCart.ts          # Lee el header X-Cart-Token del carrito de invitado
-│   │   ├── rateLimit.ts          # Límite por IP en login y registro, con store en Redis (extra)
+│   │   ├── rateLimit.ts          # Límite por IP en login, registro y rutas de contraseña, con store en Redis (extra)
+│   │   ├── subirImagen.ts        # multer: recibe la imagen multipart (límite de tamaño, 1 archivo)
 │   │   ├── errorHandler.ts       # Manejo centralizado de errores
 │   │   └── notFound.ts
 │   ├── modules/
-│   │   ├── auth/                 # Registro, login, refresh con rotación, logout
+│   │   ├── auth/                 # Registro, login, refresh con rotación, logout, crear y recuperar contraseña
 │   │   │   ├── sesiones.store.ts   # Sesiones en Redis y script Lua de rotación atómica
 │   │   │   ├── revocacion.store.ts # Lista de access tokens revocados
-│   │   │   └── intentos.store.ts   # Contador de intentos fallidos y bloqueo temporal
+│   │   │   ├── intentos.store.ts   # Contador de intentos fallidos y bloqueo temporal
+│   │   │   ├── tokensContrasena.store.ts # Tokens de un solo uso de los enlaces de contraseña
+│   │   │   └── enlacesContrasena.ts      # Emite el token y manda el correo con el enlace
 │   │   ├── perfil/               # Datos y contraseña del propio usuario
 │   │   ├── usuarios/             # Gestión y desactivación de usuarios (Administrador)
 │   │   ├── direcciones/          # Direcciones de entrega del cliente
@@ -389,6 +410,8 @@ Backend/
 │   │   └── liberarReservas.job.ts  # Ejecuta SP_Inventario_LiberarReservasVencidas periódicamente
 │   ├── shared/
 │   │   ├── cache/                # cache.ts (getOrSet, invalidar) y claves.ts (claves y namespaces)
+│   │   ├── correo/               # correo.ts (SMTP con nodemailer o bandeja en memoria) y plantillas.ts (HTML y texto)
+│   │   ├── almacenamiento/       # imagenes.ts: guarda imágenes en disco (bytes mágicos, nombre UUID) y las borra
 │   │   ├── errors/               # AppError y catálogo de códigos de error
 │   │   ├── utils/                # Paginación, montos, fechas (filtros desde/hasta), esquemas zod comunes
 │   │   └── types/                # Extensiones de tipos de Express (usuario autenticado, token de carrito)
@@ -455,7 +478,8 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Revocar un access token | `auth:revocado:jti:{jti}` (logout) | Vida restante del token (≤ 15 min) |
 | Revocar todos los tokens de un usuario | `auth:revocado-desde:{idUsuario}` = segundo Unix; se rechazan los tokens emitidos en segundos anteriores (desactivación, cambio de contraseña o de rol) | 15 min |
 | Bloqueo por intentos | `auth:intentos:{correo}`; con `LOGIN_MAX_INTENTOS` fallos → `429 CUENTA_BLOQUEADA` con `Retry-After`; se borra al iniciar sesión bien | `LOGIN_BLOQUEO_MIN` |
-| Rate limit por IP | `ratelimit:login:{ip}` y `ratelimit:registro:{ip}` (store de `rate-limit-redis`, 10 por IP cada 15 min) | 15 min |
+| Token de contraseña (crear o restablecer) | `auth:token-contrasena:{sha256}` → `{idUsuario, proposito}` y `auth:token-contrasena:usuario:{id}` → sha256 del único token vigente (emitir uno nuevo invalida el anterior). El enlace lleva el token en claro, solo se guarda su hash; el canje es de un solo uso (script Lua) | `TOKEN_CREAR_HORAS` (72 h) o `TOKEN_RESTABLECER_MIN` (60 min) |
+| Rate limit por IP | `ratelimit:login:{ip}`, `ratelimit:registro:{ip}` y `ratelimit:contrasena-{olvido\|verificar\|establecer}:{ip}` (store de `rate-limit-redis`, 10 por IP cada 15 min) | 15 min |
 | Caché del usuario | `usuario:{id}` → rol, estado, nombre y correo; la usan `refresh` y `/me` | 15 min |
 | Caché de reportes | `reportes:v{n}:{endpoint}:{hash de filtros}` | `CACHE_TTL_REPORTES_SEG` |
 | Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:metodos-envio` | `CACHE_TTL_CATALOGO_SEG` |
@@ -486,7 +510,7 @@ Todas las claves llevan el prefijo `shopcart:`.
 
 | Función | Comportamiento |
 | :--- | :--- |
-| Sesiones, revocación y bloqueo de login | *Fail-closed*: login, registro, refresh, logout y rutas autenticadas responden `503 SERVICIO_NO_DISPONIBLE` (no se puede verificar si un token fue revocado). El registro lo comprueba antes de crear el usuario. El cliente de Redis no encola comandos mientras reconecta (`disableOfflineQueue`), así que la respuesta es inmediata |
+| Sesiones, revocación, bloqueo de login y tokens de contraseña | *Fail-closed*: login, registro, rutas de contraseña, refresh, logout y rutas autenticadas responden `503 SERVICIO_NO_DISPONIBLE` (no se puede verificar si un token fue revocado). El registro lo comprueba antes de crear el usuario. El cliente de Redis no encola comandos mientras reconecta (`disableOfflineQueue`), así que la respuesta es inmediata |
 | Rate limit por IP | Deja pasar la solicitud; login y registro igual responden `503` por la fila anterior |
 | Caché | *Fail-open*: se registra el error y se lee de la base |
 | `GET /api/health` | Reporta `redis: "down"` |
@@ -500,6 +524,7 @@ Se usan **Vitest** como runner, **Supertest** para las peticiones HTTP y **Testc
 ```
 Backend/tests/
 ├── unit/                         # Misma estructura que src/: src/x/y.ts se prueba en unit/x/y.test.ts
+│   ├── config/                   # env: validación de las variables de correo y contraseñas
 │   ├── db/                       # sqlErrorMapper
 │   ├── jobs/                     # liberarReservas.job: sin solapamiento; un error no tumba el proceso
 │   ├── middlewares/              # authenticate, authorize, validate, errorHandler, notFound, idempotencyKey, guestCart
@@ -507,7 +532,14 @@ Backend/tests/
 │   └── shared/                   # cache/ y utils/ (paginación, montos, fechas, contraseñas)
 ├── integration/                  # Endpoints de punta a punta con supertest
 │   ├── auth.test.ts
+│   ├── contrasena.test.ts        # Registro sin contraseña, olvido, verificar y establecer
+│   ├── contrasena.tokens.test.ts       # Vigencia en Redis, bitácora del canje, respuestas indistinguibles
+│   ├── contrasena.concurrencia.test.ts # Doble canje del token y doble registro del mismo correo
+│   ├── contrasena.ratelimit.test.ts    # Límite por IP de las 3 rutas de contraseña
+│   ├── usuarios.pendiente.test.ts      # contrasenaPendiente e invitación a un Cliente
 │   ├── catalogo.test.ts
+│   ├── imagenes.test.ts          # Subida multipart y /api/imagenes
+│   ├── imagenes.seguridad.test.ts # Tipo real, límites de multer, cabeceras, Range y rutas peligrosas
 │   ├── direcciones.test.ts
 │   ├── carrito.test.ts
 │   ├── cupones.test.ts
@@ -552,6 +584,20 @@ Casos de integración de Redis:
 | Desactivar un usuario con sesión abierta | Su access token y su refresh token dejan de funcionar |
 | Consultar un reporte dos veces, cancelar un pedido y consultarlo otra vez | `MISS`, `HIT` y luego `MISS` con el dato actualizado |
 | Redis detenido | Las rutas autenticadas responden `503`; el catálogo público responde sin caché |
+| Registrar un correo, leer el token del correo y establecer la contraseña | `202`, `204` y el login funciona; reusar el token, usar uno vencido o el anterior a otro nuevo → `400 TOKEN_CONTRASENA_INVALIDO` |
+| Registrar un correo nuevo, uno pendiente y uno que ya tiene contraseña | Siempre `202` con el mismo cuerpo; el correo enviado es bienvenida, reenvío del enlace y "ya tienes una cuenta" respectivamente |
+| Olvidé mi contraseña con un correo que no existe o desactivado | `202` y no sale ningún correo |
+| Establecer contraseña con sesiones abiertas | Sus access y refresh tokens dejan de funcionar |
+| El Administrador crea un usuario | Llega la invitación y queda `contrasenaPendiente: true`; reenviarla sirve, y si ya creó la contraseña → `409 CONTRASENA_YA_CREADA` |
+| Subir un PNG o WebP como Administrador | `201`, y el archivo se descarga con `GET /api/imagenes/productos/…`; un archivo `.png` que en realidad es texto → `415`; uno por encima del límite → `413`; borrar la imagen borra el archivo |
+| 3 peticiones seguidas a `olvido`, `verificar` o `establecer` con `RATE_LIMIT_CONTRASENA_MAX=2` | La tercera responde `429 DEMASIADAS_SOLICITUDES` con `Retry-After`; cada ruta tiene su propio contador |
+| Dos `establecer` simultáneos con el mismo token | Exactamente un `204` y un `400 TOKEN_CONTRASENA_INVALIDO` |
+| Dos registros simultáneos del mismo correo | Ambos `202` y una sola cuenta |
+| TTL del token en Redis | `CREAR` ≈ 259200 s, `RESTABLECER` ≈ 3600 s; al canjearlo la clave desaparece |
+| Registro y olvido con cuenta nueva, pendiente, con contraseña y desactivada | Mismo status y cuerpo en todos; el correo es el que corresponde (o ninguno si está desactivada) |
+| `CORREO_TRANSPORTE=smtp` sin `SMTP_HOST` o `CORREO_REMITENTE` | La validación del entorno falla y el proceso termina |
+| Subir imagen: Content-Type falso, campos multipart inválidos, más de 1 archivo o 5 campos, producto inexistente | Se decide por los bytes (no por el Content-Type); `400 VALIDACION`; no queda archivo huérfano |
+| `GET`/`HEAD`/`Range` en `/api/imagenes`, archivos ocultos y rutas con `%2e%2e` | Cabeceras de caché, CSP, `nosniff` y CORP; `206` con rango; nunca se sirve nada fuera del directorio |
 
 Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `TEST_DB_USER` y `TEST_DB_PASSWORD`), se usa ese SQL Server en lugar del contenedor; los scripts recrean la base `ShopCart_Test` antes de correr. En los dos casos `globalSetup` ejecuta `docker-init.sh` con `DB_PRUEBAS=true`: si una restricción de integridad deja de funcionar, la suite falla antes de empezar.
 
@@ -828,7 +874,7 @@ Convenciones de los SPs:
 - Orden de bloqueo en carrito y cupones: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`, con `Categoria` antes de `Cupon` al crear o actualizar un cupón. Todo SP que escribe en un carrito lo bloquea primero con `UPDLOCK, HOLDLOCK` (también si aún no existe, para no crear dos carritos del mismo cliente). El carrito se identifica por el usuario del token o por `X-Cart-Token`, nunca por un ID enviado; manda el usuario si vienen ambos. Los SPs del carrito no reservan ni bloquean variantes: la sobreventa la impiden la reserva del checkout y el pedido.
 - Orden de bloqueo en inventario: `Variante` → `ReservaExistencia`, y varias variantes en orden de `IDVariante`. Quien crea, confirma o libera una reserva bloquea antes su variante con `UPDLOCK, ROWLOCK`; así un ajuste que tiene la variante bloqueada ve un conjunto de reservas estable.
 - Entradas y ajustes escriben en la bitácora `MODIFICAR` de la `Variante` con `Modulo = 'Inventario'`: `ValorAnterior` lleva `ExistenciaFisica` y `ExistenciaReservada`, y `ValorNuevo` además el movimiento (`IDMovimientoInventario`, tipo, cantidad, motivo). Un ajuste de salida que dejaría la existencia por debajo de 0 o de la reservada vigente responde 50032. `SP_Inventario_LiberarReservasVencidas` no escribe bitácora: no cambia la existencia física.
-- Usuarios: un Administrador no puede desactivarse a sí mismo ni quitarse el rol de Administrador, y el sistema nunca se queda sin un Administrador activo (50051 `EN_USO` en los tres casos). Los SPs bloquean con `UPDLOCK` a todos los administradores activos antes de contar. La bitácora (`Modulo = 'Usuarios'`, `Entidad = 'Usuario'`) usa `FU_Usuarios_UsuarioJson`, que nunca incluye el hash; el cambio de contraseña registra solo `{"ContrasenaCambiada":true}`. `SP_Usuarios_Actualizar` y `SP_Usuarios_CambiarEstado` devuelven `RolCambio` y `ActivoCambio` para que el backend revoque sesiones. El perfil (`ActualizarPerfil`) no va a la bitácora.
+- Usuarios: un Administrador no puede desactivarse a sí mismo ni quitarse el rol de Administrador, y el sistema nunca se queda sin un Administrador activo (50051 `EN_USO` en los tres casos). Los SPs bloquean con `UPDLOCK` a todos los administradores activos antes de contar. La bitácora (`Modulo = 'Usuarios'`, `Entidad = 'Usuario'`) usa `FU_Usuarios_UsuarioJson`, que nunca incluye el hash; el cambio de contraseña registra solo `{"ContrasenaCambiada":true}`. `SP_Usuarios_Actualizar` y `SP_Usuarios_CambiarEstado` devuelven `RolCambio` y `ActivoCambio` para que el backend revoque sesiones. El perfil (`ActualizarPerfil`) no va a la bitácora. `Usuario.HashContrasena` es NULL mientras la contraseña está pendiente de crear (registro y alta por Admin no reciben contraseña; el enlace de un solo uso vive en Redis); los SPs de lectura de usuario devuelven `ContrasenaPendiente`. `SP_Productos_AgregarImagen` acepta también `/api/imagenes/productos/<uuid>.jpg|png|webp`, y `SP_Productos_EliminarImagen`/`SP_Productos_Eliminar` devuelven las `Url` borradas para que el backend elimine los archivos.
 - `SP_Configuracion_Actualizar` valida el valor según la clave (enteros solo con dígitos, IVA decimal 0–100 con hasta 2 decimales), lo guarda normalizado y registra `Modulo = 'Configuracion'`; un valor igual al actual no escribe nada.
 - Orden de bloqueo en checkout y pedidos: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`; con un pedido existente, `Pedido` → `PedidoDetalle` → `Cupon` → `Variante`. Las variantes se bloquean una por una en orden de `IDVariante`. `SP_Pedidos_CrearPedido` toma antes un bloqueo de aplicación (`sp_getapplock`) por `Idempotency-Key`: las peticiones simultáneas con la misma clave se serializan y las posteriores devuelven el pedido ya creado (`Repetido = 1`), sin depender de capturar el 2627.
 - Reservar (`SP_Inventario_ReservarExistencia`) reemplaza la reserva `ACTIVA` anterior del carrito y libera las vencidas de las variantes involucradas antes de comprobar la existencia, para que `CK_Variante_ExistenciaReservada` no rechace una reserva válida. Si falta existencia lanza 50030 con el detalle en el mensaje (`\nDETALLE=` y un arreglo JSON); todo se revierte. `SP_Checkout_ObtenerResumen` sin reserva vigente responde 50031; el método de envío no se guarda con la reserva, por eso recibe `@IDMetodoEnvio` opcional.
@@ -909,7 +955,7 @@ package "Seguridad" {
     --
     * IDRol : INT <<FK>>
     * Correo : NVARCHAR(150) <<UQ>>
-    * HashContrasena : NVARCHAR(255)
+    * HashContrasena : NVARCHAR(255) NULL
     * Nombre : NVARCHAR(100)
     * Apellido : NVARCHAR(100)
     Telefono : NVARCHAR(20)

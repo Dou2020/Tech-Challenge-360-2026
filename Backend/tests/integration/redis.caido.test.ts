@@ -84,6 +84,23 @@ describe('Redis detenido: rutas autenticadas (fail-closed)', () => {
     expect(respuesta.body.error.code).toBe('SERVICIO_NO_DISPONIBLE');
   });
 
+  it.each([
+    ['/api/auth/registro', { correo: 'nuevo@prueba.gt', nombre: 'A', apellido: 'B' }],
+    ['/api/auth/contrasena/olvido', { correo: 'cliente@shopcart.gt' }],
+    ['/api/auth/contrasena/establecer', { token: 'A'.repeat(43), contrasena: 'Segura#2030' }],
+    ['/api/auth/contrasena/verificar', { token: 'A'.repeat(43) }],
+  ])(
+    'POST %s → 503 SERVICIO_NO_DISPONIBLE (los tokens de contraseña viven en Redis)',
+    async (ruta, cuerpo) => {
+      // Act
+      const respuesta = await request(app).post(ruta).send(cuerpo);
+
+      // Assert
+      expect(respuesta.status).toBe(503);
+      expect(respuesta.body.error.code).toBe('SERVICIO_NO_DISPONIBLE');
+    },
+  );
+
   it('refresh con una cookie → 503 SERVICIO_NO_DISPONIBLE', async () => {
     // Arrange
     const cookie = sesion.cookieRefresh;

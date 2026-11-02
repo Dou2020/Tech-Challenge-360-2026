@@ -1,4 +1,6 @@
 import { env } from '../../config/env.js';
+import { logger } from '../../config/logger.js';
+import { imagenes } from '../../shared/almacenamiento/imagenes.js';
 import { cache, type ResultadoCache } from '../../shared/cache/cache.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import { aIso, aIsoOpcional } from '../../shared/utils/fechas.js';
@@ -59,6 +61,17 @@ export const CLAVES_CACHE_CATALOGO = {
 } as const;
 
 const invalidarCatalogo = () => cache.invalidar('catalogo');
+
+/** Borra los archivos de imágenes propias (las URL externas se ignoran). Un fallo solo se registra. */
+async function borrarArchivos(urls: string[]): Promise<void> {
+  for (const url of urls) {
+    try {
+      await imagenes.borrar(url);
+    } catch (error) {
+      logger.error({ err: error, url }, 'No se pudo borrar el archivo de la imagen');
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Mapeos fila → DTO
@@ -367,8 +380,9 @@ export const catalogoService = {
   },
 
   async eliminarProducto(idUsuario: number, idProducto: number): Promise<void> {
-    await catalogoRepository.eliminarProducto(idUsuario, idProducto);
+    const urls = await catalogoRepository.eliminarProducto(idUsuario, idProducto);
     await invalidarCatalogo();
+    await borrarArchivos(urls);
   },
 
   /** Las imágenes no están en lo cacheado: no invalida. */
@@ -380,8 +394,36 @@ export const catalogoService = {
     return ensamblarProducto(await catalogoRepository.agregarImagen(idUsuario, idProducto, datos));
   },
 
+  /**
+   * Guarda el archivo en disco y registra su URL. Si el SP rechaza (producto inexistente, tope de
+   * imágenes…) borra el archivo: no quedan huérfanos. 415 si los bytes no son JPEG, PNG ni WebP.
+   */
+  async subirImagen(
+    idUsuario: number,
+    idProducto: number,
+    archivo: Buffer,
+    datos: Omit<DatosImagen, 'url'>,
+  ): Promise<Producto> {
+    const url = await imagenes.guardar(archivo);
+    if (!url) {
+      throw new AppError(
+        'TIPO_ARCHIVO_NO_PERMITIDO',
+        'El archivo no es una imagen JPEG, PNG o WebP.',
+        [{ field: 'imagen', message: 'Formatos permitidos: JPEG, PNG y WebP.' }],
+      );
+    }
+    try {
+      return await catalogoService.agregarImagen(idUsuario, idProducto, { ...datos, url });
+    } catch (error) {
+      await borrarArchivos([url]);
+      throw error;
+    }
+  },
+
+  /** Borra el archivo después de que el SP confirmó (best effort). */
   async eliminarImagen(idUsuario: number, idProducto: number, idImagen: number): Promise<void> {
-    await catalogoRepository.eliminarImagen(idUsuario, idProducto, idImagen);
+    const url = await catalogoRepository.eliminarImagen(idUsuario, idProducto, idImagen);
+    if (url) await borrarArchivos([url]);
   },
 
   // --- Variantes --------------------------------------------------------------

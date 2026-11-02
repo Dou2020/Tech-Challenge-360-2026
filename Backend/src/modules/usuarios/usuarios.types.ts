@@ -15,7 +15,6 @@ export interface FiltrosUsuarios {
 
 export interface DatosUsuarioNuevo {
   correo: string;
-  contrasena: string;
   nombre: string;
   apellido: string;
   telefono: string | null;

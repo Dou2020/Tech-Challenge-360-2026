@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../../middlewares/authenticate.js';
 import { authorize } from '../../middlewares/authorize.js';
+import { subirImagen } from '../../middlewares/subirImagen.js';
 import { validate } from '../../middlewares/validate.js';
 import { paramsId } from '../../shared/utils/esquemas.js';
 import { catalogoController as c } from './catalogo.controller.js';
@@ -12,6 +13,7 @@ import {
   crearProductoBody,
   crearVarianteBody,
   estadoBody,
+  imagenArchivoBody,
   imagenBody,
   listarCategoriasQuery,
   listarProductosQuery,
@@ -81,6 +83,13 @@ productosRoutes.post(
   '/:id/imagenes',
   validate({ params: paramsId, body: imagenBody }),
   c.agregarImagen,
+);
+// multer va antes de validate: es quien lee el multipart y llena req.body con los campos de texto.
+productosRoutes.post(
+  '/:id/imagenes/archivo',
+  subirImagen,
+  validate({ params: paramsId, body: imagenArchivoBody }),
+  c.subirImagen,
 );
 productosRoutes.delete(
   '/:id/imagenes/:idImagen',

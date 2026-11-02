@@ -29,6 +29,14 @@ export const claves = {
   revocadoDesde: (idUsuario: number) => `${PREFIJO}:auth:revocado-desde:${idUsuario}`,
   /** Intentos fallidos de login por correo. */
   intentosLogin: (correo: string) => `${PREFIJO}:auth:intentos:${correo}`,
+  /** Hash { idUsuario, proposito } del token de contraseña emitido (guarda el sha256, no el token). */
+  tokenContrasena: (hashToken: string) => `${PREFIJO}:auth:token-contrasena:${hashToken}`,
+  /** sha256 del único token de contraseña vigente del usuario. */
+  tokenContrasenaUsuario: (idUsuario: number) =>
+    `${PREFIJO}:auth:token-contrasena:usuario:${idUsuario}`,
+  /** Prefijos de tokenContrasena y tokenContrasenaUsuario, para los scripts Lua. */
+  prefijoTokenContrasena: () => `${PREFIJO}:auth:token-contrasena:`,
+  prefijoTokenContrasenaUsuario: () => `${PREFIJO}:auth:token-contrasena:usuario:`,
   /** Prefijo del store de rate-limit-redis de un limitador. */
   prefijoRateLimit: (nombre: string) => `${PREFIJO}:ratelimit:${nombre}:`,
 };

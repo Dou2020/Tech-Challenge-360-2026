@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { enviarEnlaceContrasena } from '../../../../src/modules/auth/enlacesContrasena.js';
+import { exigirRedis } from '../../../../src/modules/auth/redisFailClosed.js';
 import { revocacionStore } from '../../../../src/modules/auth/revocacion.store.js';
 import { usuariosRepository } from '../../../../src/modules/usuarios/usuarios.repository.js';
 import { usuariosService } from '../../../../src/modules/usuarios/usuarios.service.js';
 import type { FilaUsuarioModificado } from '../../../../src/modules/usuarios/usuarios.types.js';
 import { cache } from '../../../../src/shared/cache/cache.js';
-import { hashearContrasena } from '../../../../src/shared/utils/contrasenas.js';
+import { AppError } from '../../../../src/shared/errors/AppError.js';
 
 vi.mock('../../../../src/modules/auth/auth.repository.js', () => ({ authRepository: {} }));
 vi.mock('../../../../src/modules/usuarios/usuarios.repository.js', () => ({
@@ -20,7 +22,9 @@ vi.mock('../../../../src/modules/auth/revocacion.store.js', () => ({
   revocacionStore: { revocarAccesoDelUsuario: vi.fn() },
 }));
 vi.mock('../../../../src/modules/auth/redisFailClosed.js', () => ({ exigirRedis: vi.fn() }));
-vi.mock('../../../../src/shared/utils/contrasenas.js', () => ({ hashearContrasena: vi.fn() }));
+vi.mock('../../../../src/modules/auth/enlacesContrasena.js', () => ({
+  enviarEnlaceContrasena: vi.fn(),
+}));
 vi.mock('../../../../src/shared/cache/cache.js', () => ({ cache: { borrar: vi.fn() } }));
 
 const repo = vi.mocked(usuariosRepository);
@@ -37,6 +41,7 @@ const fila = (cambios: Partial<FilaUsuarioModificado> = {}): FilaUsuarioModifica
   FechaCreacion: new Date('2026-11-01T12:00:00Z'),
   RolCambio: false,
   ActivoCambio: false,
+  ContrasenaPendiente: true,
   ...cambios,
 });
 
@@ -45,15 +50,13 @@ beforeEach(() => {
 });
 
 describe('usuariosService', () => {
-  it('crea con el hash argon2 y sin la contraseña en claro', async () => {
+  it('crea sin contraseña, manda la invitación y devuelve contrasenaPendiente', async () => {
     // Arrange
-    vi.mocked(hashearContrasena).mockResolvedValue('hash');
     repo.crear.mockResolvedValue(fila());
 
     // Act
     const creado = await usuariosService.crear(ADMIN, {
       correo: 'o@shopcart.gt',
-      contrasena: 'Clave12345',
       nombre: 'Op',
       apellido: 'Erador',
       telefono: null,
@@ -62,13 +65,78 @@ describe('usuariosService', () => {
 
     // Assert
     const [, enviado] = repo.crear.mock.calls[0]!;
-    expect(enviado).toMatchObject({ hashContrasena: 'hash' });
     expect(enviado).not.toHaveProperty('contrasena');
+    expect(enviado).not.toHaveProperty('hashContrasena');
+    expect(enviarEnlaceContrasena).toHaveBeenCalledWith('invitacion', {
+      idUsuario: 9,
+      correo: 'o@shopcart.gt',
+      nombre: 'Op',
+      rol: 'Operador',
+    });
     expect(creado).toMatchObject({
       idUsuario: 9,
       rol: 'Operador',
+      contrasenaPendiente: true,
       fechaCreacion: '2026-11-01T12:00:00.000Z',
     });
+  });
+
+  it('sin Redis no crea el usuario', async () => {
+    // Arrange
+    vi.mocked(exigirRedis).mockImplementationOnce(() => {
+      throw new AppError('SERVICIO_NO_DISPONIBLE', 'Redis caído');
+    });
+
+    // Act
+    const resultado = usuariosService.crear(ADMIN, {
+      correo: 'o@shopcart.gt',
+      nombre: 'Op',
+      apellido: 'Erador',
+      telefono: null,
+      rol: 'Operador',
+    });
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({ code: 'SERVICIO_NO_DISPONIBLE' });
+    expect(repo.crear).not.toHaveBeenCalled();
+  });
+
+  it('reenvía la invitación a un usuario pendiente', async () => {
+    // Arrange
+    repo.obtenerPorId.mockResolvedValue(fila());
+
+    // Act
+    await usuariosService.reenviarInvitacion(9);
+
+    // Assert
+    expect(enviarEnlaceContrasena).toHaveBeenCalledWith(
+      'invitacion',
+      expect.objectContaining({ idUsuario: 9 }),
+    );
+  });
+
+  it('no reenvía si el usuario ya creó su contraseña: 409 CONTRASENA_YA_CREADA', async () => {
+    // Arrange
+    repo.obtenerPorId.mockResolvedValue(fila({ ContrasenaPendiente: false }));
+
+    // Act
+    const resultado = usuariosService.reenviarInvitacion(9);
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({ code: 'CONTRASENA_YA_CREADA', status: 409 });
+    expect(enviarEnlaceContrasena).not.toHaveBeenCalled();
+  });
+
+  it('no reenvía a un usuario desactivado: 403 USUARIO_INACTIVO', async () => {
+    // Arrange
+    repo.obtenerPorId.mockResolvedValue(fila({ Activo: false }));
+
+    // Act
+    const resultado = usuariosService.reenviarInvitacion(9);
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({ code: 'USUARIO_INACTIVO' });
+    expect(enviarEnlaceContrasena).not.toHaveBeenCalled();
   });
 
   it('un cambio de estado revoca el acceso del usuario y borra su caché', async () => {

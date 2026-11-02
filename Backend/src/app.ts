@@ -2,13 +2,20 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import express, { Router, type Express } from 'express';
+import express, {
+  Router,
+  type ErrorRequestHandler,
+  type Express,
+  type RequestHandler,
+} from 'express';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import swaggerUi from 'swagger-ui-express';
 import { parse } from 'yaml';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { imagenes } from './shared/almacenamiento/imagenes.js';
+import { AppError } from './shared/errors/AppError.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { notFound } from './middlewares/notFound.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
@@ -37,6 +44,30 @@ import { sistemaRoutes } from './modules/sistema/sistema.routes.js';
 const especificacionOpenApi = parse(
   readFileSync(new URL('../src/docs/openapi.yaml', import.meta.url), 'utf8'),
 ) as swaggerUi.JsonObject;
+
+/** Cabeceras de las imágenes subidas: son datos, nunca se ejecutan ni se incrustan como página. */
+const cabecerasImagen: RequestHandler = (_req, res, next) => {
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Son públicas: helmet las dejaría en same-origin y el frontend en otro origen no las vería.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+};
+
+/** send (express.static) pasa un error http 416 cuando el Range cae fuera del archivo. */
+const errorRangoImagen: ErrorRequestHandler = (error, _req, res, next) => {
+  if ((error as { status?: unknown } | null)?.status === 416) {
+    // send ya puso las cabeceras del archivo; res.json no pisa un Content-Type existente.
+    // Content-Range (bytes */tamaño) se conserva: es lo que pide la RFC 9110 para un 416.
+    res.removeHeader('Content-Type');
+    res.removeHeader('Cache-Control');
+    next(
+      new AppError('RANGO_NO_SATISFACIBLE', 'El rango pedido queda fuera del tamaño del archivo.'),
+    );
+    return;
+  }
+  next(error);
+};
 
 export function createApp(): Express {
   const app = express();
@@ -79,6 +110,20 @@ export function createApp(): Express {
   api.use('/usuarios', usuariosRoutes);
   api.use('/bitacora', bitacoraRoutes);
   api.use('/configuracion', configuracionRoutes);
+  // Imágenes de producto subidas al servidor. Un nombre que no existe cae al 404 JSON.
+  api.use(
+    '/imagenes',
+    cabecerasImagen,
+    express.static(imagenes.raiz(), {
+      dotfiles: 'deny',
+      index: false,
+      redirect: false,
+      fallthrough: true,
+      maxAge: '365d',
+      immutable: true,
+    }),
+    errorRangoImagen,
+  );
   api.use('/docs', swaggerUi.serve, swaggerUi.setup(especificacionOpenApi));
   app.use('/api', api);
 

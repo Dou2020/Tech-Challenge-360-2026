@@ -13,12 +13,15 @@ import { AUDIENCIA_TOKEN, EMISOR_TOKEN } from '../../src/modules/auth/tokens.js'
 import { claves } from '../../src/shared/cache/claves.js';
 import {
   USUARIOS_SEMILLA,
+  bandeja,
   clienteHttp,
   cookieRefresh,
+  correosPara,
   correoUnico,
   iniciarSesion,
   iniciarSesionComo,
   registrarCliente,
+  tokenDelUltimoCorreo,
 } from '../helpers/auth.js';
 
 const app = createApp();
@@ -162,64 +165,138 @@ describe('POST /api/auth/login', () => {
 });
 
 describe('POST /api/auth/registro', () => {
-  it('registra un Cliente y responde 201 como el login', async () => {
+  it('con un correo nuevo responde 202 sin sesión y manda la bienvenida con el enlace', async () => {
+    // Arrange
     const correo = correoUnico();
+
+    // Act
     const respuesta = await request(app).post('/api/auth/registro').send({
       correo,
-      contrasena: 'Prueba#2026',
       nombre: 'Lucía',
       apellido: 'Pérez',
       telefono: '5555-1234',
     });
 
-    expect(respuesta.status).toBe(201);
-    expect(respuesta.body).toEqual({
-      accessToken: expect.any(String),
-      expiraEn: 900,
-      usuario: {
-        idUsuario: expect.any(Number),
-        nombre: 'Lucía',
-        apellido: 'Pérez',
-        correo,
-        rol: 'Cliente',
-      },
-    });
-    expect(cookieRefresh(respuesta)).toBeDefined();
+    // Assert
+    expect(respuesta.status).toBe(202);
+    expect(respuesta.body).toEqual({ mensaje: expect.any(String) });
+    expect(cookieRefresh(respuesta)).toBeUndefined();
+    const [mensaje] = correosPara(correo);
+    expect(mensaje?.asunto).toMatch(/Bienvenido/);
+    expect(mensaje?.texto).toContain(`${env.APP_URL_PUBLICA}/crear-contrasena#token=`);
   });
 
-  it('el usuario registrado puede iniciar sesión con su contraseña', async () => {
+  it('el usuario registrado inicia sesión una vez que crea su contraseña', async () => {
+    // Arrange
     const { credenciales, usuario } = await registrarCliente(app, { telefono: null });
 
+    // Act
     const sesion = await iniciarSesion(app, credenciales);
 
+    // Assert
     expect(sesion.usuario.idUsuario).toBe(usuario.idUsuario);
   });
 
-  it('un correo repetido (sin importar mayúsculas) responde 409 DUPLICADO', async () => {
+  it('un correo ya registrado (sin importar mayúsculas) responde 202 con el mismo cuerpo y avisa "ya tienes cuenta"', async () => {
+    // Arrange
     const { credenciales } = await registrarCliente(app);
+    const nuevo = await request(app)
+      .post('/api/auth/registro')
+      .send({ correo: correoUnico(), nombre: 'Otra', apellido: 'Persona' });
+    bandeja().vaciarBandeja();
 
-    const respuesta = await request(app).post('/api/auth/registro').send({
-      correo: credenciales.correo.toUpperCase(),
-      contrasena: 'Prueba#2026',
-      nombre: 'Otra',
-      apellido: 'Persona',
-    });
+    // Act
+    const respuesta = await request(app)
+      .post('/api/auth/registro')
+      .send({ correo: credenciales.correo.toUpperCase(), nombre: 'Otra', apellido: 'Persona' });
 
-    expect(respuesta.status).toBe(409);
-    expect(respuesta.body.error.code).toBe('DUPLICADO');
+    // Assert
+    expect(respuesta.status).toBe(202);
+    expect(respuesta.body).toEqual(nuevo.body);
+    const [mensaje] = correosPara(credenciales.correo);
+    expect(mensaje?.asunto).toMatch(/Ya tienes una cuenta/);
+    expect(mensaje?.texto).toContain(`${env.APP_URL_PUBLICA}/recuperar-contrasena`);
+    expect(mensaje?.texto).not.toContain('#token=');
   });
 
-  it('una contraseña débil responde 400 VALIDACION con el campo', async () => {
-    const respuesta = await request(app).post('/api/auth/registro').send({
-      correo: correoUnico(),
-      contrasena: 'corta',
-      nombre: 'Ana',
-      apellido: 'López',
-    });
+  it('un correo que sigue sin contraseña recibe un enlace nuevo y el anterior deja de servir', async () => {
+    // Arrange
+    const correo = correoUnico();
+    const registro = { correo, nombre: 'Ana', apellido: 'López' };
+    await request(app).post('/api/auth/registro').send(registro);
+    const tokenViejo = tokenDelUltimoCorreo(correo);
 
+    // Act
+    const respuesta = await request(app).post('/api/auth/registro').send(registro);
+
+    // Assert
+    expect(respuesta.status).toBe(202);
+    expect(correosPara(correo)).toHaveLength(2);
+    expect(tokenDelUltimoCorreo(correo)).not.toBe(tokenViejo);
+    const viejo = await request(app)
+      .post('/api/auth/contrasena/verificar')
+      .send({ token: tokenViejo });
+    expect(viejo.status).toBe(400);
+  });
+
+  it('un usuario desactivado responde 202 y no recibe correo', async () => {
+    // Arrange
+    bandeja().vaciarBandeja();
+
+    // Act
+    const respuesta = await request(app)
+      .post('/api/auth/registro')
+      .send({ correo: USUARIOS_SEMILLA.inactivo.correo, nombre: 'X', apellido: 'Y' });
+
+    // Assert
+    expect(respuesta.status).toBe(202);
+    expect(correosPara(USUARIOS_SEMILLA.inactivo.correo)).toHaveLength(0);
+  });
+
+  it('mientras la contraseña está pendiente el login responde 401 CREDENCIALES_INVALIDAS', async () => {
+    // Arrange
+    const correo = correoUnico();
+    await request(app)
+      .post('/api/auth/registro')
+      .send({ correo, nombre: 'Ana', apellido: 'López' });
+
+    // Act
+    const respuesta = await request(app)
+      .post('/api/auth/login')
+      .send({ correo, contrasena: 'Prueba#2026' });
+
+    // Assert
+    expect(respuesta.status).toBe(401);
+    expect(respuesta.body.error.code).toBe('CREDENCIALES_INVALIDAS');
+  });
+
+  it('ya no acepta contraseña en el registro: el campo se ignora', async () => {
+    // Arrange
+    const correo = correoUnico();
+
+    // Act
+    const respuesta = await request(app)
+      .post('/api/auth/registro')
+      .send({ correo, contrasena: 'Prueba#2026', nombre: 'Ana', apellido: 'López' });
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ correo, contrasena: 'Prueba#2026' });
+
+    // Assert
+    expect(respuesta.status).toBe(202);
+    expect(login.status).toBe(401);
+  });
+
+  it('sin nombre responde 400 VALIDACION con el campo', async () => {
+    // Act
+    const respuesta = await request(app)
+      .post('/api/auth/registro')
+      .send({ correo: correoUnico(), apellido: 'López' });
+
+    // Assert
     expect(respuesta.status).toBe(400);
     expect(respuesta.body.error.details).toEqual(
-      expect.arrayContaining([expect.objectContaining({ field: 'contrasena' })]),
+      expect.arrayContaining([expect.objectContaining({ field: 'nombre' })]),
     );
   });
 });

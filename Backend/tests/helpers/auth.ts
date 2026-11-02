@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { Express } from 'express';
 import request, { type Response, type Test } from 'supertest';
 import { expect } from 'vitest';
+import { bandejaEnMemoria, type MensajeEnviado } from '../../src/shared/correo/correo.js';
 import type { Rol } from '../../src/shared/types/express.js';
 
 export interface Credenciales {
@@ -76,7 +77,43 @@ export interface DatosClienteNuevo extends Credenciales {
   telefono?: string | null;
 }
 
-/** Registra un Cliente con correo único y devuelve su sesión y sus credenciales. */
+/** Bandeja del transporte `memoria` (las pruebas de integración lo usan siempre). */
+export function bandeja(): NonNullable<ReturnType<typeof bandejaEnMemoria>> {
+  const memoria = bandejaEnMemoria();
+  expect(memoria, 'las pruebas de integración usan CORREO_TRANSPORTE=memoria').toBeDefined();
+  return memoria!;
+}
+
+/** Correos enviados a una dirección, del más viejo al más nuevo. */
+export function correosPara(correo: string): MensajeEnviado[] {
+  return bandeja().bandeja.filter((mensaje) => mensaje.para === correo);
+}
+
+/** Token del enlace del último correo enviado a la dirección (ya está en la bandeja al responder la API). */
+export function tokenDelUltimoCorreo(correo: string): string {
+  const mensajes = correosPara(correo);
+  expect(mensajes.length, `no hay correos para ${correo}`).toBeGreaterThan(0);
+  const coincidencia = /#token=([A-Za-z0-9_-]+)/.exec(mensajes[mensajes.length - 1]!.texto);
+  expect(coincidencia, 'el último correo no trae un enlace con token').not.toBeNull();
+  return coincidencia![1]!;
+}
+
+/** Crea la contraseña de una cuenta pendiente con el token del último correo. */
+export async function establecerContrasena(
+  app: Express,
+  correo: string,
+  contrasena: string,
+): Promise<void> {
+  const respuesta = await request(app)
+    .post('/api/auth/contrasena/establecer')
+    .send({ token: tokenDelUltimoCorreo(correo), contrasena });
+  expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(204);
+}
+
+/**
+ * Registra un Cliente con correo único: el registro no devuelve sesión, así que lee el enlace
+ * del correo, crea la contraseña y hace login. Devuelve su sesión y sus credenciales.
+ */
 export async function registrarCliente(
   app: Express,
   datos: Partial<DatosClienteNuevo> = {},
@@ -89,12 +126,12 @@ export async function registrarCliente(
     telefono: '5555-0000',
     ...datos,
   };
-  const respuesta = await request(app).post('/api/auth/registro').send(cuerpo);
-  expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(201);
-  return {
-    ...aSesion(respuesta),
-    credenciales: { correo: cuerpo.correo, contrasena: cuerpo.contrasena },
-  };
+  const { contrasena, ...registro } = cuerpo;
+  const respuesta = await request(app).post('/api/auth/registro').send(registro);
+  expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(202);
+  await establecerContrasena(app, cuerpo.correo, contrasena);
+  const credenciales = { correo: cuerpo.correo, contrasena };
+  return { ...(await iniciarSesion(app, credenciales)), credenciales };
 }
 
 /** Cliente HTTP que agrega `Authorization: Bearer <token>` a cada petición. */

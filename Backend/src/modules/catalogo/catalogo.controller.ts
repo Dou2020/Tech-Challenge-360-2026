@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from 'express';
+import { AppError } from '../../shared/errors/AppError.js';
 import type { ResultadoCache } from '../../shared/cache/cache.js';
 import type {
   ActualizarVarianteBody,
@@ -8,6 +9,7 @@ import type {
   CrearProductoBody,
   CrearVarianteBody,
   EstadoBody,
+  ImagenArchivoBody,
   ImagenBody,
   ListarCategoriasQuery,
   ListarProductosQuery,
@@ -134,6 +136,20 @@ export const catalogoController = {
   agregarImagen: (async (req, res) => {
     const { params, body } = validado<{ params: ParamsId; body: ImagenBody }>(res);
     res.status(201).json(await catalogoService.agregarImagen(idSolicitante(req), params.id, body));
+  }) satisfies RequestHandler,
+
+  subirImagen: (async (req, res) => {
+    const { params, body } = validado<{ params: ParamsId; body: ImagenArchivoBody }>(res);
+    if (!req.file) {
+      throw new AppError('VALIDACION', 'Falta el archivo de la imagen.', [
+        { field: 'imagen', message: 'Envía la imagen en el campo "imagen" (multipart/form-data).' },
+      ]);
+    }
+    res
+      .status(201)
+      .json(
+        await catalogoService.subirImagen(idSolicitante(req), params.id, req.file.buffer, body),
+      );
   }) satisfies RequestHandler,
 
   eliminarImagen: (async (req, res) => {

@@ -1,6 +1,8 @@
 import { logger } from '../../config/logger.js';
 import { cache, type ResultadoCache } from '../../shared/cache/cache.js';
 import { claves } from '../../shared/cache/claves.js';
+import { correo as correoSaliente } from '../../shared/correo/correo.js';
+import { cuentaExistente } from '../../shared/correo/plantillas.js';
 import { AppError } from '../../shared/errors/AppError.js';
 import type { Rol } from '../../shared/types/express.js';
 import {
@@ -8,6 +10,7 @@ import {
   verificarContraHashFicticio,
   verificarContrasena,
 } from '../../shared/utils/contrasenas.js';
+import { enlaceRecuperar, enviarEnlaceContrasena } from './enlacesContrasena.js';
 import { authRepository } from './auth.repository.js';
 import {
   ROLES,
@@ -22,6 +25,7 @@ import { intentosStore } from './intentos.store.js';
 import { exigirRedis } from './redisFailClosed.js';
 import { revocacionStore } from './revocacion.store.js';
 import { sesionesStore } from './sesiones.store.js';
+import { tokensContrasenaStore, type PropositoToken } from './tokensContrasena.store.js';
 import { firmarAccessToken, leerAccessTokenParaRevocar } from './tokens.js';
 
 /** Vida de la caché shopcart:usuario:{id} (la usan refresh y /me). */
@@ -29,6 +33,7 @@ export const TTL_CACHE_USUARIO_SEG = 900;
 
 const MENSAJE_CREDENCIALES = 'Correo o contraseña incorrectos.';
 const MENSAJE_INACTIVO = 'El usuario está desactivado. Contacta al administrador.';
+const MENSAJE_TOKEN = 'El enlace no es válido o ya venció. Solicita uno nuevo.';
 const MENSAJE_REFRESH = 'La sesión expiró o fue revocada. Inicia sesión de nuevo.';
 
 function aRol(valor: string): Rol {
@@ -46,6 +51,7 @@ export function aUsuario(fila: FilaUsuario): Usuario {
     rol: aRol(fila.Rol),
     activo: Boolean(fila.Activo),
     fechaCreacion: new Date(fila.FechaCreacion).toISOString(),
+    contrasenaPendiente: Boolean(fila.ContrasenaPendiente),
   };
 }
 
@@ -85,19 +91,106 @@ function obtenerUsuario(idUsuario: number): Promise<ResultadoCache<Usuario>> {
 }
 
 export const authService = {
-  /** Registra un Cliente y abre su sesión, igual que un login. */
-  async registrar(datos: DatosRegistro): Promise<ResultadoSesion> {
-    // Sin Redis no se puede abrir la sesión: se rechaza antes de crear el usuario en la base.
+  /**
+   * Registro sin contraseña: la cuenta se crea pendiente y el correo lleva el enlace para
+   * crearla. El resultado es el mismo en todos los casos (el controlador responde 202 igual),
+   * para no revelar qué correos ya existen:
+   *   - correo nuevo: crea el Cliente y manda la bienvenida;
+   *   - existe y sigue pendiente: reenvía el enlace para crear la contraseña;
+   *   - existe con contraseña: avisa "ya tienes una cuenta" con el enlace a recuperar;
+   *   - desactivado: no manda nada.
+   * El envío es en segundo plano, y los tokens viven en Redis: sin Redis se rechaza antes de
+   * crear el usuario en la base.
+   */
+  async registrar(datos: DatosRegistro): Promise<void> {
     exigirRedis();
-    const hashContrasena = await hashearContrasena(datos.contrasena);
-    const fila = await authRepository.registrarCliente({
-      correo: datos.correo,
-      hashContrasena,
-      nombre: datos.nombre,
-      apellido: datos.apellido,
-      telefono: datos.telefono,
+    let existente = await authRepository.obtenerPorCorreo(datos.correo);
+
+    if (!existente) {
+      try {
+        const fila = await authRepository.registrarCliente(datos);
+        await enviarEnlaceContrasena('bienvenida', {
+          idUsuario: fila.IDUsuario,
+          correo: fila.Correo,
+          nombre: fila.Nombre,
+        });
+        return;
+      } catch (error) {
+        // Dos registros simultáneos del mismo correo: el perdedor sigue el camino de "ya existe".
+        if (!(error instanceof AppError && error.code === 'DUPLICADO')) throw error;
+        existente = await authRepository.obtenerPorCorreo(datos.correo);
+        if (!existente) return;
+      }
+    }
+
+    if (!existente.Activo) return;
+    if (existente.ContrasenaPendiente) {
+      await enviarEnlaceContrasena('bienvenida', {
+        idUsuario: existente.IDUsuario,
+        correo: existente.Correo,
+        nombre: existente.Nombre,
+      });
+      return;
+    }
+    correoSaliente.enviarEnSegundoPlano(
+      cuentaExistente({
+        para: existente.Correo,
+        nombre: existente.Nombre,
+        enlace: enlaceRecuperar(),
+      }),
+    );
+  },
+
+  /**
+   * Recuperación de contraseña: solo emite si el usuario existe y está activo. Si todavía no
+   * había creado su contraseña, le manda el enlace de creación en lugar del de restablecer.
+   * No mira el bloqueo por intentos: recuperar la contraseña es justo lo que necesita quien
+   * se bloqueó, y establecer la nueva limpia el bloqueo. Siempre termina sin error: el
+   * controlador responde 202 igual exista o no el correo.
+   */
+  async solicitarRestablecimiento(correoUsuario: string): Promise<void> {
+    exigirRedis();
+    const usuario = await authRepository.obtenerPorCorreo(correoUsuario);
+    if (!usuario?.Activo) return;
+    await enviarEnlaceContrasena(usuario.ContrasenaPendiente ? 'bienvenida' : 'restablecer', {
+      idUsuario: usuario.IDUsuario,
+      correo: usuario.Correo,
+      nombre: usuario.Nombre,
     });
-    return abrirSesion(aUsuarioSesion(aUsuario(fila)));
+  },
+
+  /** Dice para qué sirve el token y de quién es, sin consumirlo. 400 TOKEN_CONTRASENA_INVALIDO. */
+  async verificarToken(token: string): Promise<{ proposito: PropositoToken; correo: string }> {
+    const datos = await tokensContrasenaStore.consultar(token);
+    if (!datos) throw new AppError('TOKEN_CONTRASENA_INVALIDO', MENSAJE_TOKEN);
+    try {
+      const usuario = await authRepository.obtenerPorId(datos.idUsuario);
+      return { proposito: datos.proposito, correo: usuario.Correo };
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'NO_ENCONTRADO') {
+        throw new AppError('TOKEN_CONTRASENA_INVALIDO', MENSAJE_TOKEN);
+      }
+      throw error;
+    }
+  },
+
+  /**
+   * Canjea el token (un solo uso), guarda la contraseña con el dueño del token como solicitante
+   * y corta todo su acceso: sesiones abiertas, access tokens vigentes, caché y bloqueo de login.
+   *
+   * El token se consume antes de guardar: si el SP rechaza después (p. ej. 403 USUARIO_INACTIVO
+   * porque lo desactivaron tras pedir el enlace) el enlace ya no sirve y hay que pedir otro.
+   */
+  async establecerContrasena(token: string, contrasena: string): Promise<void> {
+    exigirRedis();
+    const datos = await tokensContrasenaStore.canjear(token);
+    if (!datos) throw new AppError('TOKEN_CONTRASENA_INVALIDO', MENSAJE_TOKEN);
+
+    await authRepository.cambiarContrasena(datos.idUsuario, await hashearContrasena(contrasena));
+    await revocacionStore.revocarAccesoDelUsuario(datos.idUsuario);
+    await cache.borrar(claves.usuario(datos.idUsuario));
+    const usuario = await authRepository.obtenerPorId(datos.idUsuario);
+    await intentosStore.limpiar(usuario.Correo);
   },
 
   async login(correo: string, contrasena: string): Promise<ResultadoSesion> {
@@ -106,7 +199,8 @@ export const authService = {
 
     const credenciales = await authRepository.obtenerPorCorreo(correo);
     // Si el correo no existe se verifica igual contra un hash ficticio: misma demora.
-    const valida = credenciales
+    // Lo mismo si la contraseña está pendiente (hash NULL): no se revela que la cuenta existe.
+    const valida = credenciales?.HashContrasena
       ? await verificarContrasena(credenciales.HashContrasena, contrasena)
       : await verificarContraHashFicticio(contrasena);
 

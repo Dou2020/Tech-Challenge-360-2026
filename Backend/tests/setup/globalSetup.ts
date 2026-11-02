@@ -9,6 +9,9 @@
  * Las variables de entorno para la app se entregan a los workers con provide/inject.
  */
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   MSSQLServerContainer,
@@ -88,6 +91,9 @@ async function prepararRedis(): Promise<{ url: string; contenedor?: StartedRedis
 export default async function setup(project: TestProject) {
   const [sql, redis] = await Promise.all([prepararSqlServer(), prepararRedis()]);
 
+  // Las imágenes subidas por las pruebas van a un directorio temporal que se borra al terminar.
+  const directorioImagenes = mkdtempSync(path.join(tmpdir(), 'shopcart-imagenes-'));
+
   project.provide('testEnv', {
     NODE_ENV: 'test',
     DB_SERVER: sql.host,
@@ -103,9 +109,17 @@ export default async function setup(project: TestProject) {
     // Todas las peticiones llegan desde la misma IP: el límite real (10) frenaría la suite.
     // tests/integration/auth.test.ts prueba el limitador con uno propio de límite bajo.
     RATE_LIMIT_AUTH_MAX: '10000',
+    RATE_LIMIT_CONTRASENA_MAX: '10000',
+    // Los correos quedan en la bandeja en memoria (src/shared/correo): las pruebas leen los enlaces.
+    CORREO_TRANSPORTE: 'memoria',
+    APP_URL_PUBLICA: 'http://localhost:5173',
+    IMAGENES_DIR: directorioImagenes,
+    // Pequeño para probar el 413 sin subir archivos grandes.
+    IMAGENES_MAX_MB: '1',
   });
 
   return async () => {
+    rmSync(directorioImagenes, { recursive: true, force: true });
     await Promise.all([sql.contenedor?.stop(), redis.contenedor?.stop()]);
   };
 }

@@ -71,6 +71,25 @@ describe('perfilService.cambiarContrasena', () => {
     expect(revocacionStore.revocarAccesoDelUsuario).not.toHaveBeenCalled();
   });
 
+  it('una cuenta sin contraseña (hash NULL) responde 400 VALIDACION en contrasenaActual', async () => {
+    // Arrange
+    repo.obtenerCredencial.mockResolvedValue({ IDUsuario: ID, HashContrasena: null, Activo: true });
+
+    // Act
+    const resultado = perfilService.cambiarContrasena(ID, SID, {
+      contrasenaActual: 'Cualquiera1',
+      contrasenaNueva: 'Nueva12345',
+    });
+
+    // Assert
+    await expect(resultado).rejects.toMatchObject({
+      code: 'VALIDACION',
+      details: [expect.objectContaining({ field: 'contrasenaActual' })],
+    });
+    expect(verificarContrasena).not.toHaveBeenCalled();
+    expect(repo.cambiarContrasena).not.toHaveBeenCalled();
+  });
+
   it('rechaza una contraseña nueva igual a la actual', async () => {
     // Arrange
     vi.mocked(verificarContrasena).mockResolvedValue(true);

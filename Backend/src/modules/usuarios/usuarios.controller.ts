@@ -38,6 +38,12 @@ export const usuariosController = {
     res.status(201).location(`/api/usuarios/${creado.idUsuario}`).json(creado);
   }) satisfies RequestHandler,
 
+  reenviarInvitacion: (async (_req, res) => {
+    const { params } = validado<{ params: ParamsId }>(res);
+    await usuariosService.reenviarInvitacion(params.id);
+    res.status(202).json({ mensaje: 'Invitación enviada. El enlace anterior dejó de servir.' });
+  }) satisfies RequestHandler,
+
   actualizar: (async (req, res) => {
     const { params, body } = validado<{ params: ParamsId; body: ActualizarUsuarioBody }>(res);
     res.json(await usuariosService.actualizar(idSolicitante(req), params.id, body));

@@ -1,15 +1,17 @@
 import sql from 'mssql';
 import { executeSp } from '../../db/executeSp.js';
-import type { DatosRegistro, FilaCredenciales, FilaUsuario } from './auth.types.js';
+import type {
+  DatosRegistro,
+  FilaCredenciales,
+  FilaUsuario,
+  FilaUsuarioRegistrado,
+} from './auth.types.js';
 
 export const authRepository = {
-  /** Correo repetido: el UNIQUE de Usuario.Correo (2627/2601) llega como DUPLICADO. */
-  async registrarCliente(
-    datos: Omit<DatosRegistro, 'contrasena'> & { hashContrasena: string },
-  ): Promise<FilaUsuario> {
-    const { filas } = await executeSp<FilaUsuario>('SP_Auth_RegistrarCliente', [
+  /** Cliente sin contraseña (hash NULL). Correo repetido: el UNIQUE de Usuario.Correo (2627/2601) llega como DUPLICADO. */
+  async registrarCliente(datos: DatosRegistro): Promise<FilaUsuarioRegistrado> {
+    const { filas } = await executeSp<FilaUsuarioRegistrado>('SP_Auth_RegistrarCliente', [
       { nombre: 'Correo', tipo: sql.NVarChar(150), valor: datos.correo },
-      { nombre: 'HashContrasena', tipo: sql.NVarChar(255), valor: datos.hashContrasena },
       { nombre: 'Nombre', tipo: sql.NVarChar(100), valor: datos.nombre },
       { nombre: 'Apellido', tipo: sql.NVarChar(100), valor: datos.apellido },
       { nombre: 'Telefono', tipo: sql.NVarChar(20), valor: datos.telefono },
@@ -35,5 +37,16 @@ export const authRepository = {
     const fila = filas[0];
     if (!fila) throw new Error('SP_Usuarios_ObtenerPorId no devolvió filas');
     return fila;
+  },
+
+  /**
+   * Guarda el hash nuevo (también cuando estaba NULL). Bitácora MODIFICAR sin el hash.
+   * 50004 si el usuario no existe, 50012 si está desactivado.
+   */
+  async cambiarContrasena(idUsuario: number, hashContrasena: string): Promise<void> {
+    await executeSp('SP_Usuarios_CambiarContrasena', [
+      { nombre: 'IDUsuarioSolicitante', tipo: sql.Int, valor: idUsuario },
+      { nombre: 'HashContrasena', tipo: sql.NVarChar(255), valor: hashContrasena },
+    ]);
   },
 };

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { closePool } from '../../src/config/database.js';
 import { closeRedis, connectRedis } from '../../src/config/redis.js';
-import { clienteComo } from '../helpers/auth.js';
+import { clienteComo, registrarCliente } from '../helpers/auth.js';
 import {
   comprar,
   crearCupon,
@@ -254,15 +254,7 @@ describe('Actualizar y cambiar estado', () => {
   it('un cupón desactivado se rechaza en el carrito con CUPON_INACTIVO', async () => {
     const cupon = await crear();
     await admin.patch(`/api/cupones/${cupon.idCupon}/estado`).send({ activo: false });
-    const registro = await request(app)
-      .post('/api/auth/registro')
-      .send({
-        correo: `cupon.${randomUUID().slice(0, 8)}@prueba.gt`,
-        contrasena: 'Prueba#2026',
-        nombre: 'Cliente',
-        apellido: 'Cupón',
-      });
-    const token = registro.body.accessToken as string;
+    const token = (await registrarCliente(app)).accessToken;
     const auth = { Authorization: `Bearer ${token}` };
     await request(app).post('/api/carrito/items').set(auth).send({ idVariante: 1, cantidad: 2 });
     const respuesta = await request(app)

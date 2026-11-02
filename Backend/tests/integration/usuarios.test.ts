@@ -7,6 +7,7 @@ import {
   clienteComo,
   clienteHttp,
   correoUnico,
+  establecerContrasena,
   iniciarSesion,
   registrarCliente,
 } from '../helpers/auth.js';
@@ -40,13 +41,17 @@ afterAll(async () => {
 
 const CONTRASENA = 'Operador#2027';
 
-/** Crea un Operador (o Administrador) desechable y devuelve su id y credenciales. */
+/**
+ * Crea un Operador (o Administrador) desechable y devuelve su id y credenciales. El usuario nace
+ * sin contraseña: la crea con el enlace de la invitación, como en producción.
+ */
 async function crearUsuario(rol: 'Operador' | 'Administrador' = 'Operador') {
   const correo = correoUnico('staff');
   const respuesta = await admin
     .post('/api/usuarios')
-    .send({ correo, contrasena: CONTRASENA, nombre: 'Staff', apellido: 'De Prueba', rol });
+    .send({ correo, nombre: 'Staff', apellido: 'De Prueba', rol });
   expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(201);
+  await establecerContrasena(app, correo, CONTRASENA);
   return {
     idUsuario: respuesta.body.idUsuario as number,
     credenciales: { correo, contrasena: CONTRASENA },
@@ -250,7 +255,7 @@ describe('administración de usuarios', () => {
   it('correo repetido → 409 DUPLICADO; rol Cliente → 400; usuario inexistente → 404', async () => {
     // Arrange
     const { credenciales } = await crearUsuario();
-    const base = { contrasena: CONTRASENA, nombre: 'A', apellido: 'B' };
+    const base = { nombre: 'A', apellido: 'B' };
 
     // Act
     const repetido = await admin
@@ -432,9 +437,12 @@ describe('administración de usuarios', () => {
 
     // Assert
     expect(bitacora.status).toBe(200);
-    expect(bitacora.body.total).toBe(1);
-    expect(bitacora.body.items[0].valorNuevo).toEqual({ ContrasenaCambiada: true });
-    expect(JSON.stringify(bitacora.body.items[0])).not.toContain(nueva);
+    // Dos entradas: crear la contraseña con el enlace del registro y este cambio.
+    expect(bitacora.body.total).toBe(2);
+    for (const entrada of bitacora.body.items as { valorNuevo: unknown }[]) {
+      expect(entrada.valorNuevo).toEqual({ ContrasenaCambiada: true });
+      expect(JSON.stringify(entrada)).not.toContain(nueva);
+    }
   });
 
   it('valida el body del estado (400)', async () => {

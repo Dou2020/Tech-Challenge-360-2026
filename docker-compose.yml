@@ -3,6 +3,7 @@
 #   cp .env.example .env
 #   docker compose up -d                          # SQL Server, Redis y creación de la base
 #   docker compose --profile app up -d --build    # además backend y frontend
+#   docker compose --profile app --profile tunel up -d   # además cloudflared (publica el frontend)
 #
 # Ver la sección "Inicializar y ejecutar el proyecto" del README.
 
@@ -75,6 +76,19 @@ services:
       timeout: 3s
       retries: 10
 
+  # Servidor SMTP de desarrollo: recibe los correos (crear y recuperar contraseña) sin enviarlos.
+  # Bandeja web en http://localhost:8025 y API en /api/v1/messages. En producción se cambian
+  # SMTP_HOST, SMTP_PORT, SMTP_USER y SMTP_PASSWORD por los de un proveedor real.
+  mailpit:
+    image: axllent/mailpit:v1.31.0
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   backend:
     profiles: ["app"]
     build: ./Backend
@@ -82,6 +96,8 @@ services:
       db-init:
         condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      mailpit:
         condition: service_healthy
     environment:
       NODE_ENV: production
@@ -106,6 +122,21 @@ services:
       LOGIN_BLOQUEO_MIN: ${LOGIN_BLOQUEO_MIN:-15}
       RATE_LIMIT_AUTH_MAX: ${RATE_LIMIT_AUTH_MAX:-10}
       RATE_LIMIT_AUTH_VENTANA_MIN: ${RATE_LIMIT_AUTH_VENTANA_MIN:-15}
+      RATE_LIMIT_CONTRASENA_MAX: ${RATE_LIMIT_CONTRASENA_MAX:-10}
+      APP_URL_PUBLICA: ${APP_URL_PUBLICA:-http://localhost:8080}
+      TOKEN_CREAR_HORAS: ${TOKEN_CREAR_HORAS:-72}
+      TOKEN_RESTABLECER_MIN: ${TOKEN_RESTABLECER_MIN:-60}
+      CORREO_TRANSPORTE: ${CORREO_TRANSPORTE:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      CORREO_REMITENTE: ${CORREO_REMITENTE:-ShopCart <no-reply@shopcart.local>}
+      IMAGENES_DIR: /app/datos/imagenes
+      IMAGENES_MAX_MB: ${IMAGENES_MAX_MB:-5}
+    volumes:
+      - imagenes:/app/datos/imagenes
     ports:
       - "${BACKEND_PORT:-4000}:4000"
     healthcheck:
@@ -124,6 +155,22 @@ services:
     ports:
       - "${FRONTEND_PORT:-8080}:80"
 
+  # Publica el frontend (nginx, que ya hace proxy de /api) en internet con un túnel de Cloudflare.
+  # Crea el túnel en Cloudflare Zero Trust, apunta su hostname público a http://frontend:80 y
+  # pon el token en TUNNEL_TOKEN (.env). Pon la misma URL pública en APP_URL_PUBLICA y CORS_ORIGIN.
+  cloudflared:
+    profiles: ["tunel"]
+    image: cloudflare/cloudflared:2026.10.0
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   sqlserver-data:
   redis-data:
+  # Imágenes de producto subidas al backend.
+  imagenes:

@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 const booleano = z.enum(['true', 'false']).transform((valor) => valor === 'true');
 
-const esquema = z.object({
+/** Variable opcional: vacía equivale a ausente (docker compose pasa "" cuando no se define). */
+const opcional = <T extends z.ZodType>(tipo: T) =>
+  z.preprocess((valor) => (valor === '' ? undefined : valor), tipo.optional());
+
+const esquemaBase = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
 
@@ -34,6 +38,39 @@ const esquema = z.object({
   // Solicitudes por IP en login y registro en cada ventana; 0 desactiva el límite.
   RATE_LIMIT_AUTH_MAX: z.coerce.number().int().min(0).default(10),
   RATE_LIMIT_AUTH_VENTANA_MIN: z.coerce.number().int().positive().default(15),
+  // Solicitudes por IP a las rutas de contraseña (olvido, verificar, establecer); 0 desactiva.
+  RATE_LIMIT_CONTRASENA_MAX: z.coerce.number().int().min(0).default(10),
+
+  // URL pública del frontend: base de los enlaces de los correos (sin barra final).
+  APP_URL_PUBLICA: z.url().transform((url) => url.replace(/\/+$/, '')),
+  TOKEN_CREAR_HORAS: z.coerce.number().int().positive().default(72),
+  TOKEN_RESTABLECER_MIN: z.coerce.number().int().positive().default(60),
+
+  // Correo: `smtp` envía de verdad (Mailpit en desarrollo); `memoria` solo lo guarda (pruebas).
+  CORREO_TRANSPORTE: z.enum(['smtp', 'memoria']).default('smtp'),
+  SMTP_HOST: opcional(z.string().min(1)),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: booleano.default(false),
+  SMTP_USER: opcional(z.string().min(1)),
+  SMTP_PASSWORD: opcional(z.string().min(1)),
+  CORREO_REMITENTE: opcional(z.string().min(3)),
+
+  // Imágenes de producto subidas al servidor (disco).
+  IMAGENES_DIR: z.string().min(1).default('./datos/imagenes'),
+  IMAGENES_MAX_MB: z.coerce.number().positive().default(5),
+});
+
+const esquema = esquemaBase.superRefine((valores, contexto) => {
+  if (valores.CORREO_TRANSPORTE !== 'smtp') return;
+  for (const campo of ['SMTP_HOST', 'CORREO_REMITENTE'] as const) {
+    if (!valores[campo]) {
+      contexto.addIssue({
+        code: 'custom',
+        path: [campo],
+        message: 'Es obligatoria con CORREO_TRANSPORTE=smtp.',
+      });
+    }
+  }
 });
 
 export type Env = z.infer<typeof esquema>;
