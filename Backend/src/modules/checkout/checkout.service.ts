@@ -162,6 +162,7 @@ export const checkoutService = {
         numeroPedido: fila.NumeroPedido,
         estado: fila.Estado,
         total: aMonto(fila.Total),
+        idTarjetaGuardada: fila.IDTarjetaGuardada ?? null,
       },
     };
   },

@@ -20,6 +20,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
    - [Perfil — `/api/perfil`](#perfil--apiperfil)
    - [Usuarios — `/api/usuarios`](#usuarios--apiusuarios)
    - [Direcciones — `/api/direcciones`](#direcciones--apidirecciones)
+   - [Tarjetas guardadas — `/api/tarjetas`](#tarjetas-guardadas--apitarjetas)
    - [Catálogo público — `/api/catalogo`](#catálogo-público--apicatalogo)
    - [Categorías — `/api/categorias`](#categorías--apicategorias)
    - [Productos — `/api/productos`](#productos--apiproductos)
@@ -210,6 +211,23 @@ Body de POST y PUT: `alias` (máx. 50), `nombreDestinatario` (máx. 150), `telef
 | PUT | `/api/direcciones/:id` | Cliente | Reemplaza todos los campos de una dirección propia (omitir un opcional lo borra) | `SP_Direcciones_Actualizar` |
 | DELETE | `/api/direcciones/:id` | Cliente | Baja lógica. Los pedidos conservan su copia de la dirección. Responde 204; repetirlo responde 404 | `SP_Direcciones_Desactivar` |
 
+### Tarjetas guardadas — `/api/tarjetas`
+
+Solo Cliente (401 sin token, 403 con otro rol). Se guardan únicamente titular, marca, tipo y últimos 4: nunca el número completo ni el CVV. La tarjeta de otro cliente responde 404. No se cachea.
+
+| Método | Ruta | Acceso | Descripción | SP |
+| :--- | :--- | :--- | :--- | :--- |
+| GET | `/api/tarjetas` | Cliente | Arreglo (sin paginar) con la predeterminada primero y luego de la más reciente a la más antigua | `SP_Tarjetas_Listar` |
+| POST | `/api/tarjetas` | Cliente | Body `{ titular, ultimos4, tipo: "CREDITO"\|"DEBITO", marca: "VISA"\|"MASTERCARD"\|"AMEX"\|"OTRA", predeterminada?: boolean }`. Responde 201 con la tarjeta. La primera del cliente queda predeterminada; `ultimos4` = `0000` responde 402 `PAGO_RECHAZADO` y no guarda; repetida (misma marca, tipo y últimos 4) responde 409 `DUPLICADO` | `SP_Tarjetas_Crear` |
+| PATCH | `/api/tarjetas/:id/predeterminada` | Cliente | Marca la tarjeta como predeterminada y desmarca la anterior. Responde 200 con la tarjeta | `SP_Tarjetas_MarcarPredeterminada` |
+| DELETE | `/api/tarjetas/:id` | Cliente | Borrado físico. Si era la predeterminada, pasa a serlo la más reciente que quede. Responde 204; repetirlo responde 404 | `SP_Tarjetas_Eliminar` |
+
+Forma de cada tarjeta:
+
+```json
+{ "idTarjeta": 3, "titular": "Ana López", "ultimos4": "4242", "tipo": "CREDITO", "marca": "VISA", "predeterminada": true, "fechaCreacion": "2026-11-02T15:30:00.000Z" }
+```
+
 ### Catálogo público — `/api/catalogo`
 Solo muestra lo visible en la tienda: producto activo, de una categoría activa y con al menos una variante activa. Un producto que no cumple eso responde 404 `NO_ENCONTRADO`. Las listas sin paginar (categorías, métodos de envío) son arreglos JSON.
 
@@ -325,7 +343,7 @@ Quién es el dueño: si la petición trae `Authorization`, manda el usuario del 
 | POST | `/api/checkout/iniciar` | Cliente | Recibe `idDireccion` e `idMetodoEnvio`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con `details` por variante afectada (`field: "idVariante:4"`, `message: "SKU: solicitado 2, disponible 1."`). Si el cupón del carrito ya no vale: 422 con su código. Si la dirección no existe, está dada de baja o es de otro cliente: 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia` |
 | GET | `/api/checkout` | Cliente | Resumen y reserva vigente (para retomar el checkout tras recargar la página). Query opcional `idMetodoEnvio` (el método no se guarda en la reserva; sin él `costoEnvio` es `"0.00"`). Sin reserva vigente que cubra el carrito: 409 `RESERVA_VENCIDA` | `SP_Checkout_ObtenerResumen` |
 | DELETE | `/api/checkout/reserva` | Cliente | Libera la reserva (el cliente vuelve al carrito). Responde 204, también si no había reserva | `SP_Inventario_LiberarReserva` |
-| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Body `{ idDireccion, idMetodoEnvio, metodoPago: "TARJETA", datosPago: { titular, ultimos4 } }`. Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. Responde 201 con el pedido nuevo o 200 con el mismo pedido si es una repetición, siempre con `Location: /api/pedidos/:id`. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
+| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Body `{ idDireccion, idMetodoEnvio, metodoPago: "TARJETA", datosPago }` donde `datosPago` es `{ idTarjeta }` (tarjeta guardada) o `{ titular, ultimos4, tipo?, marca?, guardar? }` (tarjeta nueva; con `guardar: true`, `tipo` y `marca` son obligatorios). Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. Responde 201 con el pedido nuevo o 200 con el mismo pedido si es una repetición, siempre con `Location: /api/pedidos/:id` y `idTarjetaGuardada` en el cuerpo. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
 
 ### Pedidos — `/api/pedidos`
 El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administrador ven todos.
@@ -716,7 +734,15 @@ Idempotency-Key: 9a7c1e52-4b8d-4f3a-a2e6-0c5d7b9f1e34
 HTTP/1.1 201 Created
 Location: /api/pedidos/1503
 
-{ "idPedido": 1503, "numeroPedido": "SC-2026-001503", "estado": "PAGADO", "total": "293.20" }
+{ "idPedido": 1503, "numeroPedido": "SC-2026-001503", "estado": "PAGADO", "total": "293.20", "idTarjetaGuardada": null }
+```
+
+`datosPago` admite dos formas. `idTarjetaGuardada` es la tarjeta usada o recién guardada, y `null` si no se usó ni guardó ninguna y también en una repetición:
+
+```jsonc
+{ "idTarjeta": 3 }                                                                   // tarjeta guardada
+{ "titular": "Ana López", "ultimos4": "4242", "tipo": "CREDITO", "marca": "VISA", "guardar": true } // nueva, y se guarda
+{ "titular": "Ana López", "ultimos4": "4242" }                                       // nueva, sin guardar
 ```
 
 | Situación | Respuesta |
@@ -727,11 +753,13 @@ Location: /api/pedidos/1503
 | Falta el header | `400 IDEMPOTENCY_KEY_REQUERIDA` |
 | La reserva venció o nunca se inició el checkout | `409 RESERVA_VENCIDA`; el cliente debe iniciar el checkout de nuevo |
 | El pago simulado se rechaza (`ultimos4` = `0000`) | `402 PAGO_RECHAZADO`; la reserva sigue vigente y se puede reintentar con otra tarjeta |
+| `idTarjeta` junto con `guardar` o con otros datos de la tarjeta, o `guardar` sin `tipo` o `marca` | `400 VALIDACION` con el campo |
+| La tarjeta guardada es de otro cliente, no existe o ya se eliminó (también al repetir la misma clave) | `404 NO_ENCONTRADO` |
 | El cupón se agotó o venció entre iniciar y pagar | `422 CUPON_AGOTADO` / `CUPON_VENCIDO`; no se crea el pedido |
 
 `Pedido.ClaveIdempotencia` es `UNIQUE`: aunque dos peticiones con la misma clave lleguen al mismo tiempo, solo una inserta y la otra lee el pedido existente.
 
-`metodoPago` solo acepta `TARJETA`: el pago es simulado y la tabla `Pago` lo restringe con un `CHECK`. El esquema zod rechaza cualquier otro valor, o `ultimos4` que no sean 4 dígitos, con 400 `VALIDACION` antes de llegar al SP. El titular no se guarda.
+`metodoPago` solo acepta `TARJETA`: el pago es simulado y la tabla `Pago` lo restringe con un `CHECK`. El esquema zod rechaza cualquier otro valor, o `ultimos4` que no sean 4 dígitos, con 400 `VALIDACION` antes de llegar al SP. El titular solo se guarda si el cliente pide guardar la tarjeta (`guardar: true`).
 
 ### Detalle de un pedido
 `GET /api/pedidos/:id` (y las respuestas de `cancelar` y `PATCH /estado`):
@@ -888,6 +916,7 @@ El enunciado deja estos puntos abiertos; se resolvieron así:
 - **Invitación a un usuario desactivado:** 403 `USUARIO_INACTIVO` (hay que activarlo antes). A quien ya tiene contraseña: 409 `CONTRASENA_YA_CREADA`.
 - **Imágenes en el disco del servidor:** se suben al backend (`multer` en memoria, tipo por bytes mágicos, nombre UUID) y se publican en `/api/imagenes`; en Docker viven en el volumen `imagenes`. La URL guardada es relativa para que funcione detrás de nginx o del túnel de Cloudflare. El archivo se borra después de que el SP confirma el borrado de la imagen o del producto (best effort).
 - **Pago simulado:** no hay pasarela real. `POST /api/checkout/pagar` acepta los datos de pago y los aprueba; para probar un rechazo se usa una tarjeta que termina en `0000`.
+- **Tarjetas guardadas, solo lo que muestra un recibo:** se guardan titular, marca, tipo y últimos 4; el número completo y el CVV nunca se piden ni se guardan. `0000` se rechaza también al guardar (402 `PAGO_RECHAZADO`, sin guardar). La huella del pedido no cambia (`T=<ultimos4>`): repetir la clave con otro `guardar` devuelve el mismo pedido y no guarda nada. Pagar con una tarjeta eliminada o ajena da 404 aunque se repita la clave.
 - **Carrito solo de Clientes (con sesión):** un Operador o Administrador con token recibe 403 `PROHIBIDO` en `/api/carrito`; el invitado usa `X-Cart-Token`. Si hay token de acceso y también `X-Cart-Token`, manda el usuario. El carrito no se cachea.
 - **Fusión:** `POST /api/carrito/fusionar` toma `tokenInvitado` del body o, si falta, de `X-Cart-Token`. El carrito del invitado queda `FUSIONADO` y repetirla no duplica nada.
 - **Cupón que deja de valer:** la lectura del carrito no falla; trae `cupon.aplicado: false` con `codigoError` y `mensajeError`, y `descuento` en `"0.00"`. El checkout lo vuelve a validar.

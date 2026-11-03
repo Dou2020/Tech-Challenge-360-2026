@@ -325,7 +325,7 @@ Creadas por `090_datos_semilla.sql`:
 | :--- | :--- | :--- | :--- |
 | Administrador | `admin@shopcart.gt` | `Admin#2026` | |
 | Operador | `operador@shopcart.gt` | `Operador#2026` | |
-| Cliente | `cliente@shopcart.gt` | `Cliente#2026` | Dos direcciones (Casa y Oficina) |
+| Cliente | `cliente@shopcart.gt` | `Cliente#2026` | Dos direcciones (Casa y Oficina) y dos tarjetas guardadas: VISA crédito `4242` (predeterminada) y MASTERCARD débito `5454` |
 | Cliente | `cliente2@shopcart.gt` | `Cliente#2026` | Segundo cliente: sus recursos son ajenos para `cliente@` (404) |
 | Cliente (inactivo) | `inactivo@shopcart.gt` | `Cliente#2026` | Login responde `403 USUARIO_INACTIVO` |
 | Cliente | `cliente3@shopcart.gt` | `Cliente#2026` | Dueño de los 7 pedidos de ejemplo (usuario 6, dirección 5) |
@@ -407,6 +407,7 @@ Backend/
 │   │   ├── perfil/               # Datos y contraseña del propio usuario
 │   │   ├── usuarios/             # Gestión y desactivación de usuarios (Administrador)
 │   │   ├── direcciones/          # Direcciones de entrega del cliente
+│   │   ├── tarjetas/             # Tarjetas guardadas del cliente (titular, marca, tipo y últimos 4)
 │   │   ├── catalogo/             # Catálogo público, categorías, productos, variantes, atributos
 │   │   ├── inventario/           # Existencias, kardex, entradas y ajustes
 │   │   ├── carrito/              # Carrito de cliente e invitado, cupón aplicado
@@ -556,6 +557,8 @@ Backend/tests/
 │   ├── imagenes.test.ts          # Subida multipart y /api/imagenes
 │   ├── imagenes.seguridad.test.ts # Tipo real, límites de multer, cabeceras, Range y rutas peligrosas
 │   ├── direcciones.test.ts
+│   ├── tarjetas.test.ts          # Tarjetas guardadas y pago con ellas
+│   ├── tarjetas.concurrencia.test.ts # Doble guardado, doble alta y doble predeterminada
 │   ├── carrito.test.ts
 │   ├── cupones.test.ts
 │   ├── checkout.concurrencia.test.ts
@@ -572,7 +575,7 @@ Backend/tests/
 | :--- | :--- | :--- |
 | Unitarias | Reglas de los servicios (validación y cálculo de cupones, transiciones de estado, armado de respuestas), `sqlErrorMapper` y los middlewares `authorize`, `validate` e `idempotencyKey` | No; los repositorios se simulan |
 | Integración | Los criterios de aceptación de punta a punta: petición HTTP → servicio → SP → SQL Server | Sí; SQL Server en Docker con los scripts y datos semilla |
-| Base de datos | Que cada restricción rechace los datos que rompen su regla, aunque no se pase por un SP: FK compuestas, `CHECK`, índices únicos y triggers (38 casos) | Sí; `Database/pruebas/integridad.sql`, que `globalSetup` ejecuta antes de la suite de integración |
+| Base de datos | Que cada restricción rechace los datos que rompen su regla, aunque no se pase por un SP: FK compuestas, `CHECK`, índices únicos y triggers (48 casos) | Sí; `Database/pruebas/integridad.sql`, que `globalSetup` ejecuta antes de la suite de integración |
 
 Casos de integración ligados a los criterios de aceptación:
 
@@ -612,6 +615,11 @@ Casos de integración de Redis:
 | Registro y olvido con cuenta nueva, pendiente, con contraseña y desactivada | Mismo status y cuerpo en todos; el correo es el que corresponde (o ninguno si está desactivada) |
 | `CORREO_TRANSPORTE=smtp` sin `SMTP_HOST` o `CORREO_REMITENTE` | La validación del entorno falla y el proceso termina |
 | Subir imagen: Content-Type falso, campos multipart inválidos, más de 1 archivo o 5 campos, producto inexistente | Se decide por los bytes (no por el Content-Type); `400 VALIDACION`; no queda archivo huérfano |
+| `GET`/`POST`/`PATCH`/`DELETE` en `/api/tarjetas` sin token, como Operador o Administrador, o con la tarjeta de otro cliente | `401`; `403`; `404 NO_ENCONTRADO` y la tarjeta ajena queda intacta |
+| Guardar una tarjeta: la primera, una repetida, una con `0000` y una con `predeterminada: true` | La primera queda predeterminada; repetida → `409 DUPLICADO`; `0000` → `402 PAGO_RECHAZADO` sin guardar; la nueva predeterminada desmarca la anterior y eliminar la predeterminada promueve a la más reciente |
+| Pagar con `guardar: true`, con `0000` y repitiendo la clave (también con `guardar` distinto) | La tarjeta aparece en la lista y el pedido trae `idTarjetaGuardada`; con `0000` → `402` sin guardar; la repetición → `200` con `idTarjetaGuardada: null` y sin duplicar |
+| Pagar con `idTarjeta` propia, ajena, eliminada o junto con `guardar` | `201`; `404` (también al repetir la clave); `400 VALIDACION` |
+| Dos pagos con `guardar: true` de la misma tarjeta nueva, dos `POST /api/tarjetas` iguales y dos `PATCH` de predeterminada a la vez | Una sola tarjeta guardada; un `201` y un `409 DUPLICADO`; exactamente una predeterminada |
 | `GET`/`HEAD`/`Range` en `/api/imagenes`, archivos ocultos y rutas con `%2e%2e` | Cabeceras de caché, CSP, `nosniff` y CORP; `206` con rango; nunca se sirve nada fuera del directorio |
 
 Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `TEST_DB_USER` y `TEST_DB_PASSWORD`), se usa ese SQL Server en lugar del contenedor; los scripts recrean la base `ShopCart_Test` antes de correr. En los dos casos `globalSetup` ejecuta `docker-init.sh` con `DB_PRUEBAS=true`: si una restricción de integridad deja de funcionar, la suite falla antes de empezar.
@@ -626,7 +634,7 @@ Las pruebas de integración necesitan Docker. Si defines `TEST_DB_SERVER` (con `
 Database/
 ├── scripts/
 │   ├── 001_crear_base_datos.sql     # Elimina y crea la base (collation Modern_Spanish_100_CI_AI, READ_COMMITTED_SNAPSHOT)
-│   ├── 002_tablas.sql               # 28 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
+│   ├── 002_tablas.sql               # 29 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
 │   ├── 005_funciones.sql            # Funciones tipo tabla (FU_): existencia disponible, búsqueda, catálogo, cupones, totales del carrito, reserva del checkout y JSON para la bitácora
@@ -639,6 +647,7 @@ Database/
 │   ├── 012_sp_pedidos.sql           # SPs de checkout, pedidos, estados y devoluciones
 │   ├── 013_sp_reportes.sql          # SPs de reportes y dashboard
 │   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema
+│   ├── 015_sp_tarjetas.sql          # SPs de tarjetas guardadas del cliente
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
 │   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
@@ -683,7 +692,7 @@ Datos que crea `085_datos_catalogos.sql`:
 
 | Módulo | Tablas | Propósito |
 | :--- | :--- | :--- |
-| Seguridad | `Rol`, `Usuario`, `Direccion` | Usuarios, roles y direcciones de entrega (las sesiones viven en Redis) |
+| Seguridad | `Rol`, `Usuario`, `Direccion`, `TarjetaGuardada` | Usuarios, roles, direcciones de entrega y tarjetas guardadas para el checkout (titular, marca, tipo y últimos 4; nunca el número completo ni el CVV). Las sesiones viven en Redis |
 | Catálogo | `Categoria`, `Producto`, `ProductoImagen`, `Atributo`, `ValorAtributo`, `Variante`, `VarianteValorAtributo` | Productos con variantes vendibles (SKU, precio y existencia propios) |
 | Inventario | `TipoMovimientoInventario`, `MovimientoInventario`, `ReservaExistencia` | Kardex de entradas, salidas y ajustes; reservas temporales del checkout |
 | Carrito | `Carrito`, `CarritoDetalle` | Carrito de cliente o de invitado (por token) |
@@ -727,6 +736,9 @@ DEVUELTO --> [*]
 | Pedido sin duplicados | `UNIQUE (ClaveIdempotencia)` en `Pedido`; `HuellaSolicitud` (SHA-256 del carrito) detecta la misma clave con otro contenido |
 | Precio congelado | `PedidoDetalle` guarda SKU, nombre, precio y descuento del momento de la compra |
 | Dirección del propio cliente | FK compuesta `(IDDireccion, IDUsuario)` de `Pedido` a `Direccion` |
+| Tarjeta sin datos sensibles | `TarjetaGuardada` solo tiene titular, marca, tipo y `Ultimos4`; `CHECK (Ultimos4 LIKE '[0-9][0-9][0-9][0-9]')`, `CHECK` de tipo (`CREDITO`/`DEBITO`) y de marca (`VISA`/`MASTERCARD`/`AMEX`/`OTRA`) |
+| Tarjeta sin duplicar | `UQ_TarjetaGuardada_Tarjeta (IDUsuario, Marca, Tipo, Ultimos4)`: la misma tarjeta repetida da `DUPLICADO` (2627, sin THROW propio, igual que el correo de usuario) |
+| Una tarjeta predeterminada por cliente | Índice único filtrado `UX_TarjetaGuardada_Predeterminada (IDUsuario) WHERE Predeterminada = 1` |
 | Un valor por atributo | `VarianteValorAtributo` repite `IDAtributo`, con FK compuesta a `ValorAtributo` y `UNIQUE (IDVariante, IDAtributo)`: una variante no puede ser talla S y talla M a la vez |
 | Un cupón por pedido | `UNIQUE (IDPedido)` en `UsoCupon` |
 | Uso de cupón coherente | FK compuesta `(IDPedido, IDUsuario, IDCupon)` de `UsoCupon` a `Pedido`: el uso es del cliente y del cupón del pedido |
@@ -746,7 +758,7 @@ DEVUELTO --> [*]
 
 ### Normalización
 
-De las 28 tablas, 22 están en BCNF: en cada una, todo determinante es una clave, ya sea la PK o una clave natural declarada con `UNIQUE` (`Usuario.Correo`, `Variante.SKU`, `CarritoDetalle (IDCarrito, IDVariante)`…). Las otras seis tienen dependencias aceptadas a propósito, que se explican abajo:
+De las 29 tablas, 23 están en BCNF: en cada una, todo determinante es una clave, ya sea la PK o una clave natural declarada con `UNIQUE` (`Usuario.Correo`, `Variante.SKU`, `CarritoDetalle (IDCarrito, IDVariante)`…). Las otras seis tienen dependencias aceptadas a propósito, que se explican abajo:
 
 | Tabla | Forma normal | Dependencia que la rompe | Se explica en |
 | :--- | :--- | :--- | :--- |
@@ -994,6 +1006,20 @@ package "Seguridad" {
     Referencias : NVARCHAR(300)
     * Activo : BIT
     .. UQ (IDDireccion, IDUsuario) ..
+  }
+
+  entity TarjetaGuardada {
+    * IDTarjetaGuardada : INT <<PK>>
+    --
+    * IDUsuario : INT <<FK>>
+    * Titular : NVARCHAR(150)
+    * Ultimos4 : CHAR(4)
+    * Tipo : NVARCHAR(10)
+    * Marca : NVARCHAR(20)
+    * Predeterminada : BIT
+    * FechaCreacion : DATETIME2
+    .. UQ (IDUsuario, Marca, Tipo, Ultimos4) ..
+    .. UX (IDUsuario) WHERE Predeterminada = 1 ..
   }
 }
 
@@ -1323,6 +1349,7 @@ package "Auditoria" {
 Rol ||--o{ Usuario
 Rol ||--o{ TransicionEstadoPedido
 Usuario ||--o{ Direccion
+Usuario ||--o{ TarjetaGuardada
 
 Categoria ||--o{ Producto
 Producto ||--o{ ProductoImagen

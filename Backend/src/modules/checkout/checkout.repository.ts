@@ -11,8 +11,13 @@ import type {
 
 /*
  * El IDUsuarioSolicitante sale siempre del JWT. Los SPs de escritura pueden lanzar además 50004
- * (dirección o método ajenos/inactivos) y 50012 (usuario inactivo).
+ * (dirección, método o tarjeta ajenos/inexistentes) y 50012 (usuario inactivo). Con tarjeta
+ * guardada y `guardar` a la vez, o `guardar` sin tipo o marca, lanza 50001.
  */
+
+/** Valores válidos (distintos de 0000) que el SP descarta al pagar con una tarjeta guardada. */
+const PLACEHOLDER_TITULAR = 'Tarjeta guardada';
+const PLACEHOLDER_ULTIMOS4 = '0001';
 
 const solicitante = (idUsuario: number): ParametroSp => ({
   nombre: 'IDUsuarioSolicitante',
@@ -61,8 +66,21 @@ export const checkoutRepository = {
       { nombre: 'IDDireccion', tipo: sql.Int, valor: datos.idDireccion },
       { nombre: 'IDMetodoEnvio', tipo: sql.Int, valor: datos.idMetodoEnvio },
       { nombre: 'MetodoPago', tipo: sql.NVarChar(20), valor: datos.metodoPago },
-      { nombre: 'TitularTarjeta', tipo: sql.NVarChar(150), valor: datos.titular },
-      { nombre: 'UltimosTarjeta', tipo: sql.Char(4), valor: datos.ultimos4 },
+      // Con tarjeta guardada el SP ignora titular y últimos 4 y toma los de la tarjeta.
+      {
+        nombre: 'TitularTarjeta',
+        tipo: sql.NVarChar(150),
+        valor: datos.titular ?? PLACEHOLDER_TITULAR,
+      },
+      {
+        nombre: 'UltimosTarjeta',
+        tipo: sql.Char(4),
+        valor: datos.ultimos4 ?? PLACEHOLDER_ULTIMOS4,
+      },
+      { nombre: 'IDTarjetaGuardada', tipo: sql.Int, valor: datos.idTarjeta },
+      { nombre: 'TipoTarjeta', tipo: sql.NVarChar(10), valor: datos.tipo },
+      { nombre: 'MarcaTarjeta', tipo: sql.NVarChar(20), valor: datos.marca },
+      { nombre: 'GuardarTarjeta', tipo: sql.Bit, valor: datos.guardar },
     ]);
     const fila = filas[0];
     if (!fila) throw new Error('SP_Pedidos_CrearPedido no devolvió el pedido');

@@ -619,3 +619,24 @@ RETURN
         FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
     ) AS Json;
 GO
+
+-- Foto JSON de una tarjeta guardada para la bitácora (ValorAnterior / ValorNuevo). Una fila; Json es
+-- NULL si la tarjeta no existe. Solo contiene lo que la tabla guarda: nunca hay número completo ni CVV.
+CREATE OR ALTER FUNCTION dbo.FU_Tarjetas_TarjetaJson (@IDTarjetaGuardada INT)
+RETURNS TABLE
+AS
+RETURN
+    SELECT (
+        SELECT
+            t.IDTarjetaGuardada,
+            t.IDUsuario,
+            t.Titular,
+            t.Ultimos4,
+            t.Tipo,
+            t.Marca,
+            t.Predeterminada
+        FROM dbo.TarjetaGuardada AS t
+        WHERE t.IDTarjetaGuardada = @IDTarjetaGuardada
+        FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES
+    ) AS Json;
+GO

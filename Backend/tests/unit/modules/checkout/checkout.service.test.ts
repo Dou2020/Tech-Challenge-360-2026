@@ -26,8 +26,12 @@ const DATOS = {
   idDireccion: 5,
   idMetodoEnvio: 1,
   metodoPago: 'TARJETA' as const,
+  idTarjeta: null,
   titular: 'Ana López',
   ultimos4: '4242',
+  tipo: null,
+  marca: null,
+  guardar: false,
 };
 const CLAVE = '9a7c1e52-4b8d-4f3a-a2e6-0c5d7b9f1e34';
 
@@ -149,7 +153,13 @@ describe('checkoutService.iniciar', () => {
 });
 
 describe('checkoutService.pagar', () => {
-  const fila = { IDPedido: 9, NumeroPedido: 'SC-9', Estado: 'PAGADO', Total: 293.2 };
+  const fila = {
+    IDPedido: 9,
+    NumeroPedido: 'SC-9',
+    Estado: 'PAGADO',
+    Total: 293.2,
+    IDTarjetaGuardada: 3,
+  };
 
   it('pedido nuevo: creado e invalida la caché de reportes', async () => {
     // Arrange
@@ -161,7 +171,13 @@ describe('checkoutService.pagar', () => {
     // Assert
     expect(resultado).toEqual({
       creado: true,
-      pedido: { idPedido: 9, numeroPedido: 'SC-9', estado: 'PAGADO', total: '293.20' },
+      pedido: {
+        idPedido: 9,
+        numeroPedido: 'SC-9',
+        estado: 'PAGADO',
+        total: '293.20',
+        idTarjetaGuardada: 3,
+      },
     });
     expect(repo.crearPedido).toHaveBeenCalledWith(7, CLAVE, DATOS);
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
@@ -184,6 +200,17 @@ describe('checkoutService.pagar', () => {
     expect(resultado.creado).toBe(false);
     expect(cache.invalidar).not.toHaveBeenCalled();
     expect(eventos.publicar).not.toHaveBeenCalled();
+  });
+
+  it('una repetición sin tarjeta devuelve idTarjetaGuardada null', async () => {
+    // Arrange
+    repo.crearPedido.mockResolvedValue({ ...fila, IDTarjetaGuardada: null, Repetido: true });
+
+    // Act
+    const resultado = await checkoutService.pagar(7, CLAVE, DATOS);
+
+    // Assert
+    expect(resultado.pedido.idTarjetaGuardada).toBeNull();
   });
 
   it('si el SP falla no invalida la caché', async () => {

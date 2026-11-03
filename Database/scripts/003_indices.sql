@@ -13,6 +13,8 @@ GO
 /* Seguridad */
 CREATE INDEX IX_Usuario_IDRol ON dbo.Usuario (IDRol);
 CREATE INDEX IX_Direccion_IDUsuario ON dbo.Direccion (IDUsuario) WHERE Activo = 1;
+-- A lo sumo una tarjeta predeterminada por cliente.
+CREATE UNIQUE INDEX UX_TarjetaGuardada_Predeterminada ON dbo.TarjetaGuardada (IDUsuario) WHERE Predeterminada = 1;
 GO
 
 /* Catálogo */

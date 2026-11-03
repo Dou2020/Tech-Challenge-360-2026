@@ -65,6 +65,29 @@ CREATE TABLE dbo.Direccion (
 );
 GO
 
+-- Tarjeta de crédito o débito guardada por el cliente para el checkout. Solo guarda lo que muestra un
+-- recibo (titular, marca, tipo y últimos 4 dígitos): el número completo, el vencimiento y el CVV
+-- nunca se piden ni se guardan. Borrado físico: Pago no la referencia y la auditoría queda en Bitacora.
+CREATE TABLE dbo.TarjetaGuardada (
+    IDTarjetaGuardada INT IDENTITY(1,1) NOT NULL,
+    IDUsuario         INT               NOT NULL,
+    Titular           NVARCHAR(150)     NOT NULL,
+    Ultimos4          CHAR(4)           NOT NULL,
+    Tipo              NVARCHAR(10)      NOT NULL,
+    Marca             NVARCHAR(20)      NOT NULL,
+    Predeterminada    BIT               NOT NULL CONSTRAINT DF_TarjetaGuardada_Predeterminada DEFAULT (0),
+    FechaCreacion     DATETIME2(3)      NOT NULL CONSTRAINT DF_TarjetaGuardada_FechaCreacion DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_TarjetaGuardada PRIMARY KEY (IDTarjetaGuardada),
+    CONSTRAINT FK_TarjetaGuardada_Usuario FOREIGN KEY (IDUsuario) REFERENCES dbo.Usuario (IDUsuario),
+    -- No se duplica la misma tarjeta de un cliente.
+    CONSTRAINT UQ_TarjetaGuardada_Tarjeta UNIQUE (IDUsuario, Marca, Tipo, Ultimos4),
+    CONSTRAINT CK_TarjetaGuardada_Titular CHECK (LEN(LTRIM(RTRIM(Titular))) > 0),
+    CONSTRAINT CK_TarjetaGuardada_Ultimos4 CHECK (Ultimos4 LIKE '[0-9][0-9][0-9][0-9]'),
+    CONSTRAINT CK_TarjetaGuardada_Tipo CHECK (Tipo IN (N'CREDITO', N'DEBITO')),
+    CONSTRAINT CK_TarjetaGuardada_Marca CHECK (Marca IN (N'VISA', N'MASTERCARD', N'AMEX', N'OTRA'))
+);
+GO
+
 /* =========================================================
    Catálogo
    ========================================================= */

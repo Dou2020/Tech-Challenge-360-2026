@@ -34,8 +34,12 @@ export const checkoutController = {
       idDireccion: body.idDireccion,
       idMetodoEnvio: body.idMetodoEnvio,
       metodoPago: body.metodoPago,
-      titular: body.datosPago.titular,
-      ultimos4: body.datosPago.ultimos4,
+      idTarjeta: 'idTarjeta' in body.datosPago ? body.datosPago.idTarjeta : null,
+      titular: 'titular' in body.datosPago ? body.datosPago.titular : null,
+      ultimos4: 'ultimos4' in body.datosPago ? body.datosPago.ultimos4 : null,
+      tipo: 'tipo' in body.datosPago ? (body.datosPago.tipo ?? null) : null,
+      marca: 'marca' in body.datosPago ? (body.datosPago.marca ?? null) : null,
+      guardar: 'guardar' in body.datosPago && body.datosPago.guardar === true,
     });
     res
       .location(`/api/pedidos/${pedido.idPedido}`)

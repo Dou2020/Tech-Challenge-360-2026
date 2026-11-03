@@ -31,6 +31,7 @@ import { carritoRoutes } from './modules/carrito/carrito.routes.js';
 import { checkoutRoutes } from './modules/checkout/checkout.routes.js';
 import { cuponesRoutes } from './modules/cupones/cupones.routes.js';
 import { direccionesRoutes } from './modules/direcciones/direcciones.routes.js';
+import { tarjetasRoutes } from './modules/tarjetas/tarjetas.routes.js';
 import { inventarioRoutes } from './modules/inventario/inventario.routes.js';
 import { pedidosRoutes } from './modules/pedidos/pedidos.routes.js';
 import { reportesRoutes } from './modules/reportes/reportes.routes.js';
@@ -101,6 +102,7 @@ export function createApp(): Express {
   api.use('/atributos', atributosRoutes);
   api.use('/inventario', inventarioRoutes);
   api.use('/direcciones', direccionesRoutes);
+  api.use('/tarjetas', tarjetasRoutes);
   api.use('/carrito', carritoRoutes);
   api.use('/cupones', cuponesRoutes);
   api.use('/checkout', checkoutRoutes);

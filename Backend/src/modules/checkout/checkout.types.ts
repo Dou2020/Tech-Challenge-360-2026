@@ -54,14 +54,21 @@ export interface FilaPedidoCreado {
   Estado: string;
   Total: number;
   Repetido: boolean;
+  /** Tarjeta usada o guardada; null si no hubo ninguna y en una repetición. */
+  IDTarjetaGuardada: number | null;
 }
 
 export interface DatosPago {
   idDireccion: number;
   idMetodoEnvio: number;
   metodoPago: 'TARJETA';
-  titular: string;
-  ultimos4: string;
+  /** Pago con una tarjeta guardada: titular y últimos 4 salen de ella. */
+  idTarjeta: number | null;
+  titular: string | null;
+  ultimos4: string | null;
+  tipo: string | null;
+  marca: string | null;
+  guardar: boolean;
 }
 
 // --- Respuestas de la API ---
@@ -118,4 +125,6 @@ export interface PedidoCreado {
   numeroPedido: string;
   estado: string;
   total: string;
+  /** Tarjeta usada o recién guardada; null si no se usó ni guardó ninguna o si fue una repetición. */
+  idTarjetaGuardada: number | null;
 }

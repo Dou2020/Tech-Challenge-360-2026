@@ -28,7 +28,7 @@
       50001  VALIDACION
       50004  NO_ENCONTRADO (incluye el pedido o la dirección de otro cliente)
       50012  USUARIO_INACTIVO (solicitante desactivado)
-      50020  PAGO_RECHAZADO (tarjeta terminada en 0000)
+      50020  PAGO_RECHAZADO (tarjeta terminada en 0000, también si es una tarjeta guardada)
       50021  IDEMPOTENCIA_CONFLICTO
       50030  STOCK_INSUFICIENTE
       50031  RESERVA_VENCIDA
@@ -182,8 +182,18 @@ GO
 --   @ClaveIdempotencia  header Idempotency-Key (UUID)
 --   @IDDireccion, @IDMetodoEnvio  los elegidos en "iniciar" (no se guardan en la reserva; el body de pagar los lleva)
 --   @MetodoPago         solo 'TARJETA' (si no, 50001)
---   @TitularTarjeta     obligatorio; solo se valida, no se guarda (la tabla Pago no guarda datos de tarjeta)
+--   @TitularTarjeta     obligatorio; la tabla Pago no guarda datos de tarjeta (solo TarjetaGuardada, si se pide)
 --   @UltimosTarjeta     4 dígitos; '0000' es el rechazo simulado (50020)
+--   @IDTarjetaGuardada  opcional: paga con una tarjeta guardada del solicitante. Su titular y últimos 4 reemplazan
+--                       a @TitularTarjeta y @UltimosTarjeta ANTES de la huella y de la regla 0000, así que esa lógica
+--                       no cambia. Ajena o inexistente → 50004; junto con @GuardarTarjeta = 1 → 50001.
+--   @TipoTarjeta, @MarcaTarjeta  CREDITO|DEBITO y VISA|MASTERCARD|AMEX|OTRA; obligatorios solo con @GuardarTarjeta = 1 (50001)
+--   @GuardarTarjeta     1 guarda la tarjeta nueva DESPUÉS de aprobar el pago, en la misma transacción y solo si
+--                       Repetido = 0 (una repetición con la misma clave no guarda nada). Si el cliente ya la tiene
+--                       (UQ_TarjetaGuardada_Tarjeta) no hace nada; si es su primera, queda predeterminada. Se inserta
+--                       aquí y no con SP_Tarjetas_Crear: un SP anidado con su propio TRAN/CATCH revertiría el pedido.
+--                       Bitácora CREAR de la tarjeta (Modulo 'Tarjetas').
+--   La huella no incluye tarjeta guardada, tipo, marca ni guardar (sigue siendo T=<ultimos4>).
 -- Idempotencia: HuellaSolicitud = SHA-256 en hexadecimal (mayúsculas) de un texto canónico calculado aquí:
 --   D=<IDDireccion>;E=<IDMetodoEnvio>;P=<MetodoPago>;T=<UltimosTarjeta>;C=<IDCupon o vacío>;L=<IDVariante>x<Cantidad>,…
 -- con las líneas ordenadas por IDVariante. Un bloqueo de aplicación exclusivo por clave (sp_getapplock,
@@ -206,7 +216,8 @@ GO
 -- del cliente, carrito CONVERTIDO y bitácora CREAR del pedido.
 -- El precio es el vigente al pagar (si cambió desde "iniciar", el pedido congela el nuevo).
 -- Resultado (una fila): IDPedido INT, NumeroPedido NVARCHAR(20), Estado NVARCHAR(30) (código actual),
--- Total DECIMAL(12,2), Repetido BIT.
+-- Total DECIMAL(12,2), Repetido BIT, IDTarjetaGuardada INT (la tarjeta usada, la recién guardada o la que ya
+-- existía al guardar; NULL si no se usó ni se guardó ninguna, y en una repetición con @GuardarTarjeta).
 CREATE OR ALTER PROCEDURE dbo.SP_Pedidos_CrearPedido
     @IDUsuarioSolicitante INT,
     @ClaveIdempotencia    UNIQUEIDENTIFIER,
@@ -214,7 +225,11 @@ CREATE OR ALTER PROCEDURE dbo.SP_Pedidos_CrearPedido
     @IDMetodoEnvio        INT,
     @MetodoPago           NVARCHAR(20),
     @TitularTarjeta       NVARCHAR(150),
-    @UltimosTarjeta       CHAR(4)
+    @UltimosTarjeta       CHAR(4),
+    @IDTarjetaGuardada    INT           = NULL,
+    @TipoTarjeta          NVARCHAR(10)  = NULL,
+    @MarcaTarjeta         NVARCHAR(20)  = NULL,
+    @GuardarTarjeta       BIT           = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -232,6 +247,7 @@ BEGIN
     DECLARE @Subtotal DECIMAL(12,2), @Descuento DECIMAL(12,2), @Total DECIMAL(12,2), @MontoIVA DECIMAL(12,2);
     DECLARE @IDEstadoPagado INT, @IDTipoVenta INT, @SignoVenta SMALLINT;
     DECLARE @NumeroPedido NVARCHAR(20), @Direccion NVARCHAR(800), @Nuevo NVARCHAR(MAX);
+    DECLARE @IDTarjetaResultado INT, @NuevaTarjeta NVARCHAR(MAX), @Predeterminar BIT;
     DECLARE @Bloqueo TABLE (IDVariante INT NOT NULL PRIMARY KEY);
     DECLARE @Linea TABLE (
         IDCarritoDetalle    INT           NOT NULL PRIMARY KEY,
@@ -249,6 +265,9 @@ BEGIN
 
     SET @MetodoPago = UPPER(NULLIF(TRIM(@MetodoPago), N''));
     SET @TitularTarjeta = NULLIF(TRIM(@TitularTarjeta), N'');
+    SET @TipoTarjeta = UPPER(NULLIF(TRIM(@TipoTarjeta), N''));
+    SET @MarcaTarjeta = UPPER(NULLIF(TRIM(@MarcaTarjeta), N''));
+    SET @GuardarTarjeta = ISNULL(@GuardarTarjeta, 0);
 
     BEGIN TRY
         BEGIN TRANSACTION;
@@ -261,6 +280,29 @@ BEGIN
 
         IF @MetodoPago IS NULL OR @MetodoPago <> N'TARJETA'
             THROW 50001, N'El método de pago solo puede ser TARJETA.', 1;
+
+        -- Tarjeta guardada: su titular y últimos 4 fijan los del pago antes de la huella y de la regla 0000.
+        IF @IDTarjetaGuardada IS NOT NULL
+        BEGIN
+            IF @GuardarTarjeta = 1
+                THROW 50001, N'No se puede guardar una tarjeta cuando se paga con una tarjeta guardada.', 1;
+
+            SELECT @TitularTarjeta = Titular, @UltimosTarjeta = Ultimos4, @IDTarjetaResultado = IDTarjetaGuardada
+            FROM dbo.TarjetaGuardada
+            WHERE IDTarjetaGuardada = @IDTarjetaGuardada AND IDUsuario = @IDUsuarioSolicitante;
+
+            IF @IDTarjetaResultado IS NULL
+                THROW 50004, N'La tarjeta guardada no existe.', 1;
+        END;
+
+        IF @GuardarTarjeta = 1
+        BEGIN
+            IF @TipoTarjeta IS NULL OR @TipoTarjeta NOT IN (N'CREDITO', N'DEBITO')
+                THROW 50001, N'Para guardar la tarjeta, el tipo debe ser CREDITO o DEBITO.', 1;
+
+            IF @MarcaTarjeta IS NULL OR @MarcaTarjeta NOT IN (N'VISA', N'MASTERCARD', N'AMEX', N'OTRA')
+                THROW 50001, N'Para guardar la tarjeta, la marca debe ser VISA, MASTERCARD, AMEX u OTRA.', 1;
+        END;
 
         IF @TitularTarjeta IS NULL
             THROW 50001, N'El titular de la tarjeta es obligatorio.', 1;
@@ -508,6 +550,36 @@ BEGIN
             INSERT INTO dbo.HistorialEstadoPedido (IDPedido, IDEstadoAnterior, IDEstadoNuevo, IDUsuario, Comentario, Fecha)
             VALUES (@IDPedido, NULL, @IDEstadoPagado, @IDUsuarioSolicitante, N'Pedido creado y pago aprobado', @Ahora);
 
+            -- Guardar la tarjeta (solo con el pago aprobado y la clave nueva). UPDLOCK, HOLDLOCK serializa dos
+            -- pagos simultáneos del mismo cliente: no se duplica la tarjeta ni quedan dos predeterminadas.
+            IF @GuardarTarjeta = 1
+            BEGIN
+                SELECT @IDTarjetaResultado = IDTarjetaGuardada
+                FROM dbo.TarjetaGuardada WITH (UPDLOCK, HOLDLOCK)
+                WHERE IDUsuario = @IDUsuarioSolicitante AND Marca = @MarcaTarjeta
+                  AND Tipo = @TipoTarjeta AND Ultimos4 = @UltimosTarjeta;
+
+                IF @IDTarjetaResultado IS NULL
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM dbo.TarjetaGuardada WITH (UPDLOCK, HOLDLOCK) WHERE IDUsuario = @IDUsuarioSolicitante)
+                        SET @Predeterminar = 0;
+                    ELSE
+                        SET @Predeterminar = 1;
+
+                    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca, Predeterminada, FechaCreacion)
+                    VALUES (@IDUsuarioSolicitante, @TitularTarjeta, @UltimosTarjeta, @TipoTarjeta, @MarcaTarjeta,
+                            @Predeterminar, @Ahora);
+
+                    SET @IDTarjetaResultado = SCOPE_IDENTITY();
+
+                    SELECT @NuevaTarjeta = Json FROM dbo.FU_Tarjetas_TarjetaJson(@IDTarjetaResultado);
+
+                    INSERT INTO dbo.Bitacora (IDUsuario, Modulo, Entidad, IDRegistro, Accion, ValorAnterior, ValorNuevo, Fecha)
+                    VALUES (@IDUsuarioSolicitante, N'Tarjetas', N'TarjetaGuardada', @IDTarjetaResultado, N'CREAR',
+                            NULL, @NuevaTarjeta, @Ahora);
+                END;
+            END;
+
             UPDATE dbo.Carrito
             SET Estado = N'CONVERTIDO',
                 FechaUltimaActividad = @Ahora
@@ -528,7 +600,8 @@ BEGIN
             p.NumeroPedido,
             ep.Codigo AS Estado,
             p.Total,
-            @Repetido AS Repetido
+            @Repetido AS Repetido,
+            @IDTarjetaResultado AS IDTarjetaGuardada
         FROM dbo.Pedido AS p
         INNER JOIN dbo.EstadoPedido AS ep ON ep.IDEstadoPedido = p.IDEstadoPedido
         WHERE p.IDPedido = @IDPedido;

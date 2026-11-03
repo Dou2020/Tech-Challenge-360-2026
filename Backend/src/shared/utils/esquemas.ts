@@ -47,3 +47,17 @@ export const booleanoQuery = z
   .enum(['true', 'false'], { error: 'Debe ser true o false.' })
   .transform((valor) => valor === 'true')
   .optional();
+
+/** Tipo, marca, titular y últimos 4 de una tarjeta (guardada o del pago); coinciden con los CHECK de TarjetaGuardada. */
+export const TIPOS_TARJETA = ['CREDITO', 'DEBITO'] as const;
+export const MARCAS_TARJETA = ['VISA', 'MASTERCARD', 'AMEX', 'OTRA'] as const;
+const MAX_TITULAR_TARJETA = 150;
+
+export const tipoTarjeta = z.enum(TIPOS_TARJETA, { error: 'Debe ser CREDITO o DEBITO.' });
+export const marcaTarjeta = z.enum(MARCAS_TARJETA, {
+  error: 'Debe ser VISA, MASTERCARD, AMEX u OTRA.',
+});
+export const titularTarjeta = textoObligatorio(MAX_TITULAR_TARJETA);
+export const ultimos4Tarjeta = z
+  .string({ error: 'Deben ser los 4 últimos dígitos de la tarjeta.' })
+  .regex(/^\d{4}$/, 'Deben ser los 4 últimos dígitos de la tarjeta.');

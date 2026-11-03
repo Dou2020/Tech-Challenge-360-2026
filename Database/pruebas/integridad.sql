@@ -405,6 +405,68 @@ BEGIN TRY
 END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
 INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Historial sin cambio de estado', 547, N'CK_HistorialEstadoPedido_Estados', @Error, @Mensaje);
 
+/* Tarjetas guardadas */
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca, Predeterminada) VALUES (@IDUsuarioA, N'Prueba A', '4242', N'CREDITO', N'VISA', 1);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Tarjeta guardada (válido)', 0, NULL, @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (-1, N'Nadie', '4242', N'CREDITO', N'VISA');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Tarjeta de un usuario inexistente', 547, N'FK_TarjetaGuardada_Usuario', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (@IDUsuarioA, N'Prueba A', '4242', N'CREDITO', N'VISA');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Misma tarjeta repetida del cliente', 2627, N'UQ_TarjetaGuardada_Tarjeta', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (@IDUsuarioB, N'Prueba B', '4242', N'CREDITO', N'VISA');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Misma tarjeta de otro cliente (válido)', 0, NULL, @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca, Predeterminada) VALUES (@IDUsuarioA, N'Prueba A', '5454', N'DEBITO', N'MASTERCARD', 1);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Segunda tarjeta predeterminada del cliente', 2601, N'UX_TarjetaGuardada_Predeterminada', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca, Predeterminada) VALUES (@IDUsuarioA, N'Prueba A', '5454', N'DEBITO', N'MASTERCARD', 0);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Segunda tarjeta no predeterminada (válido)', 0, NULL, @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (@IDUsuarioA, N'   ', '1111', N'CREDITO', N'AMEX');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Tarjeta con titular vacío', 547, N'CK_TarjetaGuardada_Titular', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (@IDUsuarioA, N'Prueba A', 'AB12', N'CREDITO', N'AMEX');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Tarjeta con últimos 4 no numéricos', 547, N'CK_TarjetaGuardada_Ultimos4', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (@IDUsuarioA, N'Prueba A', '1111', N'PREPAGO', N'AMEX');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Tarjeta con tipo desconocido', 547, N'CK_TarjetaGuardada_Tipo', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca) VALUES (@IDUsuarioA, N'Prueba A', '1111', N'CREDITO', N'DINERS');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Tarjeta con marca desconocida', 547, N'CK_TarjetaGuardada_Marca', @Error, @Mensaje);
+
 ROLLBACK TRANSACTION;
 
 /* =========================================================

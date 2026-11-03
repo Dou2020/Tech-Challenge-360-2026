@@ -102,6 +102,16 @@ FROM (VALUES
 INNER JOIN dbo.Usuario AS us ON us.Correo = d.Correo
 ORDER BY d.Orden;
 
+-- Tarjetas guardadas de cliente@shopcart.gt: solo titular, marca, tipo y últimos 4 (nunca el número completo).
+INSERT INTO dbo.TarjetaGuardada (IDUsuario, Titular, Ultimos4, Tipo, Marca, Predeterminada)
+SELECT us.IDUsuario, t.Titular, t.Ultimos4, t.Tipo, t.Marca, t.Predeterminada
+FROM (VALUES
+        (1, N'Ana López', '4242', N'CREDITO', N'VISA',       1),
+        (2, N'Ana López', '5454', N'DEBITO',  N'MASTERCARD', 0)
+     ) AS t (Orden, Titular, Ultimos4, Tipo, Marca, Predeterminada)
+INNER JOIN dbo.Usuario AS us ON us.Correo = N'cliente@shopcart.gt'
+ORDER BY t.Orden;
+
 /* =========================================================
    Catálogo
    ========================================================= */
