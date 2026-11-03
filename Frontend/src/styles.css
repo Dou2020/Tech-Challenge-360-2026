@@ -1,20 +1,162 @@
 @import 'tailwindcss';
 
+/* Modo oscuro por clase en <html>: la pone index.html antes de pintar y la cambia useTema. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Color de marca: verde azulado. Se usa como bg-marca-600, text-marca-700, etc. */
 @theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
   --color-marca-50: #f0fdfa;
   --color-marca-100: #ccfbf1;
+  --color-marca-200: #99f6e4;
+  --color-marca-300: #5eead4;
+  --color-marca-400: #2dd4bf;
+  --color-marca-500: #14b8a6;
   --color-marca-600: #0d9488;
   --color-marca-700: #0f766e;
   --color-marca-800: #115e59;
+  --color-marca-900: #134e4a;
+  --color-marca-950: #042f2e;
 }
 
-html {
-  color-scheme: light;
+/*
+  Tokens semánticos. Los componentes usan estos (bg-superficie, text-texto-suave, ring-borde…)
+  y no colores directos de la paleta: así el modo oscuro solo redefine las variables.
+  Contraste AA (4.5:1) de texto-suave y texto-tenue sobre superficie y fondo en ambos temas;
+  primario lleva texto sobre-primario (5.5:1 en claro).
+*/
+:root {
+  --fondo: var(--color-zinc-50);
+  --superficie: var(--color-white);
+  --superficie-suave: var(--color-zinc-100);
+  --borde: var(--color-zinc-200);
+  --borde-fuerte: var(--color-zinc-300);
+  --texto: var(--color-zinc-900);
+  --texto-suave: var(--color-zinc-600);
+  --texto-tenue: var(--color-zinc-500);
+
+  --primario: var(--color-marca-700);
+  --primario-hover: var(--color-marca-800);
+  --sobre-primario: var(--color-white);
+  --acento: var(--color-marca-700);
+  --acento-suave: var(--color-marca-50);
+
+  --exito: var(--color-emerald-600);
+  --exito-suave: var(--color-emerald-50);
+  --exito-borde: var(--color-emerald-200);
+  --exito-texto: var(--color-emerald-800);
+  --peligro: var(--color-red-600);
+  --peligro-suave: var(--color-red-50);
+  --peligro-borde: var(--color-red-200);
+  --peligro-texto: var(--color-red-800);
+  --aviso: var(--color-amber-500);
+  --aviso-suave: var(--color-amber-50);
+  --aviso-borde: var(--color-amber-200);
+  --aviso-texto: var(--color-amber-800);
+  --info: var(--color-sky-600);
+  --info-suave: var(--color-sky-50);
+  --info-borde: var(--color-sky-200);
+  --info-texto: var(--color-sky-800);
 }
 
-body {
-  background-color: var(--color-slate-50);
-  color: var(--color-slate-900);
-  -webkit-font-smoothing: antialiased;
+.dark {
+  --fondo: var(--color-zinc-950);
+  --superficie: var(--color-zinc-900);
+  --superficie-suave: var(--color-zinc-800);
+  --borde: oklch(1 0 0 / 10%);
+  --borde-fuerte: oklch(1 0 0 / 16%);
+  --texto: var(--color-zinc-50);
+  --texto-suave: var(--color-zinc-400);
+  /* Entre zinc-400 y zinc-500: zinc-500 no llega a 4.5:1 sobre zinc-900. */
+  --texto-tenue: oklch(62% 0.016 286);
+
+  --primario: var(--color-marca-400);
+  --primario-hover: var(--color-marca-300);
+  --sobre-primario: var(--color-zinc-950);
+  --acento: var(--color-marca-400);
+  --acento-suave: color-mix(in oklab, var(--color-marca-950) 60%, transparent);
+
+  --exito: var(--color-emerald-400);
+  --exito-suave: color-mix(in oklab, var(--color-emerald-950) 50%, transparent);
+  --exito-borde: var(--color-emerald-900);
+  --exito-texto: var(--color-emerald-300);
+  --peligro: var(--color-red-400);
+  --peligro-suave: color-mix(in oklab, var(--color-red-950) 50%, transparent);
+  --peligro-borde: var(--color-red-900);
+  --peligro-texto: var(--color-red-300);
+  --aviso: var(--color-amber-400);
+  --aviso-suave: color-mix(in oklab, var(--color-amber-950) 50%, transparent);
+  --aviso-borde: var(--color-amber-900);
+  --aviso-texto: var(--color-amber-300);
+  --info: var(--color-sky-400);
+  --info-suave: color-mix(in oklab, var(--color-sky-950) 50%, transparent);
+  --info-borde: var(--color-sky-900);
+  --info-texto: var(--color-sky-300);
+}
+
+@theme inline {
+  --color-fondo: var(--fondo);
+  --color-superficie: var(--superficie);
+  --color-superficie-suave: var(--superficie-suave);
+  --color-borde: var(--borde);
+  --color-borde-fuerte: var(--borde-fuerte);
+  --color-texto: var(--texto);
+  --color-texto-suave: var(--texto-suave);
+  --color-texto-tenue: var(--texto-tenue);
+
+  --color-primario: var(--primario);
+  --color-primario-hover: var(--primario-hover);
+  --color-sobre-primario: var(--sobre-primario);
+  --color-acento: var(--acento);
+  --color-acento-suave: var(--acento-suave);
+
+  --color-exito: var(--exito);
+  --color-exito-suave: var(--exito-suave);
+  --color-exito-borde: var(--exito-borde);
+  --color-exito-texto: var(--exito-texto);
+  --color-peligro: var(--peligro);
+  --color-peligro-suave: var(--peligro-suave);
+  --color-peligro-borde: var(--peligro-borde);
+  --color-peligro-texto: var(--peligro-texto);
+  --color-aviso: var(--aviso);
+  --color-aviso-suave: var(--aviso-suave);
+  --color-aviso-borde: var(--aviso-borde);
+  --color-aviso-texto: var(--aviso-texto);
+  --color-info: var(--info);
+  --color-info-suave: var(--info-suave);
+  --color-info-borde: var(--info-borde);
+  --color-info-texto: var(--info-texto);
+}
+
+/* Contenedor de tarjeta: el padding va en cada uso. */
+@utility tarjeta {
+  @apply rounded-2xl bg-superficie shadow-xs ring-1 ring-borde;
+}
+
+/* Tarjeta que es un enlace o un botón: se eleva al pasar el cursor. */
+@utility tarjeta-interactiva {
+  @apply tarjeta transition hover:shadow-md hover:ring-borde-fuerte;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-fondo);
+    color: var(--color-texto);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Radios y checkboxes nativos con el color de marca del tema. */
+  input[type='radio'],
+  input[type='checkbox'] {
+    accent-color: var(--color-primario);
+  }
 }

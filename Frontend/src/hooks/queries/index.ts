@@ -1,5 +1,13 @@
-/**
- * Hooks de TanStack Query, uno por recurso (useProductos, usePedido…).
- * Reexporta aquí cada uno: export { useProductos } from './useProductos';
- */
-export {};
+export {
+  CLAVE_CARRITO,
+  useActualizarCantidad,
+  useAgregarItem,
+  useAplicarCupon,
+  useCarrito,
+  useEliminarItem,
+  useQuitarCupon,
+  useVaciarCarrito,
+} from './useCarrito';
+export { useCategorias } from './useCategorias';
+export { useProducto } from './useProducto';
+export { useProductos } from './useProductos';

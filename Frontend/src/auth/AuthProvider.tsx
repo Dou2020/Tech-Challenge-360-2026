@@ -1,7 +1,9 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { authApi } from '../services/api/auth';
-import type { EstadoSesion, Usuario } from '../types/auth';
+import { carritoApi } from '../services/api/carrito';
+import type { EstadoSesion, RespuestaLogin, Usuario } from '../types/auth';
+import { guestCart } from '../utils/guestCart';
 import { AuthContext, type ContextoAuth } from './authContext';
 import { tokenStore } from './tokenStore';
 
@@ -43,25 +45,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [terminarSesion]);
 
-  const iniciarSesion = useCallback(async (correo: string, contrasena: string) => {
-    const respuesta = await authApi.login(correo, contrasena);
-    tokenStore.set(respuesta.accessToken);
-    setUsuario(respuesta.usuario);
-    setEstado('autenticado');
-    return respuesta.usuario;
-  }, []);
+  // Tras autenticarse: guarda el token, publica al usuario y fusiona el carrito de invitado.
+  const abrirSesion = useCallback(
+    async (respuesta: RespuestaLogin) => {
+      tokenStore.set(respuesta.accessToken);
+      setUsuario(respuesta.usuario);
+      setEstado('autenticado');
+
+      const tokenInvitado = guestCart.obtener();
+      if (tokenInvitado && respuesta.usuario.rol === 'Cliente') {
+        try {
+          await carritoApi.fusionar(tokenInvitado);
+          guestCart.borrar();
+        } catch {
+          // Si la fusión falla se conserva el token para no perder el carrito de invitado.
+        }
+        void queryClient.invalidateQueries({ queryKey: ['carrito'] });
+      }
+      return respuesta.usuario;
+    },
+    [queryClient],
+  );
+
+  const iniciarSesion = useCallback(
+    async (correo: string, contrasena: string) =>
+      abrirSesion(await authApi.login(correo, contrasena)),
+    [abrirSesion],
+  );
+
+  const actualizarUsuario = useCallback(
+    (cambios: Partial<Pick<Usuario, 'nombre' | 'apellido'>>) =>
+      setUsuario((actual) => (actual ? { ...actual, ...cambios } : actual)),
+    [],
+  );
 
   const cerrarSesion = useCallback(async () => {
     try {
       await authApi.logout();
+    } catch {
+      // Cierre de mejor esfuerzo: si el servidor no responde, la sesión local se limpia igual.
     } finally {
       terminarSesion();
     }
   }, [terminarSesion]);
 
   const valor = useMemo<ContextoAuth>(
-    () => ({ usuario, estado, iniciarSesion, cerrarSesion }),
-    [usuario, estado, iniciarSesion, cerrarSesion],
+    () => ({ usuario, estado, iniciarSesion, actualizarUsuario, cerrarSesion }),
+    [usuario, estado, iniciarSesion, actualizarUsuario, cerrarSesion],
   );
 
   return <AuthContext value={valor}>{children}</AuthContext>;

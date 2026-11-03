@@ -39,6 +39,18 @@ describe('request', () => {
     expect(init?.credentials).toBe('include');
   });
 
+  it('con FormData lo envía sin cambios y sin Content-Type (lo fija el navegador)', async () => {
+    fetchFalso.mockResolvedValue(json(201, { ok: true }));
+    const formulario = new FormData();
+    formulario.append('orden', '0');
+
+    await request('/productos/1/imagenes/archivo', { method: 'POST', body: formulario });
+
+    const [, init] = fetchFalso.mock.calls[0]!;
+    expect(init?.body).toBe(formulario);
+    expect(new Headers(init?.headers).has('Content-Type')).toBe(false);
+  });
+
   it('convierte la respuesta de error del backend en ApiError', async () => {
     fetchFalso.mockResolvedValue(
       json(409, {
@@ -130,5 +142,103 @@ describe('request', () => {
     fetchFalso.mockRejectedValue(new TypeError('Failed to fetch'));
 
     await expect(request('/health')).rejects.toMatchObject({ status: 0, code: 'SIN_CONEXION' });
+  });
+
+  it('error sin cuerpo del backend → ApiError ERROR_HTTP con el status', async () => {
+    // Arrange
+    fetchFalso.mockResolvedValue(new Response('<html>Bad gateway</html>', { status: 502 }));
+
+    // Act & Assert
+    await expect(request('/pedidos')).rejects.toMatchObject({
+      status: 502,
+      code: 'ERROR_HTTP',
+      message: 'La solicitud falló (HTTP 502).',
+    });
+  });
+
+  it('respuesta 204 → devuelve undefined', async () => {
+    // Arrange
+    fetchFalso.mockResolvedValue(new Response(null, { status: 204 }));
+
+    // Act
+    const resultado = await request<void>('/direcciones/5', { method: 'DELETE' });
+
+    // Assert
+    expect(resultado).toBeUndefined();
+  });
+
+  it('body y headers propios → serializa el JSON y conserva X-Cart-Token e Idempotency-Key', async () => {
+    // Arrange
+    fetchFalso.mockResolvedValue(json(200, {}));
+
+    // Act
+    await request('/carrito/items', {
+      method: 'POST',
+      body: { idVariante: 41, cantidad: 2 },
+      headers: { 'X-Cart-Token': 'tok-1', 'Idempotency-Key': 'clave-1' },
+    });
+
+    // Assert
+    const [, init] = fetchFalso.mock.calls[0]!;
+    const headers = new Headers(init?.headers);
+    expect(init?.body).toBe(JSON.stringify({ idVariante: 41, cantidad: 2 }));
+    expect(headers.get('Content-Type')).toBe('application/json');
+    expect(headers.get('X-Cart-Token')).toBe('tok-1');
+    expect(headers.get('Idempotency-Key')).toBe('clave-1');
+  });
+
+  it('sin token en memoria → no envía Authorization', async () => {
+    // Arrange
+    fetchFalso.mockResolvedValue(json(200, {}));
+
+    // Act
+    await request('/catalogo/categorias');
+
+    // Assert
+    const [, init] = fetchFalso.mock.calls[0]!;
+    expect(new Headers(init?.headers).has('Authorization')).toBe(false);
+  });
+
+  it('el refresh falla por red → avisa que la sesión expiró y lanza el 401', async () => {
+    // Arrange
+    tokenStore.set('vencido');
+    const alExpirar = vi.fn();
+    const desuscribir = tokenStore.onSesionExpirada(alExpirar);
+    fetchFalso.mockImplementation(async (url) => {
+      if (String(url).endsWith('/auth/refresh')) throw new TypeError('Failed to fetch');
+      return json(401, errorBackend('TOKEN_EXPIRADO', 'El token expiró.'));
+    });
+
+    // Act & Assert
+    await expect(request('/pedidos')).rejects.toMatchObject({ status: 401 });
+    expect(alExpirar).toHaveBeenCalledOnce();
+    desuscribir();
+  });
+
+  it('tras un refresh fallido → la siguiente renovación vuelve a intentarse', async () => {
+    // Arrange
+    tokenStore.set('vencido');
+    let intentos = 0;
+    fetchFalso.mockImplementation(async (url) => {
+      if (String(url).endsWith('/auth/refresh')) {
+        intentos += 1;
+        return intentos === 1
+          ? json(401, errorBackend('REFRESH_INVALIDO', 'Sesión inválida.'))
+          : json(200, { accessToken: 'nuevo', expiraEn: 900 });
+      }
+      return new Headers(fetchFalso.mock.calls.at(-1)?.[1]?.headers).get('Authorization') ===
+        'Bearer nuevo'
+        ? json(200, { ok: true })
+        : json(401, errorBackend('TOKEN_EXPIRADO', 'El token expiró.'));
+    });
+    await expect(request('/pedidos')).rejects.toMatchObject({ status: 401 });
+    tokenStore.set('vencido');
+
+    // Act
+    const resultado = await request('/pedidos');
+
+    // Assert
+    expect(intentos).toBe(2);
+    expect(resultado).toEqual({ ok: true });
   });
 });

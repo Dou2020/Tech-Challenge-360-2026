@@ -85,7 +85,9 @@ function ejecutar(ruta: string, opciones: Omit<OpcionesRequest, 'sinRenovar' | '
   const { body, headers: headersIniciales, ...resto } = opciones;
   const headers = new Headers(headersIniciales);
   headers.set('Accept', 'application/json');
-  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  const esFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  // Con FormData el navegador fija el Content-Type (multipart) con su boundary.
+  if (body !== undefined && !esFormData) headers.set('Content-Type', 'application/json');
   const token = tokenStore.get();
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
@@ -93,7 +95,7 @@ function ejecutar(ruta: string, opciones: Omit<OpcionesRequest, 'sinRenovar' | '
     ...resto,
     headers,
     credentials: 'include',
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : esFormData ? (body as FormData) : JSON.stringify(body),
   });
 }
 

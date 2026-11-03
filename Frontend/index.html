@@ -4,7 +4,26 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#fafafa" />
     <title>ShopCart</title>
+    <script>
+      // Aplica el tema antes de pintar para que no se vea un destello claro.
+      // La clave, los valores y los colores son los de src/utils/tema.ts.
+      (function () {
+        try {
+          var preferencia = localStorage.getItem('shopcart:tema');
+          var oscuro =
+            preferencia === 'oscuro' ||
+            (preferencia !== 'claro' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', oscuro);
+          if (oscuro) {
+            document.querySelector('meta[name="theme-color"]').setAttribute('content', '#09090b');
+          }
+        } catch (e) {
+          // Sin almacenamiento ni matchMedia queda el tema claro.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

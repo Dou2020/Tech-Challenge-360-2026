@@ -1,6 +1,6 @@
 # ShopCart — Frontend
 
-Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Por ahora es solo el **esqueleto**: configuración, cliente HTTP, autenticación en memoria y la estructura de carpetas. Todavía no tiene vistas; la única ruta muestra el estado de `GET /api/health` para comprobar que la app llega al backend.
+Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Por ahora tiene la **vista de invitado de la tienda**: inicio, catálogo con filtros y paginación, detalle de producto con selección de variante y carrito (de invitado con `X-Cart-Token`, o del Cliente con su sesión), más las páginas 403, 404 y de error inesperado. Login, registro, cuenta del Cliente, checkout y consola se agregan en los siguientes pasos; hasta entonces sus rutas muestran la página 404.
 
 - API que consume (endpoints, roles y códigos de error): [Backend/API.md](../Backend/API.md); cómo levantar el backend: [Backend/README.md](../Backend/README.md#ejecutar-en-local).
 - Levantar todo el proyecto con Docker Compose, CI/despliegue y credenciales de prueba: [README principal](../README.md).
@@ -15,6 +15,7 @@ Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Por ahora es solo
    - [Con Docker Compose](#con-docker-compose)
    - [En desarrollo](#en-desarrollo)
 4. [Estructura](#estructura)
+5. [Tema y tokens de diseño](#tema-y-tokens-de-diseño)
 
 ---
 
@@ -39,6 +40,7 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `recharts` | 3.10 | Gráficas del dashboard |
 | `tailwindcss`, `@tailwindcss/vite` | 4.3 | Estilos |
 | `lucide-react` | 1.63 | Íconos |
+| `@fontsource-variable/inter` | 5.3 | Tipografía Inter variable, servida desde el propio sitio (sin CDN ni peticiones a terceros) |
 | `vite`, `@vitejs/plugin-react` | 8.3 / 6.1 | Servidor de desarrollo y build (desarrollo) |
 | `typescript`, `eslint` | 6.0 / 10.13 | Tipado y análisis estático (desarrollo) |
 | `jspdf`, `jspdf-autotable`, `exceljs` | 4.2 / 5.0 / 4.4 | Exportación de reportes a PDF y Excel (extra opcional); se cargan solo al exportar |
@@ -98,23 +100,32 @@ Una sola prueba: `npx vitest run src/services/http.test.ts` o `npx vitest run -t
 ```
 src/
 ├── main.tsx              QueryClientProvider + AuthProvider + RouterProvider
-├── router.tsx            rutas; hoy solo el marcador provisional con el estado de la API
+├── router.tsx            rutas: tienda (/, /catalogo, /productos/:id, /carrito), /403 y 404, páginas con lazy
 ├── queryClient.ts        no reintenta errores 4xx
-├── styles.css            Tailwind y color de marca (marca-50 … marca-800)
+├── styles.css            Tailwind, variante dark, color de marca (marca-50 … marca-950) y tokens semánticos
 ├── services/
 │   ├── http.ts           request(): Bearer en memoria, ApiError, renovación única compartida ante 401
-│   └── api/              una función por endpoint (sistema, auth)
-├── auth/                 tokenStore (token en memoria), AuthProvider, useAuth
-├── hooks/queries/        hooks de TanStack Query (vacío)
-├── config/               navegación por rol (vacío)
-├── types/                api (ApiErrorBody, Page<T>) y auth (Rol, Usuario)
-├── utils/format.ts       montos en GTQ y fechas en America/Guatemala
-├── components/           atoms, molecules, organisms (vacíos)
-├── templates/            layouts de tienda, consola y auth (vacío)
-├── pages/                páginas (vacío)
+│   └── api/              una función por endpoint (sistema, auth, catálogo, carrito)
+├── auth/                 tokenStore (token en memoria), AuthProvider (fusiona el carrito de invitado al iniciar sesión), useAuth
+├── hooks/                useServerTable, useSeleccionVariante, useTema y queries/ (carrito, categorías, productos)
+├── config/               navegación por rol y estados de pedido
+├── types/                api (ApiErrorBody, Page<T>), auth, catálogo y carrito
+├── utils/                formato GTQ/fechas, token del carrito de invitado, avisos, accesibilidad y clases de campos, chunks lazy, variantes, tema
+├── components/           atoms, molecules, organisms de la tienda
+├── templates/            StoreLayout
+├── pages/                tienda/ y errores/
 └── test/                 setup de Vitest y renderizar() con proveedores de prueba
 ```
 
-Las carpetas marcadas "(vacío)" solo tienen un `index.ts` barril con un comentario sobre lo que va ahí. Cada componente, layout, hook o módulo de configuración nuevo se reexporta desde el `index.ts` de su carpeta. La excepción es `pages/`: `router.tsx` carga las páginas con `lazy` desde su propio archivo y reexportarlas las metería en el bundle inicial.
+Cada componente, layout, hook o módulo de configuración nuevo se reexporta desde el `index.ts` de su carpeta. La excepción es `pages/`: `router.tsx` carga las páginas con `lazy` desde su propio archivo y reexportarlas las metería en el bundle inicial.
 
-Al cargar, `AuthProvider` intenta restaurar la sesión con `POST /api/auth/refresh`. Mientras el backend no implemente la autenticación, ese endpoint responde 404 y la app sigue como anónima.
+Al cargar, `AuthProvider` intenta restaurar la sesión con `POST /api/auth/refresh`; sin cookie de refresh, la app sigue como invitado.
+
+## Tema y tokens de diseño
+
+Estilo minimal con tipografía Inter, neutros zinc y el verde azulado de la marca. Hay tema claro, oscuro y "sistema" (sigue a `prefers-color-scheme`):
+
+- **Tokens semánticos.** Los componentes no usan colores directos de la paleta (`bg-white`, `text-slate-600`…) sino tokens de `styles.css`: `fondo`, `superficie`, `superficie-suave`, `borde`, `borde-fuerte`, `texto`, `texto-suave`, `texto-tenue`, `primario` (+ `primario-hover`, `sobre-primario`), `acento`, `acento-suave` y los de estado `exito`, `peligro`, `aviso` e `info` (cada uno con `-suave`, `-borde` y `-texto`). Se usan como cualquier color de Tailwind: `bg-superficie`, `text-texto-suave`, `ring-borde`. El modo oscuro solo redefine sus variables bajo `.dark`.
+- **Contraste.** `primario` con `sobre-primario` y los textos `texto-suave`/`texto-tenue` cumplen AA (4.5:1) sobre `superficie` y `fondo` en ambos temas.
+- **Utilidades.** `tarjeta` (contenedor con borde y sombra suave; el padding va en cada uso) y `tarjeta-interactiva` (además se eleva al pasar el cursor).
+- **Cómo se aplica.** El script de `index.html` pone la clase `dark` en `<html>` antes de pintar, para que no haya destello. Después la cambia `useTema` (`hooks/useTema.ts`), que guarda la preferencia en `localStorage` (`shopcart:tema`; "sistema" no guarda nada), sigue los cambios del sistema operativo y de otras pestañas. `ThemeToggle` es el selector y está en el pie de la tienda.
