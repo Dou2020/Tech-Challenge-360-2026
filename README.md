@@ -79,7 +79,8 @@ Requisito: Docker con Docker Compose v2 (`docker compose version`).
 ```bash
 cp .env.example .env          # ajusta contraseñas y JWT_ACCESS_SECRET
 docker compose up -d          # SQL Server + creación de la base
-docker compose logs -f db-init
+docker compose --profile app up -d --build  # backend + frontend
+docker compose logs -f db-init # ver que la base se creó correctamente
 ```
 
 `db-init` espera a que SQL Server esté listo, ejecuta `Database/scripts` en orden y termina. Cuando muestra *Base de datos ShopCart creada correctamente.*, la base está lista en `localhost:1433`.
