@@ -3,7 +3,9 @@
 #   cp .env.example .env
 #   docker compose up -d                          # SQL Server, Redis y creación de la base
 #   docker compose --profile app up -d --build    # además backend y frontend
-#   docker compose --profile app --profile tunel up -d   # además cloudflared (publica el frontend)
+#
+# En el servidor, el frontend se publica con un túnel de Cloudflare que corre en el host como
+# servicio de systemd, fuera de compose (configuración de referencia en .cloudflared/).
 #
 # Ver la sección "Inicializar y ejecutar el proyecto" del README.
 
@@ -154,20 +156,6 @@ services:
         condition: service_healthy
     ports:
       - "${PUERTOS_HOST:-127.0.0.1}:${FRONTEND_PORT:-8080}:80"
-
-  # Publica el frontend (nginx, que ya hace proxy de /api) en internet con un túnel de Cloudflare.
-  # Crea el túnel en Cloudflare Zero Trust, apunta su hostname público a http://frontend:80 y
-  # pon el token en TUNNEL_TOKEN (.env). Pon la misma URL pública en APP_URL_PUBLICA y CORS_ORIGIN.
-  cloudflared:
-    profiles: ["tunel"]
-    image: cloudflare/cloudflared:2026.10.0
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
-    depends_on:
-      frontend:
-        condition: service_started
-    restart: unless-stopped
 
 volumes:
   sqlserver-data:

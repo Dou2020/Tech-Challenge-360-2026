@@ -5,7 +5,8 @@
 # - Push a main (o ejecución manual sobre main): si todo pasa, despliega con docker compose en el
 #   servidor a través de un runner self-hosted con la etiqueta "shopcart".
 #
-# La guía para preparar el servidor, el runner y el túnel de Cloudflare está en el README.
+# El despliegue está descrito en el README ("Integración y despliegue continuos"). El túnel de
+# Cloudflare no forma parte de compose: corre en el host con systemd (referencia en .cloudflared/).
 
 name: CI y despliegue
 

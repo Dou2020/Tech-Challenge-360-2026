@@ -3,7 +3,7 @@ import { claves } from '../../shared/cache/claves.js';
 import { configuracionRepository } from './configuracion.repository.js';
 import type { FilaConfiguracion, Parametro } from './configuracion.types.js';
 
-/** Vida de la caché shopcart:configuracion (README → Redis: 1 h). */
+/** Vida de la caché shopcart:configuracion (Backend/README.md → Redis: 1 h). */
 const TTL_CACHE_CONFIGURACION_SEG = 3600;
 
 function aParametro(fila: FilaConfiguracion): Parametro {

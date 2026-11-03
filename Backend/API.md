@@ -841,7 +841,7 @@ Antes del ajuste la variante tenía 9 unidades físicas y 2 reservadas vigentes.
 
 Los SPs señalan errores de negocio con `THROW <número>, '<mensaje>', 1`. `sqlErrorMapper` traduce el número al código y al status HTTP. Los errores que no son de negocio (ej. violación de `UNIQUE`, 2627/2601) también se traducen; cualquier otro error devuelve 500 sin exponer detalles.
 
-Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan antes de escribir y responden con su código de negocio (por ejemplo, la dirección de otro cliente es 404 `NO_ENCONTRADO`), así que un 547 significa que un SP omitió una validación: responde 500 y queda en el log con el `requestId`. Las restricciones de la base son la última barrera (ver "Reglas de integridad en la base" en el README).
+Una violación de FK o `CHECK` (547) no se traduce a propósito. Los SPs validan antes de escribir y responden con su código de negocio (por ejemplo, la dirección de otro cliente es 404 `NO_ENCONTRADO`), así que un 547 significa que un SP omitió una validación: responde 500 y queda en el log con el `requestId`. Las restricciones de la base son la última barrera (ver [Reglas de integridad en la base](../Database/README.md#reglas-de-integridad-en-la-base) y [Validación en el SP y en la base](../Database/README.md#validación-en-el-sp-y-en-la-base)).
 
 | Código | HTTP | THROW | Cuándo |
 | :--- | :---: | :---: | :--- |
