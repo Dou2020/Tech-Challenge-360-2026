@@ -1,6 +1,7 @@
 export { Badge } from './Badge';
 export { Button } from './Button';
 export { Field } from './Field';
+export { InlineAlert } from './InlineAlert';
 export { Input } from './Input';
 export { Logo } from './Logo';
 export { Money } from './Money';

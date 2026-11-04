@@ -1,6 +1,13 @@
 # ShopCart — Frontend
 
-Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Por ahora tiene la **vista de invitado de la tienda**: inicio, catálogo con filtros y paginación, detalle de producto con selección de variante y carrito (de invitado con `X-Cart-Token`, o del Cliente con su sesión), más las páginas 403, 404 y de error inesperado. Login, registro, cuenta del Cliente, checkout y consola se agregan en los siguientes pasos; hasta entonces sus rutas muestran la página 404.
+Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Por ahora tiene la **tienda** y las **vistas del Cliente**:
+
+- Tienda: inicio, catálogo con filtros y paginación, detalle de producto con selección de variante y carrito (de invitado con `X-Cart-Token`, o del Cliente con su sesión).
+- Autenticación: login, registro sin contraseña, recuperar contraseña y crear/restablecer contraseña desde el enlace del correo.
+- Cliente (rutas protegidas por rol): checkout con reserva de 15 min, `Idempotency-Key` y tarjetas guardadas, pedido confirmado, Mis pedidos con detalle y cancelación, Mis direcciones, Mis tarjetas y Mi perfil.
+- Páginas 403, 404 y de error inesperado.
+
+La consola de Operador y Administrador se agrega en el siguiente paso; hasta entonces `/consola` muestra la página 404.
 
 - API que consume (endpoints, roles y códigos de error): [Backend/API.md](../Backend/API.md); cómo levantar el backend: [Backend/README.md](../Backend/README.md#ejecutar-en-local).
 - Levantar todo el proyecto con Docker Compose, CI/despliegue y credenciales de prueba: [README principal](../README.md).
@@ -100,20 +107,27 @@ Una sola prueba: `npx vitest run src/services/http.test.ts` o `npx vitest run -t
 ```
 src/
 ├── main.tsx              QueryClientProvider + AuthProvider + RouterProvider
-├── router.tsx            rutas: tienda (/, /catalogo, /productos/:id, /carrito), /403 y 404, páginas con lazy
+├── router.tsx            rutas con lazy: tienda (/, /catalogo, /productos/:id, /carrito), auth (/login, /registro,
+│                         /recuperar-contrasena, /crear-contrasena, /restablecer-contrasena), Cliente (/checkout,
+│                         /pedido-confirmado/:id, /cuenta/*), /403 y 404
 ├── queryClient.ts        no reintenta errores 4xx
 ├── styles.css            Tailwind, variante dark, color de marca (marca-50 … marca-950) y tokens semánticos
 ├── services/
 │   ├── http.ts           request(): Bearer en memoria, ApiError, renovación única compartida ante 401
-│   └── api/              una función por endpoint (sistema, auth, catálogo, carrito)
-├── auth/                 tokenStore (token en memoria), AuthProvider (fusiona el carrito de invitado al iniciar sesión), useAuth
-├── hooks/                useServerTable, useSeleccionVariante, useTema y queries/ (carrito, categorías, productos)
-├── config/               navegación por rol y estados de pedido
-├── types/                api (ApiErrorBody, Page<T>), auth, catálogo y carrito
-├── utils/                formato GTQ/fechas, token del carrito de invitado, avisos, accesibilidad y clases de campos, chunks lazy, variantes, tema
-├── components/           atoms, molecules, organisms de la tienda
-├── templates/            StoreLayout
-├── pages/                tienda/ y errores/
+│   └── api/              una función por endpoint (sistema, auth, catálogo, carrito, checkout, pedidos, direcciones, perfil, tarjetas)
+├── auth/                 tokenStore (token en memoria), AuthProvider (fusiona el carrito de invitado al iniciar sesión), useAuth,
+│                         ProtectedRoute (sin sesión → /login?redirect=…, rol no permitido → /403)
+├── hooks/                useServerTable, useSeleccionVariante, useTema, useCuentaRegresiva y queries/ (carrito, categorías,
+│                         productos, checkout, métodos de envío, pedidos, direcciones, perfil, tarjetas)
+├── config/               navegación por rol, estados de pedido y etiquetas de tarjetas
+├── types/                api (ApiErrorBody, Page<T>), auth, catálogo, carrito, checkout, pedidos, direcciones, perfil y tarjetas
+├── utils/                formato GTQ/fechas, token del carrito de invitado, avisos, accesibilidad y clases de campos, chunks lazy,
+│                         variantes, tema, Idempotency-Key del checkout, errores de la API → campos del formulario,
+│                         política de contraseñas, datos de pago y departamentos/municipios
+├── data/                 guatemala-locations.json (22 departamentos, 340 municipios)
+├── components/           atoms, molecules, organisms de la tienda y de la cuenta del Cliente
+├── templates/            StoreLayout y AuthLayout
+├── pages/                tienda/, auth/, cuenta/ y errores/
 └── test/                 setup de Vitest y renderizar() con proveedores de prueba
 ```
 

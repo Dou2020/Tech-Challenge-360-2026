@@ -1,14 +1,12 @@
-# CI de backend y frontend y despliegue en el servidor propio.
+# CI de backend y frontend.
 #
-# - Pull requests y pushes: typecheck, lint, formato y pruebas (las de integración levantan
-#   SQL Server y Redis con testcontainers en el runner de GitHub).
-# - Push a main (o ejecución manual sobre main): si todo pasa, despliega con docker compose en el
-#   servidor a través de un runner self-hosted con la etiqueta "shopcart".
+# Pull requests y pushes a main: typecheck, lint, formato y pruebas (las de integración levantan
+# SQL Server y Redis con testcontainers en el runner de GitHub).
 #
-# El despliegue está descrito en el README ("Integración y despliegue continuos"). El túnel de
-# Cloudflare no forma parte de compose: corre en el host con systemd (referencia en .cloudflared/).
+# Por ahora no hay despliegue automático: no se usa el runner self-hosted del servidor. El
+# despliegue manual con docker compose está descrito en el README.
 
-name: CI y despliegue
+name: CI
 
 on:
   push:
@@ -68,60 +66,3 @@ jobs:
       - run: npx prettier --check .
       - run: npm test
       - run: npm run build
-
-  despliegue:
-    name: Despliegue
-    needs: [backend, frontend]
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64, shopcart]
-    environment: produccion
-    timeout-minutes: 30
-    concurrency:
-      group: despliegue
-      cancel-in-progress: false
-    env:
-      # El .env del servidor vive fuera del repo (secretos reales, APP_URL_PUBLICA, FRONTEND_PORT…).
-      ENV_FILE: ${{ vars.SHOPCART_ENV_FILE || '/opt/shopcart/.env' }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Revisar el .env del servidor
-        run: |
-          if [ ! -r "$ENV_FILE" ]; then
-            echo "::error::No existe o no se puede leer $ENV_FILE. Créalo a partir de .env.example (ver README)."
-            exit 1
-          fi
-          if grep -Eiq '^[[:space:]]*DB_RESET[[:space:]]*=[[:space:]]*["'\'']?true' "$ENV_FILE"; then
-            echo "::error::$ENV_FILE tiene DB_RESET=true: el despliegue borraría la base. Ponlo en false."
-            exit 1
-          fi
-
-      - name: Validar la configuración de compose
-        run: docker compose --env-file "$ENV_FILE" --profile app config -q
-
-      - name: Construir y levantar
-        run: docker compose --env-file "$ENV_FILE" --profile app up -d --build --remove-orphans
-
-      - name: Esperar a que la API responda a través de nginx
-        run: |
-          destino="$(docker compose --env-file "$ENV_FILE" --profile app port frontend 80)"
-          url="http://${destino/0.0.0.0/127.0.0.1}/api/health"
-          for _ in $(seq 1 36); do
-            if curl -fsS "$url" > /dev/null; then
-              echo "API lista en $url"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::error::$url no respondió en 3 minutos."
-          exit 1
-
-      - name: Estado y logs si algo falló
-        if: failure()
-        run: |
-          docker compose --env-file "$ENV_FILE" --profile app ps -a
-          docker compose --env-file "$ENV_FILE" --profile app logs --tail 200 backend frontend db-init
-
-      - name: Limpiar imágenes viejas
-        if: success()
-        run: docker image prune -f

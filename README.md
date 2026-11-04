@@ -116,12 +116,13 @@ Comandos útiles:
 
 `docker compose up` no borra la base en cada arranque: `db-init` la crea solo si no existe. En equipos con Apple Silicon, la imagen de SQL Server corre emulada (`platform: linux/amd64`).
 
-#### Integración y despliegue continuos
+#### Integración continua y despliegue
 
-El workflow `.github/workflows/ci-despliegue.yml` se ejecuta en cada pull request y en cada push a `main`:
+El workflow `.github/workflows/ci-despliegue.yml` se ejecuta en cada pull request y en cada push a `main`, en los runners de GitHub:
 - **Backend:** typecheck, lint, formato, pruebas unitarias y pruebas de integración (testcontainers levanta SQL Server y Redis, y además corre `Database/pruebas`).
 - **Frontend:** typecheck, lint, formato, pruebas y build.
-- **Despliegue:** si todo pasa en `main`, el job `despliegue` corre en un runner self-hosted del servidor (etiqueta `shopcart`). Ejecuta `docker compose --profile app up -d --build` con el `.env` del servidor (`/opt/shopcart/.env`, fuera del repo) y espera a que `/api/health` responda a través de nginx.
+
+Por ahora no hay despliegue automático. En el servidor se despliega a mano desde esta carpeta con `docker compose --env-file /opt/shopcart/.env --profile app up -d --build` (el `.env` del servidor vive fuera del repo) y se comprueba que `/api/health` responda a través de nginx.
 
 El sitio se publica con un túnel de Cloudflare gestionado en el host (`cloudflared` como servicio de systemd), fuera de docker compose. Las copias de referencia de su configuración están en `.cloudflared/` y las credenciales del túnel nunca se versionan. En el `.env` del servidor, `APP_URL_PUBLICA` y `CORS_ORIGIN` llevan la URL pública del túnel, y `FRONTEND_PORT` y `BACKEND_PORT` deben coincidir con los puertos de `.cloudflared/shopcart.yml`. El despliegue no migra una base existente: un cambio de tablas requiere `DB_RESET=true … run --rm db-init` manual, que borra los datos.
 
