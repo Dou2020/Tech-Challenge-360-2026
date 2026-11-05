@@ -42,6 +42,7 @@ export {
   usePedido,
   usePedidos,
   useRegistrarDevolucion,
+  useTotalesPedidos,
 } from './usePedidos';
 export { useProducto } from './useProducto';
 export {

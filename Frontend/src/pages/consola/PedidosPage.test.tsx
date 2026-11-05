@@ -202,6 +202,55 @@ describe('PedidosPage (consola)', () => {
     expect(router.state.location.search).toBe('?idCliente=6');
   });
 
+  it('acceso rápido → filtra por su estado, vuelve a la página 1 y queda marcado', async () => {
+    // Arrange
+    api.listar.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    const { router } = renderizar(<PedidosPage />, {
+      ruta: '/consola/pedidos?estado=PAGADO&page=3',
+    });
+    const grupo = screen.getByRole('group', { name: 'Filtros rápidos' });
+    expect(within(grupo).getByRole('button', { name: 'Por preparar' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    // Act
+    await userEvent.click(within(grupo).getByRole('button', { name: 'Por despachar' }));
+
+    // Assert
+    expect(router.state.location.search).toBe('?estado=EN_PREPARACION');
+    expect(within(grupo).getByRole('button', { name: 'Por despachar' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(grupo).getByRole('button', { name: 'Por preparar' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(api.listar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ estado: 'EN_PREPARACION', page: 1 }),
+    );
+  });
+
+  it('acceso rápido Todos → quita el filtro de estado', async () => {
+    // Arrange
+    api.listar.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    const { router } = renderizar(<PedidosPage />, {
+      ruta: '/consola/pedidos?estado=DESPACHADO',
+    });
+    const grupo = screen.getByRole('group', { name: 'Filtros rápidos' });
+
+    // Act
+    await userEvent.click(within(grupo).getByRole('button', { name: 'Todos' }));
+
+    // Assert
+    expect(router.state.location.search).toBe('');
+    expect(within(grupo).getByRole('button', { name: 'Todos' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
   it('el total del backend se muestra tal cual', async () => {
     // Arrange: 298.00 − 0 + 25.00 = 323.00; el backend dice 310.00.
     api.listar.mockResolvedValue({

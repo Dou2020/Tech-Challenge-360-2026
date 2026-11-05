@@ -24,3 +24,13 @@ export const estadosPedido: Record<EstadoPedido, { etiqueta: string; tono: TonoB
 export function infoEstadoPedido(codigo: string): { etiqueta: string; tono: TonoBadge } {
   return estadosPedido[codigo as EstadoPedido] ?? { etiqueta: codigo, tono: 'gris' };
 }
+
+/**
+ * Cola de trabajo del personal: los estados que esperan una acción, en el orden en que se atienden.
+ * La usan el panel de operación y los accesos rápidos de la lista de pedidos.
+ */
+export const colaOperacion: { estado: EstadoPedido; etiqueta: string }[] = [
+  { estado: 'PAGADO', etiqueta: 'Por preparar' },
+  { estado: 'EN_PREPARACION', etiqueta: 'Por despachar' },
+  { estado: 'DESPACHADO', etiqueta: 'Por entregar' },
+];

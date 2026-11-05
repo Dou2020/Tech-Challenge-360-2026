@@ -16,6 +16,7 @@ const administrador: Usuario = {
 const destinos = [
   { path: '/consola', element: <p>Consola</p> },
   { path: '/consola/pedidos', element: <p>Pedidos</p> },
+  { path: '/consola/operacion', element: <p>Operación</p> },
 ];
 
 describe('LoginPage', () => {
@@ -42,6 +43,22 @@ describe('LoginPage', () => {
 
     expect(await screen.findByText('Consola')).toBeInTheDocument();
     expect(auth.iniciarSesion).toHaveBeenCalledWith('admin@shopcart.gt', 'Admin#2026');
+  });
+
+  it('Operador → entra a su panel de operación', async () => {
+    // Arrange
+    const operador: Usuario = { ...administrador, idUsuario: 2, rol: 'Operador' };
+    const auth = crearAuth({ iniciarSesion: vi.fn().mockResolvedValue(operador) });
+    const { router } = renderizar(<LoginPage />, { auth, ruta: '/login', rutas: destinos });
+    await userEvent.type(screen.getByLabelText('Correo'), 'operador@shopcart.gt');
+    await userEvent.type(screen.getByLabelText('Contraseña'), 'Operador#2026');
+
+    // Act
+    await userEvent.click(screen.getByRole('button', { name: 'Entrar' }));
+
+    // Assert
+    expect(await screen.findByText('Operación')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/consola/operacion');
   });
 
   it('vuelve a la ruta indicada en redirect', async () => {

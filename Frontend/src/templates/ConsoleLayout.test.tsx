@@ -29,6 +29,7 @@ describe('ConsoleLayout', () => {
     const menu = screen.getAllByRole('navigation', { name: 'Menú de la consola' })[0]!;
     for (const titulo of [
       'Dashboard',
+      'Operación',
       'Pedidos',
       'Inventario',
       'Productos',
@@ -40,7 +41,7 @@ describe('ConsoleLayout', () => {
     expect(screen.queryByRole('link', { name: /Carrito/ })).not.toBeInTheDocument();
   });
 
-  it('Operador → el menú solo trae Pedidos e Inventario', () => {
+  it('Operador → el menú solo trae Operación, Pedidos e Inventario', () => {
     // Act
     montar(crearOperador());
 
@@ -50,7 +51,7 @@ describe('ConsoleLayout', () => {
       within(menu)
         .getAllByRole('link')
         .map((l) => l.textContent),
-    ).toEqual(['Pedidos', 'Inventario']);
+    ).toEqual(['Operación', 'Pedidos', 'Inventario']);
   });
 
   it('muestra nombre y rol del usuario', () => {
@@ -59,6 +60,20 @@ describe('ConsoleLayout', () => {
 
     // Assert
     expect(screen.getByText('Omar · Operador')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['Operador', crearOperador],
+    ['Administrador', crearAdmin],
+  ])('%s → el avatar enlaza a Mi perfil de la consola', (_rol, crear) => {
+    // Act
+    montar(crear());
+
+    // Assert
+    expect(screen.getByRole('link', { name: 'Mi perfil' })).toHaveAttribute(
+      'href',
+      '/consola/perfil',
+    );
   });
 
   it('el enlace de la sección actual queda marcado como activo', () => {

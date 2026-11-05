@@ -81,7 +81,16 @@ export function ConsoleLayout() {
             {menuAbierto ? <X className="size-5" /> : <Menu className="size-5" />}
           </button>
           <ThemeToggle className="ml-auto" />
-          <div className="flex items-center gap-2">
+          <NavLink
+            to="/consola/perfil"
+            aria-label="Mi perfil"
+            title="Mi perfil"
+            className={({ isActive }) =>
+              `flex items-center gap-2 rounded-lg px-2 py-1 transition-colors hover:bg-superficie-suave focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primario ${
+                isActive ? 'bg-acento-suave' : ''
+              }`
+            }
+          >
             <span
               aria-hidden
               className="flex size-8 items-center justify-center rounded-full bg-acento-suave text-xs font-semibold text-acento ring-1 ring-acento/20"
@@ -91,7 +100,7 @@ export function ConsoleLayout() {
             <span className="hidden text-sm text-texto-suave sm:inline">
               {usuario.nombre} · {usuario.rol}
             </span>
-          </div>
+          </NavLink>
           <Button variante="ghost" onClick={() => void cerrarSesion()}>
             <LogOut className="size-4" aria-hidden />
             Salir

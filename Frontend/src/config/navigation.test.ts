@@ -11,6 +11,7 @@ describe('navigation', () => {
     expect(rutas).toEqual(
       expect.arrayContaining([
         '/consola',
+        '/consola/operacion',
         '/consola/productos',
         '/consola/reportes',
         '/consola/cupones',
@@ -21,12 +22,12 @@ describe('navigation', () => {
     );
   });
 
-  it('Operador → solo pedidos e inventario', () => {
+  it('Operador → solo operación, pedidos e inventario', () => {
     // Act
     const rutas = menuPorRol('Operador').map((i) => i.ruta);
 
     // Assert
-    expect(rutas).toEqual(['/consola/pedidos', '/consola/inventario']);
+    expect(rutas).toEqual(['/consola/operacion', '/consola/pedidos', '/consola/inventario']);
   });
 
   it('Cliente → ninguna sección de la consola', () => {
@@ -36,7 +37,7 @@ describe('navigation', () => {
 
   it.each([
     ['Administrador', '/consola'],
-    ['Operador', '/consola/pedidos'],
+    ['Operador', '/consola/operacion'],
     ['Cliente', '/'],
   ] as const)('inicioPorRol(%s) → %s', (rol, ruta) => {
     // Act & Assert

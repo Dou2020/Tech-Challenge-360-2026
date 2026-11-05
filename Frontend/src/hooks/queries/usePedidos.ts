@@ -1,4 +1,10 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { pedidosApi } from '../../services/api/pedidos';
 import type { DatosDevolucion } from '../../types/pedidos';
 
@@ -11,6 +17,30 @@ export function usePedidos(params: Record<string, string | number | undefined>) 
     queryKey: [...CLAVE_PEDIDOS, 'lista', params],
     queryFn: () => pedidosApi.listar(params),
     placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * Total de pedidos en cada estado (una página de tamaño 1 por estado; solo se usa `total`).
+ * Comparte las claves de `usePedidos`, así que cualquier mutación de pedidos también los refresca.
+ */
+export function useTotalesPedidos(estados: readonly string[]) {
+  return useQueries({
+    queries: estados.map((estado) => {
+      const params = { estado, page: 1, pageSize: 1 };
+      return {
+        queryKey: [...CLAVE_PEDIDOS, 'lista', params],
+        queryFn: () => pedidosApi.listar(params),
+      };
+    }),
+    combine: (resultados) => ({
+      totales: resultados.map((r) => r.data?.total),
+      isPending: resultados.some((r) => r.isPending),
+      error: resultados.find((r) => r.isError)?.error ?? null,
+      refetch: () => {
+        for (const r of resultados) void r.refetch();
+      },
+    }),
   });
 }
 

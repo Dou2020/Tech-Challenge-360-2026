@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { Button, Input, Money, Select } from '../../components/atoms';
 import { OrderStatusBadge, PageHeading, SearchBox } from '../../components/molecules';
 import { DataTable, type Columna } from '../../components/organisms';
-import { estadosPedido } from '../../config';
+import { colaOperacion, estadosPedido } from '../../config';
 import { useEstadosPedido, usePedidos } from '../../hooks/queries';
 import { useServerTable } from '../../hooks/useServerTable';
 import type { PedidoResumen } from '../../types/pedidos';
@@ -76,6 +76,23 @@ export default function PedidosPage() {
         titulo="Pedidos"
         descripcion="Todos los pedidos de la tienda. Abre uno para avanzar su estado, cancelarlo o registrar una devolución."
       />
+
+      <div role="group" aria-label="Filtros rápidos" className="mb-3 flex flex-wrap gap-2">
+        {[{ estado: '', etiqueta: 'Todos' }, ...colaOperacion].map(({ estado, etiqueta }) => {
+          const activo = filtros.estado === estado;
+          return (
+            <Button
+              key={etiqueta}
+              variante={activo ? 'primary' : 'secondary'}
+              aria-pressed={activo}
+              className="min-h-8 rounded-full px-3 py-1 text-xs"
+              onClick={() => tabla.setFiltros({ estado })}
+            >
+              {etiqueta}
+            </Button>
+          );
+        })}
+      </div>
 
       <div className="tarjeta mb-4 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-6">
         <div className="lg:col-span-2">

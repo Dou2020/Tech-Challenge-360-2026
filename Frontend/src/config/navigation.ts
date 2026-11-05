@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Boxes,
   ChartColumn,
+  ClipboardList,
   LayoutDashboard,
   Package,
   ScrollText,
@@ -26,6 +27,7 @@ const ADMIN: Rol[] = ['Administrador'];
 /** Menú de la consola; coincide con la tabla "Rutas y acceso" del README. */
 export const menuConsola: ItemMenu[] = [
   { ruta: '/consola', titulo: 'Dashboard', icono: LayoutDashboard, roles: ADMIN },
+  { ruta: '/consola/operacion', titulo: 'Operación', icono: ClipboardList, roles: PERSONAL },
   { ruta: '/consola/pedidos', titulo: 'Pedidos', icono: ShoppingBag, roles: PERSONAL },
   { ruta: '/consola/inventario', titulo: 'Inventario', icono: Boxes, roles: PERSONAL },
   { ruta: '/consola/productos', titulo: 'Productos', icono: Package, roles: ADMIN },
@@ -44,6 +46,6 @@ export function menuPorRol(rol: Rol): ItemMenu[] {
 /** Pantalla inicial de cada rol después de iniciar sesión. */
 export function inicioPorRol(rol: Rol): string {
   if (rol === 'Administrador') return '/consola';
-  if (rol === 'Operador') return '/consola/pedidos';
+  if (rol === 'Operador') return '/consola/operacion';
   return '/';
 }

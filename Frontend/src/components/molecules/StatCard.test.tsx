@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import { StatCard } from './StatCard';
 
@@ -28,5 +29,27 @@ describe('StatCard', () => {
     // Assert
     expect(screen.getByText('12')).toBeInTheDocument();
     expect(screen.queryByText('Sin envío')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('con enlace → muestra el enlace bajo el valor', () => {
+    // Act
+    render(
+      <MemoryRouter>
+        <dl>
+          <StatCard
+            titulo="Por preparar"
+            valor={7}
+            enlace={{ to: '/consola/pedidos?estado=PAGADO', texto: 'Ver pedidos' }}
+          />
+        </dl>
+      </MemoryRouter>,
+    );
+
+    // Assert
+    expect(screen.getByRole('link', { name: 'Ver pedidos' })).toHaveAttribute(
+      'href',
+      '/consola/pedidos?estado=PAGADO',
+    );
   });
 });

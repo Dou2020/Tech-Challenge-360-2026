@@ -12,7 +12,9 @@ import {
 } from './services/api/administracion';
 import { carritoApi } from './services/api/carrito';
 import { catalogoApi } from './services/api/catalogo';
+import { inventarioApi } from './services/api/inventario';
 import { pedidosApi } from './services/api/pedidos';
+import { perfilApi } from './services/api/perfil';
 import { tarjetasApi } from './services/api/tarjetas';
 import { ApiError } from './services/http';
 import { crearCarrito } from './test/fixtures/carrito';
@@ -35,6 +37,8 @@ vi.mock('./services/api/administracion', () => ({
   bitacoraApi: { listar: vi.fn(), modulos: vi.fn() },
   configuracionApi: { listar: vi.fn() },
 }));
+vi.mock('./services/api/inventario', () => ({ inventarioApi: { existencias: vi.fn() } }));
+vi.mock('./services/api/perfil', () => ({ perfilApi: { obtener: vi.fn() } }));
 const catalogo = vi.mocked(catalogoApi);
 const carrito = vi.mocked(carritoApi);
 const pedidos = vi.mocked(pedidosApi);
@@ -207,6 +211,24 @@ describe('router: consola de Operador y Administrador', () => {
   beforeEach(() => {
     pedidos.listar.mockReset().mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
     pedidos.estados.mockReset().mockResolvedValue({ estados: [], transiciones: [] });
+    vi.mocked(inventarioApi.existencias)
+      .mockReset()
+      .mockResolvedValue({ items: [], page: 1, pageSize: 5, total: 0 });
+    vi.mocked(perfilApi.obtener)
+      .mockReset()
+      .mockImplementation(() =>
+        Promise.resolve({
+          idUsuario: 2,
+          correo: 'operador@shopcart.gt',
+          nombre: 'Omar',
+          apellido: 'Pérez',
+          telefono: null,
+          rol: 'Operador',
+          activo: true,
+          fechaCreacion: '2026-10-01T15:00:00Z',
+          contrasenaPendiente: false,
+        }),
+      );
   });
 
   it.each([
@@ -236,6 +258,8 @@ describe('router: consola de Operador y Administrador', () => {
     '/consola/pedidos',
     '/consola/pedidos/5',
     '/consola/inventario',
+    '/consola/operacion',
+    '/consola/perfil',
     '/consola/productos',
     '/consola/cupones',
     '/consola/usuarios',
@@ -252,6 +276,8 @@ describe('router: consola de Operador y Administrador', () => {
   it.each([
     '/consola/pedidos?estado=PAGADO',
     '/consola/inventario',
+    '/consola/operacion',
+    '/consola/perfil',
     '/consola',
     '/consola/cupones',
     '/consola/usuarios',
@@ -274,6 +300,34 @@ describe('router: consola de Operador y Administrador', () => {
     expect(await screen.findByRole('heading', { name: 'Pedidos' })).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/consola/pedidos');
     expect(pedidos.listar).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Operador', operador],
+    ['Administrador', admin],
+  ])('%s en /consola/operacion → entra al panel de operación', async (_rol, auth) => {
+    // Act
+    const router = navegar('/consola/operacion', auth());
+
+    // Assert
+    expect(await screen.findByRole('heading', { name: 'Operación', level: 1 })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/consola/operacion');
+    expect(await screen.findByText('Ninguna variante en bajo stock')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['Operador', operador],
+    ['Administrador', admin],
+  ])('%s en /consola/perfil → ve Mi perfil dentro de la consola', async (_rol, auth) => {
+    // Act
+    const router = navegar('/consola/perfil', auth());
+
+    // Assert
+    expect(await screen.findByRole('heading', { name: 'Mi perfil', level: 1 })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/consola/perfil');
+    expect(
+      screen.getAllByRole('navigation', { name: 'Menú de la consola' }).length,
+    ).toBeGreaterThan(0);
   });
 
   it.each([

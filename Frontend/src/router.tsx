@@ -115,7 +115,13 @@ export const rutas: RouteObject[] = [
               },
             ],
           },
-          // Pedidos e inventario: Operador y Administrador (los dos entran a la consola).
+          // Operación, pedidos, inventario y perfil: Operador y Administrador (los dos entran a la consola).
+          {
+            path: 'operacion',
+            lazy: pagina(() => import('./pages/consola/OperacionPage')),
+          },
+          // Mi perfil del personal: la misma página que /cuenta/perfil, dentro de la consola.
+          { path: 'perfil', lazy: pagina(() => import('./pages/cuenta/PerfilPage')) },
           { path: 'pedidos', lazy: pagina(() => import('./pages/consola/PedidosPage')) },
           {
             path: 'pedidos/:id',
