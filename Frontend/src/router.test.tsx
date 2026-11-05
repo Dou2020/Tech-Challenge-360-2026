@@ -4,8 +4,15 @@ import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthContext, type ContextoAuth } from './auth/authContext';
+import {
+  bitacoraApi,
+  configuracionApi,
+  cuponesApi,
+  usuariosApi,
+} from './services/api/administracion';
 import { carritoApi } from './services/api/carrito';
 import { catalogoApi } from './services/api/catalogo';
+import { pedidosApi } from './services/api/pedidos';
 import { tarjetasApi } from './services/api/tarjetas';
 import { ApiError } from './services/http';
 import { crearCarrito } from './test/fixtures/carrito';
@@ -19,8 +26,18 @@ vi.mock('./services/api/catalogo', () => ({
 }));
 vi.mock('./services/api/carrito', () => ({ carritoApi: { obtener: vi.fn() } }));
 vi.mock('./services/api/tarjetas', () => ({ tarjetasApi: { listar: vi.fn() } }));
+vi.mock('./services/api/pedidos', () => ({
+  pedidosApi: { listar: vi.fn(), estados: vi.fn() },
+}));
+vi.mock('./services/api/administracion', () => ({
+  cuponesApi: { listar: vi.fn() },
+  usuariosApi: { listar: vi.fn() },
+  bitacoraApi: { listar: vi.fn(), modulos: vi.fn() },
+  configuracionApi: { listar: vi.fn() },
+}));
 const catalogo = vi.mocked(catalogoApi);
 const carrito = vi.mocked(carritoApi);
+const pedidos = vi.mocked(pedidosApi);
 
 function navegar(ruta: string, auth: ContextoAuth = crearAuth()) {
   const router = createMemoryRouter(rutas, { initialEntries: [ruta] });
@@ -98,19 +115,16 @@ describe('router: tienda (vista de invitado)', () => {
     ).toBeInTheDocument();
   });
 
-  it.each(['/no-existe', '/consola'])(
-    '%s (aún sin vista) → NoEncontrado dentro de la tienda',
-    async (ruta) => {
-      // Act
-      navegar(ruta);
+  it('ruta inexistente → NoEncontrado dentro de la tienda', async () => {
+    // Act
+    navegar('/no-existe');
 
-      // Assert
-      expect(
-        await screen.findByRole('heading', { name: 'Página no encontrada' }),
-      ).toBeInTheDocument();
-      expect(screen.getByRole('navigation', { name: 'Principal' })).toBeInTheDocument();
-    },
-  );
+    // Assert
+    expect(
+      await screen.findByRole('heading', { name: 'Página no encontrada' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Principal' })).toBeInTheDocument();
+  });
 });
 
 const operador = () => crearAuth({ usuario: crearOperador(), estado: 'autenticado' });
@@ -186,5 +200,113 @@ describe('router: vistas del Cliente y de autenticación', () => {
 
     // Assert
     await waitFor(() => expect(router.state.location.pathname).toBe('/crear-contrasena'));
+  });
+});
+
+describe('router: consola de Operador y Administrador', () => {
+  beforeEach(() => {
+    pedidos.listar.mockReset().mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    pedidos.estados.mockReset().mockResolvedValue({ estados: [], transiciones: [] });
+  });
+
+  it.each([
+    '/consola',
+    '/consola/reportes',
+    '/consola/categorias',
+    '/consola/productos',
+    '/consola/productos/nuevo',
+    '/consola/productos/5',
+    '/consola/cupones',
+    '/consola/cupones/nuevo',
+    '/consola/cupones/3',
+    '/consola/usuarios',
+    '/consola/bitacora',
+    '/consola/configuracion',
+  ])('Operador en %s (solo Administrador) → redirige a /403', async (ruta) => {
+    // Act
+    const router = navegar(ruta, operador());
+
+    // Assert
+    await waitFor(() => expect(router.state.location.pathname).toBe('/403'));
+    expect(await screen.findByText('No tienes acceso a esta sección')).toBeInTheDocument();
+  });
+
+  it.each([
+    '/consola',
+    '/consola/pedidos',
+    '/consola/pedidos/5',
+    '/consola/inventario',
+    '/consola/productos',
+    '/consola/cupones',
+    '/consola/usuarios',
+    '/consola/bitacora',
+    '/consola/configuracion',
+  ])('Cliente en %s → redirige a /403', async (ruta) => {
+    // Act
+    const router = navegar(ruta, cliente());
+
+    // Assert
+    await waitFor(() => expect(router.state.location.pathname).toBe('/403'));
+  });
+
+  it.each([
+    '/consola/pedidos?estado=PAGADO',
+    '/consola/inventario',
+    '/consola',
+    '/consola/cupones',
+    '/consola/usuarios',
+    '/consola/bitacora',
+    '/consola/configuracion',
+  ])('sin sesión en %s → login con redirect a la ruta pedida', async (ruta) => {
+    // Act
+    const router = navegar(ruta);
+
+    // Assert
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(router.state.location.search).toBe(`?redirect=${encodeURIComponent(ruta)}`);
+  });
+
+  it('Operador en /consola/pedidos → entra y ve la lista de pedidos', async () => {
+    // Act
+    const router = navegar('/consola/pedidos', operador());
+
+    // Assert
+    expect(await screen.findByRole('heading', { name: 'Pedidos' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/consola/pedidos');
+    expect(pedidos.listar).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['/consola/cupones', 'Cupones'],
+    ['/consola/usuarios', 'Usuarios'],
+    ['/consola/bitacora', 'Bitácora'],
+    ['/consola/configuracion', 'Configuración'],
+  ])('Administrador en %s → entra a la página', async (ruta, titulo) => {
+    // Arrange
+    vi.mocked(cuponesApi.listar).mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    vi.mocked(usuariosApi.listar).mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    vi.mocked(bitacoraApi.listar).mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    vi.mocked(bitacoraApi.modulos).mockResolvedValue([]);
+    vi.mocked(configuracionApi.listar).mockResolvedValue([]);
+
+    // Act
+    const router = navegar(ruta, admin());
+
+    // Assert
+    expect(await screen.findByRole('heading', { name: titulo, level: 1 })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(ruta);
+  });
+
+  it('ruta desconocida dentro de la consola → NoEncontrado dentro del layout de la consola', async () => {
+    // Act
+    navegar('/consola/no-existe', admin());
+
+    // Assert
+    expect(
+      await screen.findByRole('heading', { name: 'Página no encontrada' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('navigation', { name: 'Menú de la consola' }).length,
+    ).toBeGreaterThan(0);
   });
 });

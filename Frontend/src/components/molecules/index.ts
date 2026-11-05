@@ -1,4 +1,5 @@
 export { ConfirmationDialog } from './ConfirmationDialog';
+export { DateRangeFilter } from './DateRangeFilter';
 export { EmptyState } from './EmptyState';
 export { ErrorState } from './ErrorState';
 export { Notice } from './Notice';
@@ -8,6 +9,8 @@ export { Pagination } from './Pagination';
 export { PantallaCarga } from './PantallaCarga';
 export { ProductCard } from './ProductCard';
 export { QuantityStepper } from './QuantityStepper';
+export { ReportSection } from './ReportSection';
 export { ReservationTimer } from './ReservationTimer';
 export { SearchBox } from './SearchBox';
+export { StatCard } from './StatCard';
 export { ThemeToggle } from './ThemeToggle';

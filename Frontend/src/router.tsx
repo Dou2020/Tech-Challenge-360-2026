@@ -3,7 +3,7 @@ import { createBrowserRouter, type RouteObject } from 'react-router';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { PantallaCarga } from './components/molecules';
 import ErrorInesperadoPage from './pages/errores/ErrorInesperadoPage';
-import { AuthLayout, StoreLayout } from './templates';
+import { AuthLayout, ConsoleLayout, StoreLayout } from './templates';
 
 /** Carga diferida: cada página se descarga al visitarla por primera vez. */
 const pagina = (importar: () => Promise<{ default: ComponentType }>) => async () => ({
@@ -72,6 +72,62 @@ export const rutas: RouteObject[] = [
             path: 'restablecer-contrasena',
             lazy: pagina(() => import('./pages/auth/EstablecerContrasenaPage')),
           },
+        ],
+      },
+      {
+        path: 'consola',
+        element: (
+          <ProtectedRoute roles={['Operador', 'Administrador']}>
+            <ConsoleLayout />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // Dashboard, reportes, categorías y productos: solo Administrador.
+            element: <ProtectedRoute roles={['Administrador']} />,
+            children: [
+              { index: true, lazy: pagina(() => import('./pages/consola/DashboardPage')) },
+              { path: 'reportes', lazy: pagina(() => import('./pages/consola/ReportesPage')) },
+              { path: 'categorias', lazy: pagina(() => import('./pages/consola/CategoriasPage')) },
+              { path: 'productos', lazy: pagina(() => import('./pages/consola/ProductosPage')) },
+              {
+                path: 'productos/nuevo',
+                lazy: pagina(() => import('./pages/consola/ProductoNuevoPage')),
+              },
+              {
+                path: 'productos/:id',
+                lazy: pagina(() => import('./pages/consola/ProductoEditarPage')),
+              },
+              { path: 'cupones', lazy: pagina(() => import('./pages/consola/CuponesPage')) },
+              {
+                path: 'cupones/nuevo',
+                lazy: pagina(() => import('./pages/consola/CuponNuevoPage')),
+              },
+              {
+                path: 'cupones/:id',
+                lazy: pagina(() => import('./pages/consola/CuponDetallePage')),
+              },
+              { path: 'usuarios', lazy: pagina(() => import('./pages/consola/UsuariosPage')) },
+              { path: 'bitacora', lazy: pagina(() => import('./pages/consola/BitacoraPage')) },
+              {
+                path: 'configuracion',
+                lazy: pagina(() => import('./pages/consola/ConfiguracionPage')),
+              },
+            ],
+          },
+          // Pedidos e inventario: Operador y Administrador (los dos entran a la consola).
+          { path: 'pedidos', lazy: pagina(() => import('./pages/consola/PedidosPage')) },
+          {
+            path: 'pedidos/:id',
+            lazy: pagina(() => import('./pages/consola/PedidoGestionPage')),
+          },
+          { path: 'inventario', lazy: pagina(() => import('./pages/consola/InventarioPage')) },
+          {
+            path: 'inventario/:idVariante/kardex',
+            lazy: pagina(() => import('./pages/consola/KardexPage')),
+          },
+          // Cualquier otra ruta de la consola: no encontrada, dentro del layout de la consola.
+          { path: '*', lazy: pagina(() => import('./pages/errores/NoEncontradoPage')) },
         ],
       },
     ],
