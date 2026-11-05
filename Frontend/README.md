@@ -5,7 +5,7 @@ Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Tiene la **tienda
 - Tienda: inicio, catálogo con filtros y paginación, detalle de producto con selección de variante y carrito (de invitado con `X-Cart-Token`, o del Cliente con su sesión).
 - Autenticación: login, registro sin contraseña, recuperar contraseña y crear/restablecer contraseña desde el enlace del correo.
 - Cliente (rutas protegidas por rol): checkout con reserva de 15 min, `Idempotency-Key` y tarjetas guardadas, pedido confirmado, Mis pedidos con detalle y cancelación, Mis direcciones, Mis tarjetas y Mi perfil.
-- Consola (`/consola`, ver [Rutas de la consola](#rutas-de-la-consola)): pedidos e inventario con kardex para Operador y Administrador; dashboard, reportes, categorías, productos, cupones, usuarios, bitácora y configuración solo para Administrador.
+- Consola (`/consola`, ver [Rutas de la consola](#rutas-de-la-consola)): panel de operación (inicio del Operador), pedidos, inventario con kardex y perfil para Operador y Administrador; dashboard, reportes, categorías, productos, cupones, usuarios, bitácora y configuración solo para Administrador.
 - Páginas 403, 404 y de error inesperado.
 
 - API que consume (endpoints, roles y códigos de error): [Backend/API.md](../Backend/API.md); cómo levantar el backend: [Backend/README.md](../Backend/README.md#ejecutar-en-local).
@@ -154,6 +154,8 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | `/consola/usuarios` | Usuarios: alta de Operador o Administrador (sin contraseña, con invitación por correo), edición y activación | Administrador |
 | `/consola/bitacora` | Bitácora de auditoría (solo lectura), con valores anterior y nuevo | Administrador |
 | `/consola/configuracion` | Parámetros del sistema editables con validación | Administrador |
+| `/consola/operacion` | Panel de operación: pedidos que esperan en cada etapa y variantes en bajo stock, con enlaces a las listas filtradas. Es el inicio del Operador | Operador, Administrador |
+| `/consola/perfil` | Mi perfil del personal (la misma página que `/cuenta/perfil`) | Operador, Administrador |
 | `/consola/pedidos` | Pedidos: filtros `estado`, `q`, `desde`, `hasta`, `idCliente` y orden en la URL | Operador, Administrador |
 | `/consola/pedidos/:id` | Gestión del pedido: avanzar estado, cancelar y registrar devolución según `transiciones[].via` | Operador, Administrador |
 | `/consola/inventario` | Existencias con filtros, bajo stock, entradas y ajustes | Operador, Administrador |

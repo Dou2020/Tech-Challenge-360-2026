@@ -67,7 +67,7 @@ describe('AccountMenu', () => {
   });
 
   it.each([
-    ['Operador', crearOperador(), '/consola/pedidos'],
+    ['Operador', crearOperador(), '/consola/operacion'],
     ['Administrador', crearAdmin(), '/consola'],
   ])(
     '%s → ve la Consola (hacia su inicio) y ninguna opción de cliente',
