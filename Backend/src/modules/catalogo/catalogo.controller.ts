@@ -11,6 +11,7 @@ import type {
   EstadoBody,
   ImagenArchivoBody,
   ImagenBody,
+  OrdenImagenesBody,
   ListarCategoriasQuery,
   ListarProductosQuery,
   ParamsImagen,
@@ -150,6 +151,11 @@ export const catalogoController = {
       .json(
         await catalogoService.subirImagen(idSolicitante(req), params.id, req.file.buffer, body),
       );
+  }) satisfies RequestHandler,
+
+  ordenarImagenes: (async (req, res) => {
+    const { params, body } = validado<{ params: ParamsId; body: OrdenImagenesBody }>(res);
+    res.json(await catalogoService.ordenarImagenes(idSolicitante(req), params.id, body.imagenes));
   }) satisfies RequestHandler,
 
   eliminarImagen: (async (req, res) => {

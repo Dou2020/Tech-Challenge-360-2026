@@ -82,14 +82,15 @@ export interface DatosProductoNuevo extends DatosProducto {
 
 export interface DatosImagen {
   url: string;
-  orden: number;
+  /** Opcional: si falta, la imagen va al final. */
+  orden?: number;
   esPrincipal: boolean;
 }
 
 /** Subida de una imagen como archivo (multipart) a POST /api/productos/:id/imagenes/archivo. */
 export interface DatosImagenArchivo {
   archivo: File;
-  orden: number;
+  orden?: number;
   esPrincipal: boolean;
 }
 

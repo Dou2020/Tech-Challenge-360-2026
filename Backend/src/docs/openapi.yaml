@@ -833,7 +833,13 @@ paths:
                     format: binary,
                     description: 'JPEG, PNG o WebP; máx. IMAGENES_MAX_MB (5 MB)',
                   }
-                orden: { type: integer, minimum: 0, maximum: 255, default: 0 }
+                orden:
+                  {
+                    type: integer,
+                    minimum: 0,
+                    maximum: 255,
+                    description: 'Si falta, la imagen va al final de la lista',
+                  }
                 esPrincipal: { type: boolean, default: false }
       responses:
         '201':
@@ -876,6 +882,42 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Producto' }
         '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /productos/{id}/imagenes/orden:
+    put:
+      tags: [Productos]
+      summary: Reordena las imágenes del producto (la primera queda como principal)
+      description: |
+        `imagenes` es la lista completa de IDProductoImagen del producto en el orden nuevo. Debe
+        coincidir exactamente con sus imágenes (sin faltantes, sobrantes, ajenas ni repetidas). Escribe
+        `orden` = posición y deja como principal la de la posición 0.
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imagenes]
+              additionalProperties: false
+              properties:
+                imagenes:
+                  type: array
+                  minItems: 1
+                  maxItems: 256
+                  items: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Producto con sus imágenes en el orden nuevo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Producto' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
   /productos/{id}/imagenes/{idImagen}:
     delete:
@@ -3052,7 +3094,14 @@ components:
       required: [url]
       properties:
         url: { type: string, format: uri, maxLength: 500, description: http:// o https:// }
-        orden: { type: integer, minimum: 0, maximum: 255, default: 0 }
+        orden:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 255,
+            description: Si falta,
+            la imagen va al final de la lista,
+          }
         esPrincipal: { type: boolean, default: false }
     Variante:
       type: object

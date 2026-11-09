@@ -47,6 +47,7 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `recharts` | 3.10 | Gráficas del dashboard |
 | `tailwindcss`, `@tailwindcss/vite` | 4.3 | Estilos |
 | `lucide-react` | 1.63 | Íconos |
+| `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` | 6.3 / 10.0 / 3.2 | Reordenar las imágenes del producto arrastrando (también con teclado); la primera es la principal |
 | `@fontsource-variable/inter` | 5.3 | Tipografía Inter variable, servida desde el propio sitio (sin CDN ni peticiones a terceros) |
 | `vite`, `@vitejs/plugin-react` | 8.3 / 6.1 | Servidor de desarrollo y build (desarrollo) |
 | `typescript`, `eslint` | 6.0 / 10.13 | Tipado y análisis estático (desarrollo) |

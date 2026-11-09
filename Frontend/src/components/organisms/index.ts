@@ -29,7 +29,6 @@ export { ReturnForm } from './ReturnForm';
 export { ReturnsList } from './ReturnsList';
 export { PriceChangeDialog } from './PriceChangeDialog';
 export { ProductForm } from './ProductForm';
-export { ProductImagesManager } from './ProductImagesManager';
 export { StockAdjustmentForm } from './StockAdjustmentForm';
 export type { ClaseMovimiento, DatosMovimiento } from './StockAdjustmentForm';
 export { UserForm } from './UserForm';
@@ -38,5 +37,6 @@ export type { DatosVarianteForm } from './VariantForm';
 export { VariantsEditor } from './VariantsEditor';
 export { VariantsManager } from './VariantsManager';
 export { VariantSelector } from './VariantSelector';
+// ProductImagesManager (@dnd-kit) se importa directo en ProductoEditarPage por la misma razón.
 // SalesChart, CategorySalesChart y TopProductsChart NO se exportan aquí: usan recharts y se cargan
 // con import() dinámico desde las páginas para no inflar el bundle inicial.

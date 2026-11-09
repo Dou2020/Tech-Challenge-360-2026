@@ -15,6 +15,7 @@ import {
   estadoBody,
   imagenArchivoBody,
   imagenBody,
+  ordenImagenesBody,
   listarCategoriasQuery,
   listarProductosQuery,
   paramsImagen,
@@ -90,6 +91,11 @@ productosRoutes.post(
   subirImagen,
   validate({ params: paramsId, body: imagenArchivoBody }),
   c.subirImagen,
+);
+productosRoutes.put(
+  '/:id/imagenes/orden',
+  validate({ params: paramsId, body: ordenImagenesBody }),
+  c.ordenarImagenes,
 );
 productosRoutes.delete(
   '/:id/imagenes/:idImagen',

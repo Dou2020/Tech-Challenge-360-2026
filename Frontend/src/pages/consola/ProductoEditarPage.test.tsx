@@ -21,6 +21,7 @@ vi.mock('../../services/api/gestion', () => ({
     agregarImagen: vi.fn(),
     subirImagen: vi.fn(),
     quitarImagen: vi.fn(),
+    ordenarImagenes: vi.fn(),
     agregarVariante: vi.fn(),
   },
   variantesApi: { actualizar: vi.fn(), cambiarPrecio: vi.fn(), cambiarEstado: vi.fn() },
@@ -75,6 +76,7 @@ describe('ProductoEditarPage', () => {
     vi.mocked(productosApi.quitarImagen).mockReset();
     vi.mocked(productosApi.agregarImagen).mockReset();
     vi.mocked(productosApi.subirImagen).mockReset();
+    vi.mocked(productosApi.ordenarImagenes).mockReset();
     vi.mocked(categoriasApi.listar).mockResolvedValue({
       items: [
         {
@@ -150,7 +152,7 @@ describe('ProductoEditarPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Desactívalo para ocultarlo');
   });
 
-  it('agrega una imagen por URL con orden y principal', async () => {
+  it('agrega una imagen por URL como principal', async () => {
     // Arrange
     vi.mocked(productosApi.agregarImagen).mockResolvedValue(producto);
     abrir();
@@ -159,7 +161,6 @@ describe('ProductoEditarPage', () => {
       await screen.findByLabelText('URL de la imagen'),
       'https://img.test/b.jpg',
     );
-    await userEvent.type(screen.getByLabelText('Orden'), '2');
     await userEvent.click(screen.getByLabelText('Imagen principal'));
 
     // Act
@@ -169,19 +170,17 @@ describe('ProductoEditarPage', () => {
     await waitFor(() =>
       expect(productosApi.agregarImagen).toHaveBeenCalledWith(8, {
         url: 'https://img.test/b.jpg',
-        orden: 2,
         esPrincipal: true,
       }),
     );
   });
 
-  it('sube un archivo con orden y principal → llama a subirImagen y avisa', async () => {
+  it('sube un archivo como principal → llama a subirImagen y avisa', async () => {
     // Arrange
     vi.mocked(productosApi.subirImagen).mockResolvedValue(producto);
     abrir();
     const archivo = new File(['x'], 'foto.png', { type: 'image/png' });
     await userEvent.upload(await screen.findByLabelText('Archivo de imagen'), archivo);
-    await userEvent.type(screen.getByLabelText('Orden'), '3');
     await userEvent.click(screen.getByLabelText('Imagen principal'));
 
     // Act
@@ -191,7 +190,6 @@ describe('ProductoEditarPage', () => {
     await waitFor(() =>
       expect(productosApi.subirImagen).toHaveBeenCalledWith(8, {
         archivo,
-        orden: 3,
         esPrincipal: true,
       }),
     );
@@ -432,11 +430,58 @@ describe('ProductoEditarPage', () => {
     expect(productosApi.eliminar).not.toHaveBeenCalled();
   });
 
+  it('hacer principal una imagen → llama a ordenarImagenes con el orden nuevo y avisa', async () => {
+    // Arrange
+    vi.mocked(productosApi.obtener).mockResolvedValue({
+      ...producto,
+      imagenes: [
+        { idProductoImagen: 4, url: 'https://img.test/a.jpg', orden: 0, esPrincipal: true },
+        { idProductoImagen: 5, url: 'https://img.test/b.jpg', orden: 1, esPrincipal: false },
+      ],
+    });
+    vi.mocked(productosApi.ordenarImagenes).mockResolvedValue(producto);
+    abrir();
+
+    // Act
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Hacer principal la imagen 2' }),
+    );
+
+    // Assert
+    expect(await screen.findByText('Orden de imágenes guardado.')).toBeInTheDocument();
+    expect(productosApi.ordenarImagenes).toHaveBeenCalledWith(8, [5, 4]);
+  });
+
+  it('ordenarImagenes falla → alerta con el mensaje, sin aviso de éxito y vuelve al orden anterior', async () => {
+    // Arrange
+    vi.mocked(productosApi.obtener).mockResolvedValue({
+      ...producto,
+      imagenes: [
+        { idProductoImagen: 4, url: 'https://img.test/a.jpg', orden: 0, esPrincipal: true },
+        { idProductoImagen: 5, url: 'https://img.test/b.jpg', orden: 1, esPrincipal: false },
+      ],
+    });
+    vi.mocked(productosApi.ordenarImagenes).mockRejectedValue(
+      new ApiError(400, 'VALIDACION', 'El conjunto de imágenes cambió.'),
+    );
+    abrir();
+
+    // Act
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Hacer principal la imagen 2' }),
+    );
+
+    // Assert
+    expect(await screen.findByText('El conjunto de imágenes cambió.')).toBeInTheDocument();
+    expect(screen.queryByText('Orden de imágenes guardado.')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('img')[0]).toHaveAttribute('src', 'https://img.test/a.jpg');
+  });
+
   it('quitar una imagen → confirma, llama a quitarImagen y avisa', async () => {
     // Arrange
     vi.mocked(productosApi.quitarImagen).mockResolvedValue(undefined);
     abrir();
-    await userEvent.click(await screen.findByRole('button', { name: /Quitar imagen 0/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /Quitar imagen 1/ }));
 
     // Act
     await userEvent.click(

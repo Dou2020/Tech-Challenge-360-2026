@@ -17,6 +17,7 @@ const app = createApp();
 
 type Http = Awaited<ReturnType<typeof clienteComo>>['http'];
 let admin: Http;
+const creados: number[] = [];
 
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -31,6 +32,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Los productos creados aquí se eliminan: el listado público de catalogo.test.ts pagina de a 100.
+  for (const id of creados) await admin.delete(`/api/productos/${id}`);
   await Promise.all([closePool(), closeRedis()]);
 });
 
@@ -44,6 +47,7 @@ async function crearProducto(): Promise<number> {
     variantes: [{ sku: `IMG-${s}`, precio: '50.00', existenciaInicial: 0, valores: [] }],
   });
   expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(201);
+  creados.push(respuesta.body.idProducto as number);
   return respuesta.body.idProducto as number;
 }
 
@@ -279,5 +283,247 @@ describe('GET /api/imagenes', () => {
     // Assert
     expect(respuesta.status).toBe(200);
     expect(sinToken.status).toBe(200);
+  });
+});
+
+describe('PUT /api/productos/:id/imagenes/orden', () => {
+  it('reordena las imágenes y la primera queda como principal', async () => {
+    // Arrange
+    const id = await crearProducto();
+    await subir(admin, id, PNG);
+    await subir(admin, id, WEBP);
+    const detalle = await subir(admin, id, JPG);
+    const ids = (detalle.body.imagenes as { idProductoImagen: number }[]).map(
+      (i) => i.idProductoImagen,
+    );
+    const nuevoOrden = [ids[2], ids[0], ids[1]];
+
+    // Act
+    const respuesta = await admin.put(`/api/productos/${id}/imagenes/orden`).send({
+      imagenes: nuevoOrden,
+    });
+
+    // Assert
+    expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(200);
+    expect(
+      respuesta.body.imagenes.map((i: { idProductoImagen: number }) => i.idProductoImagen),
+    ).toEqual(nuevoOrden);
+    expect(respuesta.body.imagenes[0]).toMatchObject({ orden: 0, esPrincipal: true });
+    expect(respuesta.body.imagenes[1]).toMatchObject({ orden: 1, esPrincipal: false });
+  });
+});
+
+type ImagenApi = { idProductoImagen: number; orden: number; esPrincipal: boolean; url: string };
+
+/** Producto con n imágenes (PNG/WebP/JPG por turnos); devuelve sus ids en el orden de subida. */
+async function productoConImagenes(n: number): Promise<{ id: number; ids: number[] }> {
+  const id = await crearProducto();
+  const archivos = [PNG, WEBP, JPG];
+  let ids: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = await subir(admin, id, archivos[i % 3]!);
+    ids = (r.body.imagenes as ImagenApi[]).map((x) => x.idProductoImagen);
+  }
+  return { id, ids };
+}
+
+const ordenar = (http: Http, id: number, imagenes: unknown) =>
+  http.put(`/api/productos/${id}/imagenes/orden`).send({ imagenes });
+
+const idsDe = async (id: number): Promise<number[]> => {
+  const r = await admin.get(`/api/productos/${id}`);
+  return (r.body.imagenes as ImagenApi[]).map((x) => x.idProductoImagen);
+};
+
+const bitacoraImagenes = async (idsImagen: number[]) => {
+  const entradas: { idRegistro: number; accion: string }[] = [];
+  for (const idRegistro of idsImagen) {
+    const r = await admin
+      .get('/api/bitacora')
+      .query({ modulo: 'Catalogo', entidad: 'ProductoImagen', idRegistro, accion: 'MODIFICAR' });
+    entradas.push(...(r.body.items as { idRegistro: number; accion: string }[]));
+  }
+  return entradas;
+};
+
+describe('PUT /api/productos/:id/imagenes/orden (casos de error y efectos)', () => {
+  it.each([
+    ['faltante', (ids: number[], _aj: number) => ids.slice(0, 2)],
+    ['sobrante (de otro producto)', (ids: number[], aj: number) => [...ids, aj]],
+    [
+      'ajena (sustituida por una de otro producto)',
+      (ids: number[], aj: number) => [ids[0]!, ids[1]!, aj],
+    ],
+  ])('una lista con imagen %s → 400 VALIDACION y el orden no cambia', async (_n, armar) => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(3);
+    const otro = await productoConImagenes(1);
+
+    // Act
+    const respuesta = await ordenar(admin, id, armar(ids, otro.ids[0]!));
+
+    // Assert
+    expect(respuesta.status).toBe(400);
+    expect(respuesta.body.error.code).toBe('VALIDACION');
+    expect(await idsDe(id)).toEqual(ids);
+  });
+
+  it('una lista con un id repetido → 400 VALIDACION en details[].field imagenes y no cambia el orden', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(3);
+
+    // Act
+    const respuesta = await ordenar(admin, id, [ids[0], ids[0], ids[1]]);
+
+    // Assert
+    expect(respuesta.status).toBe(400);
+    expect(respuesta.body.error.code).toBe('VALIDACION');
+    expect(respuesta.body.error.details).toEqual(
+      expect.arrayContaining([expect.objectContaining({ field: 'imagenes' })]),
+    );
+    expect(await idsDe(id)).toEqual(ids);
+  });
+
+  it('producto inexistente → 404 NO_ENCONTRADO', async () => {
+    // Act
+    const respuesta = await ordenar(admin, 2147483000, [1]);
+
+    // Assert
+    expect(respuesta.status).toBe(404);
+    expect(respuesta.body.error.code).toBe('NO_ENCONTRADO');
+  });
+
+  it('sin token → 401', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(2);
+
+    // Act
+    const respuesta = await request(app)
+      .put(`/api/productos/${id}/imagenes/orden`)
+      .send({ imagenes: [...ids].reverse() });
+
+    // Assert
+    expect(respuesta.status).toBe(401);
+  });
+
+  it.each(['operador', 'cliente'] as const)('como %s → 403 y el orden no cambia', async (rol) => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(2);
+    const { http } = await clienteComo(app, rol);
+
+    // Act
+    const respuesta = await ordenar(http, id, [...ids].reverse());
+
+    // Assert
+    expect(respuesta.status).toBe(403);
+    expect(await idsDe(id)).toEqual(ids);
+  });
+
+  it('tras ordenar, el detalle y el listado públicos reflejan el nuevo orden y la nueva principal', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(3);
+    const nuevo = [ids[2]!, ids[0]!, ids[1]!];
+    const detalleAdmin = await admin.get(`/api/productos/${id}`);
+    const nombre = detalleAdmin.body.nombre as string;
+    const urlNueva = (detalleAdmin.body.imagenes as ImagenApi[]).find(
+      (i) => i.idProductoImagen === nuevo[0],
+    )!.url;
+    expect((await ordenar(admin, id, nuevo)).status).toBe(200);
+
+    // Act
+    const detalle = await request(app).get(`/api/catalogo/productos/${id}`);
+    const listado = await request(app).get('/api/catalogo/productos').query({ q: nombre });
+
+    // Assert
+    expect(detalle.status).toBe(200);
+    const imagenes = detalle.body.imagenes as ImagenApi[];
+    expect(imagenes.map((i) => i.idProductoImagen)).toEqual(nuevo);
+    expect(imagenes[0]).toMatchObject({ esPrincipal: true });
+    const item = (listado.body.items as { idProducto: number; imagenPrincipal: string }[]).find(
+      (p) => p.idProducto === id,
+    );
+    expect(item?.imagenPrincipal).toBe(urlNueva);
+  });
+
+  it('escribe una bitácora MODIFICAR por cada imagen cuyo orden o principal cambió', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(3);
+    // [a, b, c] -> [a, c, b]: la principal (a) no cambia; solo b y c.
+    const nuevo = [ids[0]!, ids[2]!, ids[1]!];
+
+    // Act
+    const respuesta = await ordenar(admin, id, nuevo);
+
+    // Assert
+    expect(respuesta.status).toBe(200);
+    const entradas = await bitacoraImagenes(ids);
+    expect(entradas.map((e) => e.idRegistro).sort()).toEqual([ids[1], ids[2]].sort());
+    expect(entradas.every((e) => e.accion === 'MODIFICAR')).toBe(true);
+  });
+
+  it('reenviar el mismo orden → 200 sin bitácora nueva', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(3);
+    await ordenar(admin, id, [ids[2]!, ids[0]!, ids[1]!]);
+    const antes = (await bitacoraImagenes(ids)).length;
+    const actual = await idsDe(id);
+
+    // Act
+    const respuesta = await ordenar(admin, id, actual);
+
+    // Assert
+    expect(respuesta.status).toBe(200);
+    expect((await bitacoraImagenes(ids)).length).toBe(antes);
+  });
+});
+
+describe('orden por defecto y principal al quitar', () => {
+  it('agregar sin orden a un producto con imágenes → queda al final', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(2);
+
+    // Act
+    const respuesta = await subir(admin, id, JPG);
+
+    // Assert
+    expect(respuesta.status).toBe(201);
+    const imagenes = respuesta.body.imagenes as ImagenApi[];
+    expect(imagenes).toHaveLength(3);
+    expect(imagenes.slice(0, 2).map((i) => i.idProductoImagen)).toEqual(ids);
+    expect(imagenes[2]).toMatchObject({ orden: 2, esPrincipal: false });
+  });
+
+  it('agregar por URL sin orden → queda al final', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(2);
+
+    // Act
+    const respuesta = await admin
+      .post(`/api/productos/${id}/imagenes`)
+      .send({ url: 'https://placehold.co/600x600?text=Z' });
+
+    // Assert
+    expect(respuesta.status).toBe(201);
+    const imagenes = respuesta.body.imagenes as ImagenApi[];
+    expect(imagenes.slice(0, 2).map((i) => i.idProductoImagen)).toEqual(ids);
+    expect(imagenes[2]).toMatchObject({ orden: 2, esPrincipal: false });
+  });
+
+  it('quitar la principal tras reordenar promueve a la que estaba en la posición 1', async () => {
+    // Arrange
+    const { id, ids } = await productoConImagenes(3);
+    const nuevo = [ids[2]!, ids[0]!, ids[1]!];
+    await ordenar(admin, id, nuevo);
+
+    // Act
+    const respuesta = await admin.delete(`/api/productos/${id}/imagenes/${nuevo[0]}`);
+
+    // Assert
+    expect(respuesta.status).toBe(204);
+    const detalle = await admin.get(`/api/productos/${id}`);
+    const imagenes = detalle.body.imagenes as ImagenApi[];
+    expect(imagenes.map((i) => i.idProductoImagen)).toEqual([nuevo[1], nuevo[2]]);
+    expect(imagenes[0]).toMatchObject({ esPrincipal: true });
+    expect(imagenes[1]).toMatchObject({ esPrincipal: false });
   });
 });

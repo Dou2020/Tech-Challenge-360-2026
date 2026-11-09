@@ -86,6 +86,7 @@ export {
   useEliminarProducto,
   useProductoGestion,
   useProductosGestion,
+  useOrdenarImagenes,
   useQuitarImagen,
   useSubirImagen,
   useTodasLasCategorias,

@@ -43,7 +43,7 @@ El backend (arquitectura, Redis y sus pruebas) está en [Backend/README.md](../B
 | :--- | :--- |
 | Motor | SQL Server 2019 o superior (Docker Compose usa SQL Server 2022 Developer) |
 | Base | `ShopCart`; las pruebas del backend crean `ShopCart_Test` con los mismos scripts. Collation `Modern_Spanish_100_CI_AI` (búsquedas y `UNIQUE` sin distinguir mayúsculas ni tildes) y `READ_COMMITTED_SNAPSHOT ON` (las lecturas no bloquean a las escrituras) |
-| Objetos | 30 tablas, 102 stored procedures, 14 funciones tipo tabla, 4 vistas y 3 triggers |
+| Objetos | 30 tablas, 103 stored procedures, 14 funciones tipo tabla, 4 vistas y 3 triggers |
 | Acceso | El backend solo ejecuta stored procedures. El login `shopcart_app` tiene únicamente `GRANT EXECUTE` sobre el esquema `dbo`, más `DENY UPDATE, DELETE` explícito sobre `Bitacora` y `MovimientoInventario`: la base rechaza cualquier `SELECT`, `INSERT`, `UPDATE` o `DELETE` directo sobre una tabla. Las vistas y funciones se usan desde los SPs por encadenamiento de propiedad (mismo dueño `dbo`) |
 | Montos y fechas | Montos en `DECIMAL(12,2)`, cantidades en `INT`, fechas en `DATETIME2(3)` UTC |
 | Errores de negocio | Los SPs los señalan con `THROW 50xxx` y el backend los traduce con `sqlErrorMapper`. El catálogo de códigos está en [Backend/API.md §4](../Backend/API.md#4-catálogo-de-códigos-de-error) |
@@ -73,14 +73,15 @@ Database/
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío (Estándar, Express, Recoger en tienda), configuración
 │   ├── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
 │   ├── 100_sucursales.sql           # Incremental e idempotente: tabla Sucursal, columnas y restricciones de Pedido y MetodoEnvio, sucursales de ejemplo y ajuste de los retiros existentes
-│   └── 101_sp_sucursales.sql        # Incremental e idempotente: SPs de sucursales (catálogo público y gestión) y los de checkout, reserva y pedidos que las usan
+│   ├── 101_sp_sucursales.sql        # Incremental e idempotente: SPs de sucursales (catálogo público y gestión) y los de checkout, reserva y pedidos que las usan
+│   └── 102_sp_imagenes_orden.sql    # Incremental e idempotente: SP_Productos_OrdenarImagenes y la versión nueva de SP_Productos_AgregarImagen (@Orden NULL = al final)
 ├── pruebas/
 │   └── integridad.sql               # Intenta romper cada regla de integridad y verifica qué restricción lo impide; no deja datos
 ├── diagrama/
 │   ├── diagrama_er.svg              # Diagrama entidad-relación (vectorial; GitHub lo muestra directamente)
 │   └── diagrama_er.png              # El mismo diagrama en PNG
 ├── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose), la opción manual y las pruebas del backend
-├── script.sql                       # Los 20 scripts de scripts/ en un solo archivo, para crear la base desde SSMS o sqlcmd
+├── script.sql                       # Los 21 scripts de scripts/ en un solo archivo, para crear la base desde SSMS o sqlcmd
 └── README.md                        # Este documento
 ```
 
@@ -144,7 +145,7 @@ Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, a
 
 ### Con `script.sql`
 
-`script.sql` reúne en un solo archivo los 20 scripts de `scripts/` (001 a 015, 080, 085, 090, 100 y 101), copiados en orden y sin cambios en el commit `COMMIT_PENDIENTE`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
+`script.sql` reúne en un solo archivo los 21 scripts de `scripts/` (001 a 015, 080, 085, 090 y 100 a 102), copiados en orden y sin cambios en el commit `COMMIT_PENDIENTE`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
 
 Se ejecuta en **modo SQLCMD**, con un login con rol `sysadmin`: usa las variables `DbName`, `AppLogin` y `AppPassword` (se cambian en sus líneas `:setvar`) y se detiene en el primer error. Sin modo SQLCMD se detiene al inicio con un aviso, sin crear nada.
 
@@ -162,15 +163,16 @@ Una base que ya existe se actualiza **sin `DB_RESET` y sin perder datos**. `dock
 
 | Situación | Qué ejecuta |
 | :--- | :--- |
-| La base no existe, o `DB_RESET=true` | Todos los scripts de `scripts/` en orden (001 a 101) |
+| La base no existe, o `DB_RESET=true` | Todos los scripts de `scripts/` en orden (001 a 102) |
 | La base existe | Solo los scripts con prefijo numérico **100 o mayor**, en orden, tras el aviso "Aplicando scripts incrementales…" |
 
 Los scripts incrementales son **idempotentes**: cada paso comprueba si ya se aplicó (`OBJECT_ID`, `COL_LENGTH`, `sys.foreign_keys`, `sys.check_constraints`, `sys.indexes`, `COLUMNPROPERTY`) y los programables usan `CREATE OR ALTER`, así que pueden correr en cada arranque sin efecto. Los de esquema o datos van en una sola transacción con `XACT_ABORT ON`.
 
-Hoy hay dos:
+Hoy hay tres:
 
 - `100_sucursales.sql` crea la tabla `Sucursal`, agrega `MetodoEnvio.RequiereSucursal` y `Pedido.IDSucursal`/`RetiroEnSucursal`, deja `Pedido.IDDireccion` en NULL, recrea `FK_Pedido_Direccion` y `FK_Pedido_MetodoEnvio` (ahora compuesta), crea `FK_Pedido_Sucursal`, `CK_Pedido_Entrega` e `IX_Pedido_IDSucursal`, renombra "Recoger en tienda" a "Recoger en sucursal" (conserva su `IDMetodoEnvio`) e inserta las cuatro sucursales de ejemplo si no existen.
 - `101_sp_sucursales.sql` instala los SPs de sucursales y la versión nueva de `SP_Checkout_ListarMetodosEnvio`, `SP_Inventario_ReservarExistencia`, `SP_Pedidos_CrearPedido` y `SP_Pedidos_ObtenerPorId`.
+- `102_sp_imagenes_orden.sql` instala `SP_Productos_OrdenarImagenes` y la versión nueva de `SP_Productos_AgregarImagen`. No cambia el esquema.
 
 **Pedidos de retiro que ya existen.** Los pedidos hechos con "Recoger en tienda" antes de esta funcionalidad no tienen sucursal. `100_sucursales.sql` les asigna `RetiroEnSucursal = 1` (copia del método), los pasa a **Sucursal Zona 10** y deja su `IDDireccion` en NULL. `DireccionEntrega` no se toca: es la copia histórica de a dónde se envió. Esto incluye los pedidos 3 y 7 de la semilla. No actualiza `IDEstadoPedido`, así que `TR_Pedidos_ValidarTransicion` no interviene. Si hubiera retiros por migrar y no existiera "Sucursal Zona 10" (por ejemplo, si se renombró), el script falla con `THROW 50000` y revierte todo.
 
@@ -936,7 +938,7 @@ Convenciones de los SPs:
 - Orden de bloqueo en carrito y cupones: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`, con `Categoria` antes de `Cupon` al crear o actualizar un cupón. Todo SP que escribe en un carrito lo bloquea primero con `UPDLOCK, HOLDLOCK` (también si aún no existe, para no crear dos carritos del mismo cliente). El carrito se identifica por el usuario del token o por `X-Cart-Token`, nunca por un ID enviado; manda el usuario si vienen ambos. Los SPs del carrito no reservan ni bloquean variantes: la sobreventa la impiden la reserva del checkout y el pedido.
 - Orden de bloqueo en inventario: `Variante` → `ReservaExistencia`, y varias variantes en orden de `IDVariante`. Quien crea, confirma o libera una reserva bloquea antes su variante con `UPDLOCK, ROWLOCK`; así un ajuste que tiene la variante bloqueada ve un conjunto de reservas estable.
 - Entradas y ajustes escriben en la bitácora `MODIFICAR` de la `Variante` con `Modulo = 'Inventario'`: `ValorAnterior` lleva `ExistenciaFisica` y `ExistenciaReservada`, y `ValorNuevo` además el movimiento (`IDMovimientoInventario`, tipo, cantidad, motivo). Un ajuste de salida que dejaría la existencia por debajo de 0 o de la reservada vigente responde 50032. `SP_Inventario_LiberarReservasVencidas` no escribe bitácora: no cambia la existencia física.
-- Usuarios: un Administrador no puede desactivarse a sí mismo ni quitarse el rol de Administrador, y el sistema nunca se queda sin un Administrador activo (50051 `EN_USO` en los tres casos). Los SPs bloquean con `UPDLOCK` a todos los administradores activos antes de contar. La bitácora (`Modulo = 'Usuarios'`, `Entidad = 'Usuario'`) usa `FU_Usuarios_UsuarioJson`, que nunca incluye el hash; el cambio de contraseña registra solo `{"ContrasenaCambiada":true}`. `SP_Usuarios_Actualizar` y `SP_Usuarios_CambiarEstado` devuelven `RolCambio` y `ActivoCambio` para que el backend revoque sesiones. El perfil (`ActualizarPerfil`) no va a la bitácora. `Usuario.HashContrasena` es NULL mientras la contraseña está pendiente de crear (registro y alta por Admin no reciben contraseña; el enlace de un solo uso vive en Redis); los SPs de lectura de usuario devuelven `ContrasenaPendiente`. `SP_Productos_AgregarImagen` acepta también `/api/imagenes/productos/<uuid>.jpg|png|webp`, y `SP_Productos_EliminarImagen`/`SP_Productos_Eliminar` devuelven las `Url` borradas para que el backend elimine los archivos.
+- Usuarios: un Administrador no puede desactivarse a sí mismo ni quitarse el rol de Administrador, y el sistema nunca se queda sin un Administrador activo (50051 `EN_USO` en los tres casos). Los SPs bloquean con `UPDLOCK` a todos los administradores activos antes de contar. La bitácora (`Modulo = 'Usuarios'`, `Entidad = 'Usuario'`) usa `FU_Usuarios_UsuarioJson`, que nunca incluye el hash; el cambio de contraseña registra solo `{"ContrasenaCambiada":true}`. `SP_Usuarios_Actualizar` y `SP_Usuarios_CambiarEstado` devuelven `RolCambio` y `ActivoCambio` para que el backend revoque sesiones. El perfil (`ActualizarPerfil`) no va a la bitácora. `Usuario.HashContrasena` es NULL mientras la contraseña está pendiente de crear (registro y alta por Admin no reciben contraseña; el enlace de un solo uso vive en Redis); los SPs de lectura de usuario devuelven `ContrasenaPendiente`. `SP_Productos_OrdenarImagenes` (`PUT /api/productos/:id/imagenes/orden`) recibe el arreglo JSON de `IDProductoImagen` en el orden nuevo (debe contener exactamente las imágenes del producto, si no 50001): `Orden` = posición y la primera es la principal; bloquea `Producto` y luego sus imágenes (`UPDLOCK, ROWLOCK`), registra un `MODIFICAR` por imagen que cambió y, si nada cambia, no escribe nada. `SP_Productos_AgregarImagen` con `@Orden` NULL (por omisión) agrega la imagen al final (`MAX(Orden) + 1`, tope 255) y acepta también `/api/imagenes/productos/<uuid>.jpg|png|webp`, y `SP_Productos_EliminarImagen`/`SP_Productos_Eliminar` devuelven las `Url` borradas para que el backend elimine los archivos.
 - `SP_Configuracion_Actualizar` valida el valor según la clave (enteros solo con dígitos, IVA decimal 0–100 con hasta 2 decimales), lo guarda normalizado y registra `Modulo = 'Configuracion'`; un valor igual al actual no escribe nada.
 - Orden de bloqueo en checkout y pedidos: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`; con un pedido existente, `Pedido` → `PedidoDetalle` → `Cupon` → `Variante`. Las variantes se bloquean una por una en orden de `IDVariante`. `SP_Pedidos_CrearPedido` toma antes un bloqueo de aplicación (`sp_getapplock`) por `Idempotency-Key`: las peticiones simultáneas con la misma clave se serializan y las posteriores devuelven el pedido ya creado (`Repetido = 1`), sin depender de capturar el 2627.
 - Reservar (`SP_Inventario_ReservarExistencia`) reemplaza la reserva `ACTIVA` anterior del carrito y libera las vencidas de las variantes involucradas antes de comprobar la existencia, para que `CK_Variante_ExistenciaReservada` no rechace una reserva válida. Si falta existencia lanza 50030 con el detalle en el mensaje (`\nDETALLE=` y un arreglo JSON); todo se revierte. `SP_Checkout_ObtenerResumen` sin reserva vigente responde 50031; el método de envío no se guarda con la reserva, por eso recibe `@IDMetodoEnvio` opcional.

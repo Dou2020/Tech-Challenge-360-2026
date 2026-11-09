@@ -127,7 +127,7 @@ export const imagenBody = z.object({
     .int('Debe ser un entero entre 0 y 255.')
     .min(0, 'Debe ser un entero entre 0 y 255.')
     .max(255, 'Debe ser un entero entre 0 y 255.')
-    .default(0),
+    .optional(),
   esPrincipal: z.boolean({ error: 'Debe ser true o false.' }).default(false),
 });
 
@@ -146,7 +146,7 @@ export const imagenArchivoBody = z.object({
       .int('Debe ser un entero entre 0 y 255.')
       .min(0, 'Debe ser un entero entre 0 y 255.')
       .max(255, 'Debe ser un entero entre 0 y 255.')
-      .default(0),
+      .optional(),
   ),
   esPrincipal: z.preprocess(
     vacioAUndefined,
@@ -156,6 +156,25 @@ export const imagenArchivoBody = z.object({
       .default(false),
   ),
 });
+
+/** Orden nuevo de las imágenes: la primera queda como principal. */
+export const ordenImagenesBody = z
+  .object({
+    imagenes: z
+      .array(esquemaId, { error: 'Debe ser un arreglo de IDs de imagen.' })
+      .min(1, 'Envía al menos una imagen.')
+      .max(256, 'Máximo 256 imágenes.'),
+  })
+  .strict()
+  .superRefine((valor, ctx) => {
+    if (new Set(valor.imagenes).size !== valor.imagenes.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['imagenes'],
+        message: 'No se permiten IDs de imagen repetidos.',
+      });
+    }
+  });
 
 export const paramsImagen = z.object({ id: esquemaId, idImagen: esquemaId });
 
@@ -186,6 +205,7 @@ export type ProductoBody = z.infer<typeof productoBody>;
 export type CrearProductoBody = z.infer<typeof crearProductoBody>;
 export type ImagenBody = z.infer<typeof imagenBody>;
 export type ImagenArchivoBody = z.infer<typeof imagenArchivoBody>;
+export type OrdenImagenesBody = z.infer<typeof ordenImagenesBody>;
 export type ParamsImagen = z.infer<typeof paramsImagen>;
 export type CrearVarianteBody = z.infer<typeof crearVarianteBody>;
 export type ActualizarVarianteBody = z.infer<typeof actualizarVarianteBody>;

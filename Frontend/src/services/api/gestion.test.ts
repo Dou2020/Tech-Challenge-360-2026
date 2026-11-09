@@ -80,6 +80,12 @@ describe('gestion (categorías, productos, variantes, atributos)', () => {
       { method: 'DELETE' },
     ],
     [
+      'productosApi.ordenarImagenes',
+      () => productosApi.ordenarImagenes(5, [9, 4]),
+      '/productos/5/imagenes/orden',
+      { method: 'PUT', body: { imagenes: [9, 4] } },
+    ],
+    [
       'productosApi.agregarVariante',
       () => productosApi.agregarVariante(5, { sku: 'X' } as never),
       '/productos/5/variantes',
@@ -140,5 +146,17 @@ describe('gestion (categorías, productos, variantes, atributos)', () => {
     expect(cuerpo.get('imagen')).toBeInstanceOf(File);
     expect(cuerpo.get('orden')).toBe('2');
     expect(cuerpo.get('esPrincipal')).toBe('true');
+  });
+
+  it('productosApi.subirImagen sin orden → no agrega el campo orden', async () => {
+    // Arrange
+    const archivo = new File(['x'], 'foto.png', { type: 'image/png' });
+
+    // Act
+    await productosApi.subirImagen(5, { archivo, esPrincipal: false });
+
+    // Assert
+    const [, opciones] = pedir.mock.calls[0]!;
+    expect((opciones as { body: FormData }).body.has('orden')).toBe(false);
   });
 });

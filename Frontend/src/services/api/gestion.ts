@@ -50,13 +50,19 @@ export const productosApi = {
   subirImagen: (id: number, { archivo, orden, esPrincipal }: DatosImagenArchivo) => {
     const formulario = new FormData();
     formulario.append('imagen', archivo);
-    formulario.append('orden', String(orden));
+    if (orden !== undefined) formulario.append('orden', String(orden));
     formulario.append('esPrincipal', esPrincipal ? 'true' : 'false');
     return request<ProductoGestion>(`/productos/${id}/imagenes/archivo`, {
       method: 'POST',
       body: formulario,
     });
   },
+  /** Reordena: recibe TODOS los idProductoImagen en el orden nuevo; la primera queda como principal. */
+  ordenarImagenes: (id: number, imagenes: number[]) =>
+    request<ProductoGestion>(`/productos/${id}/imagenes/orden`, {
+      method: 'PUT',
+      body: { imagenes },
+    }),
   quitarImagen: (id: number, idImagen: number) =>
     request<void>(`/productos/${id}/imagenes/${idImagen}`, { method: 'DELETE' }),
   agregarVariante: (id: number, datos: DatosVarianteNueva) =>

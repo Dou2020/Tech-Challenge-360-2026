@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { Badge, Button, Skeleton } from '../../components/atoms';
 import { ConfirmationDialog, ErrorState, Notice, PageHeading } from '../../components/molecules';
-import { ProductForm, ProductImagesManager, VariantsManager } from '../../components/organisms';
+import { ProductForm, VariantsManager } from '../../components/organisms';
+// ProductImagesManager (@dnd-kit) no sale del barrel de organismos para que no entre al bundle inicial.
+import { ProductImagesManager } from '../../components/organisms/ProductImagesManager';
 import {
   useActualizarProducto,
   useAgregarImagen,
@@ -10,6 +12,7 @@ import {
   useCambiarEstadoProducto,
   useEliminarProducto,
   useProductoGestion,
+  useOrdenarImagenes,
   useQuitarImagen,
   useTodasLasCategorias,
 } from '../../hooks/queries';
@@ -53,6 +56,7 @@ export default function ProductoEditarPage() {
   const agregarImagen = useAgregarImagen(idProducto);
   const subirImagen = useSubirImagen(idProducto);
   const quitarImagen = useQuitarImagen(idProducto);
+  const ordenarImagenes = useOrdenarImagenes(idProducto);
   const [dialogo, setDialogo] = useState<Dialogo>(null);
   const [aviso, setAviso] = useState<Aviso | null>(
     state?.creado ? avisoExito('Producto creado. Puedes completar imágenes y variantes.') : null,
@@ -170,6 +174,10 @@ export default function ProductoEditarPage() {
             onSubirArchivo={async (datos) => {
               await subirImagen.mutateAsync(datos);
               setAviso(avisoExito('Imagen subida.'));
+            }}
+            onReordenar={async (ids) => {
+              await ordenarImagenes.mutateAsync(ids);
+              setAviso(avisoExito('Orden de imágenes guardado.'));
             }}
             onQuitar={async (idImagen) => {
               await quitarImagen.mutateAsync(idImagen);

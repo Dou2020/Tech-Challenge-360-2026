@@ -121,6 +121,8 @@ export const useAgregarImagen = (id: number) =>
   useMutacionProducto((datos: DatosImagen) => productosApi.agregarImagen(id, datos));
 export const useSubirImagen = (id: number) =>
   useMutacionProducto((datos: DatosImagenArchivo) => productosApi.subirImagen(id, datos));
+export const useOrdenarImagenes = (id: number) =>
+  useMutacionProducto((imagenes: number[]) => productosApi.ordenarImagenes(id, imagenes));
 export const useQuitarImagen = (id: number) =>
   useMutacionProducto((idImagen: number) => productosApi.quitarImagen(id, idImagen));
 export const useAgregarVariante = (id: number) =>

@@ -235,7 +235,8 @@ export interface DatosVarianteActualizada {
 
 export interface DatosImagen {
   url: string;
-  orden: number;
+  /** undefined: la imagen va al final de la lista. */
+  orden?: number | undefined;
   esPrincipal: boolean;
 }
 
@@ -253,7 +254,8 @@ export interface ValorVariante {
 export interface Imagen {
   idProductoImagen: number;
   url: string;
-  orden: number;
+  /** undefined: la imagen va al final de la lista. */
+  orden?: number | undefined;
   esPrincipal: boolean;
 }
 

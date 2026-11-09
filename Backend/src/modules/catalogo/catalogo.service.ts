@@ -405,6 +405,11 @@ export const catalogoService = {
     return ensamblarProducto(await catalogoRepository.agregarImagen(idUsuario, idProducto, datos));
   },
 
+  /** La primera imagen queda como principal. Las imágenes no están en lo cacheado: no invalida. */
+  async ordenarImagenes(idUsuario: number, idProducto: number, ids: number[]): Promise<Producto> {
+    return ensamblarProducto(await catalogoRepository.ordenarImagenes(idUsuario, idProducto, ids));
+  },
+
   /**
    * Guarda el archivo en disco y registra su URL. Si el SP rechaza (producto inexistente, tope de
    * imágenes…) borra el archivo: no quedan huérfanos. 415 si los bytes no son JPEG, PNG ni WebP.

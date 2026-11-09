@@ -282,8 +282,23 @@ export const catalogoRepository = {
         solicitante(idUsuario),
         idParam('IDProducto', idProducto),
         { nombre: 'Url', tipo: sql.NVarChar(500), valor: datos.url },
-        { nombre: 'Orden', tipo: sql.Int, valor: datos.orden },
+        { nombre: 'Orden', tipo: sql.Int, valor: datos.orden ?? null },
         { nombre: 'EsPrincipal', tipo: sql.Bit, valor: datos.esPrincipal },
+      ]),
+    );
+  },
+
+  /** El conjunto de IDs debe coincidir exactamente con las imágenes del producto (50001 si no). */
+  async ordenarImagenes(
+    idUsuario: number,
+    idProducto: number,
+    ids: number[],
+  ): Promise<ResultSetsProducto> {
+    return aResultSetsProducto(
+      await executeSp<FilaProducto>('SP_Productos_OrdenarImagenes', [
+        solicitante(idUsuario),
+        idParam('IDProducto', idProducto),
+        { nombre: 'Imagenes', tipo: sql.NVarChar(sql.MAX), valor: JSON.stringify(ids) },
       ]),
     );
   },

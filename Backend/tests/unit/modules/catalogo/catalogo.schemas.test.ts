@@ -3,6 +3,8 @@ import {
   buscarProductosQuery,
   categoriaBody,
   crearProductoBody,
+  imagenBody,
+  ordenImagenesBody,
   precioBody,
 } from '../../../../src/modules/catalogo/catalogo.schemas.js';
 
@@ -92,5 +94,59 @@ describe('categoriaBody y precioBody', () => {
     expect(precioBody.parse({ precio: '149.00' })).toEqual({ precio: 149 });
     expect(precioBody.safeParse({ precio: 149 }).success).toBe(false);
     expect(precioBody.safeParse({ precio: '149.001' }).success).toBe(false);
+  });
+});
+
+describe('ordenImagenesBody', () => {
+  it('acepta una lista de IDs distintos', () => {
+    // Arrange
+    const entrada = { imagenes: [5, 3, 9] };
+
+    // Act
+    const resultado = ordenImagenesBody.safeParse(entrada);
+
+    // Assert
+    expect(resultado.success).toBe(true);
+    expect(resultado.data).toEqual(entrada);
+  });
+
+  it('rechaza IDs repetidos señalando el campo imagenes', () => {
+    // Arrange
+    const entrada = { imagenes: [5, 3, 5] };
+
+    // Act
+    const resultado = ordenImagenesBody.safeParse(entrada);
+
+    // Assert
+    expect(resultado.success).toBe(false);
+    expect(resultado.error?.issues[0]?.path).toEqual(['imagenes']);
+  });
+
+  it.each([
+    ['vacía', { imagenes: [] }],
+    ['con un 0', { imagenes: [0, 1] }],
+    ['con un decimal', { imagenes: [1.5] }],
+    ['de más de 256', { imagenes: Array.from({ length: 257 }, (_, i) => i + 1) }],
+    ['con campos extra', { imagenes: [1], otro: 1 }],
+    ['ausente', {}],
+  ])('rechaza una lista %s', (_caso, entrada) => {
+    // Arrange / Act
+    const resultado = ordenImagenesBody.safeParse(entrada);
+
+    // Assert
+    expect(resultado.success).toBe(false);
+  });
+});
+
+describe('imagenBody: orden opcional', () => {
+  it('sin orden no inventa un 0 (el SP la deja al final)', () => {
+    // Arrange
+    const entrada = { url: 'https://img/1.png' };
+
+    // Act
+    const resultado = imagenBody.parse(entrada);
+
+    // Assert
+    expect(resultado.orden).toBeUndefined();
   });
 });

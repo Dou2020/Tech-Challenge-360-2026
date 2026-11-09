@@ -478,6 +478,12 @@ Casos de integración de Redis:
 | Registro y olvido con cuenta nueva, pendiente, con contraseña y desactivada | Mismo status y cuerpo en todos; el correo es el que corresponde (o ninguno si está desactivada) |
 | `CORREO_TRANSPORTE=smtp` sin `SMTP_HOST` o `CORREO_REMITENTE` | La validación del entorno falla y el proceso termina |
 | Subir imagen: Content-Type falso, campos multipart inválidos, más de 1 archivo o 5 campos, producto inexistente | Se decide por los bytes (no por el Content-Type); `400 VALIDACION`; no queda archivo huérfano |
+| `PUT /api/productos/:id/imagenes/orden` con el orden nuevo de todas las imágenes | `200`, `orden` = posición, la primera queda `esPrincipal` y las demás no; una bitácora `MODIFICAR` por imagen cambiada |
+| `PUT …/imagenes/orden` con una imagen faltante, sobrante, de otro producto o repetida | `400 VALIDACION` y el orden no cambia |
+| `PUT …/imagenes/orden` de un producto inexistente | `404 NO_ENCONTRADO` |
+| `PUT …/imagenes/orden` sin token, como Operador y como Cliente | `401`; `403`; `403` |
+| `PUT …/imagenes/orden` reenviando el orden que ya tiene | `200` sin escribir bitácora |
+| Agregar una imagen sin `orden` a un producto que ya tiene imágenes | Queda al final de la lista |
 | `GET`/`POST`/`PATCH`/`DELETE` en `/api/tarjetas` sin token, como Operador o Administrador, o con la tarjeta de otro cliente | `401`; `403`; `404 NO_ENCONTRADO` y la tarjeta ajena queda intacta |
 | Guardar una tarjeta: la primera, una repetida, una con `0000` y una con `predeterminada: true` | La primera queda predeterminada; repetida → `409 DUPLICADO`; `0000` → `402 PAGO_RECHAZADO` sin guardar; la nueva predeterminada desmarca la anterior y eliminar la predeterminada promueve a la más reciente |
 | Pagar con `guardar: true`, con `0000` y repitiendo la clave (también con `guardar` distinto) | La tarjeta aparece en la lista y el pedido trae `idTarjetaGuardada`; con `0000` → `402` sin guardar; la repetición → `200` con `idTarjetaGuardada: null` y sin duplicar |

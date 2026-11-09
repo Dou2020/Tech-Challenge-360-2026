@@ -31,6 +31,7 @@ vi.mock('../../../../src/modules/catalogo/catalogo.repository.js', () => ({
     cambiarEstadoProducto: vi.fn(),
     eliminarProducto: vi.fn(),
     agregarImagen: vi.fn(),
+    ordenarImagenes: vi.fn(),
     eliminarImagen: vi.fn(),
     cambiarPrecioVariante: vi.fn(),
     cambiarEstadoVariante: vi.fn(),
@@ -457,6 +458,21 @@ describe('catalogoService: invalidación de la caché', () => {
     });
 
     expect(cambiada.precio).toBe('149.00');
+    expect(cacheSimulada.invalidar).not.toHaveBeenCalled();
+  });
+});
+
+describe('catalogoService.ordenarImagenes', () => {
+  it('pasa los IDs al repositorio, arma el detalle y no invalida la caché', async () => {
+    // Arrange
+    repo.ordenarImagenes.mockResolvedValue(detalle);
+
+    // Act
+    const producto = await catalogoService.ordenarImagenes(ADMIN, 20, [5, 3]);
+
+    // Assert
+    expect(repo.ordenarImagenes).toHaveBeenCalledWith(ADMIN, 20, [5, 3]);
+    expect(producto.idProducto).toBe(20);
     expect(cacheSimulada.invalidar).not.toHaveBeenCalled();
   });
 });
