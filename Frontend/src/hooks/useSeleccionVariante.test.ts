@@ -92,4 +92,57 @@ describe('useSeleccionVariante', () => {
     expect(result.current.grupos).toHaveLength(1);
     expect(result.current.grupos[0]?.atributo).toBe('Talla');
   });
+  it('idVarianteInicial de la lista → arranca en esa variante', () => {
+    // Act
+    const { result } = renderHook(() => useSeleccionVariante(variantes, { idVarianteInicial: 3 }));
+
+    // Assert
+    expect(result.current.variante?.idVariante).toBe(3);
+    expect(result.current.cantidad).toBe(1);
+  });
+
+  it('idVarianteInicial que no existe → cae en la primera con existencia', () => {
+    // Act
+    const { result } = renderHook(() => useSeleccionVariante(variantes, { idVarianteInicial: 99 }));
+
+    // Assert
+    expect(result.current.variante?.idVariante).toBe(2);
+  });
+
+  it('unidades en el carrito → el máximo es la existencia menos lo que ya está', () => {
+    // Arrange
+    const enCarrito = new Map([[2, 3]]);
+
+    // Act
+    const { result } = renderHook(() => useSeleccionVariante(variantes, { enCarrito }));
+
+    // Assert
+    expect(result.current.enCarrito).toBe(3);
+    expect(result.current.maximo).toBe(2);
+  });
+
+  it('todo lo disponible ya está en el carrito → máximo y cantidad en 0', () => {
+    // Arrange
+    const enCarrito = new Map([[2, 5]]);
+
+    // Act
+    const { result } = renderHook(() => useSeleccionVariante(variantes, { enCarrito }));
+
+    // Assert
+    expect(result.current.maximo).toBe(0);
+    expect(result.current.cantidad).toBe(0);
+  });
+
+  it('las unidades del carrito son por variante', () => {
+    // Arrange
+    const enCarrito = new Map([[2, 5]]);
+    const { result } = renderHook(() => useSeleccionVariante(variantes, { enCarrito }));
+
+    // Act
+    act(() => result.current.elegir(1, 12));
+
+    // Assert
+    expect(result.current.enCarrito).toBe(0);
+    expect(result.current.maximo).toBe(MAXIMO_POR_LINEA);
+  });
 });

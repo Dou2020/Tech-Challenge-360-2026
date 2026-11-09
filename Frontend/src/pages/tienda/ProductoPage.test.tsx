@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { carritoApi } from '../../services/api/carrito';
 import { catalogoApi } from '../../services/api/catalogo';
 import { ApiError } from '../../services/http';
+import { crearCarrito, crearCarritoVacio, crearLineaCarrito } from '../../test/fixtures/carrito';
 import { crearAdmin, crearCliente, crearOperador } from '../../test/fixtures/usuarios';
 import { crearAuth, renderizar } from '../../test/renderizar';
 import type { ProductoDetalle } from '../../types/catalogo';
@@ -16,6 +17,7 @@ vi.mock('../../services/api/carrito', () => ({
 
 const producto = vi.mocked(catalogoApi.producto);
 const agregarItem = vi.mocked(carritoApi.agregarItem);
+const obtenerCarrito = vi.mocked(carritoApi.obtener);
 
 const valores = (talla: [number, string], color: [number, string]) => [
   { idAtributo: 1, atributo: 'Talla', idValorAtributo: talla[0], valor: talla[1] },
@@ -57,10 +59,34 @@ function pagina() {
   return renderizar(<ProductoPage />, { ruta: '/productos/5', patron: '/productos/:id' });
 }
 
+function paginaCliente() {
+  return renderizar(<ProductoPage />, {
+    ruta: '/productos/5',
+    patron: '/productos/:id',
+    auth: crearAuth({ usuario: crearCliente(), estado: 'autenticado' }),
+  });
+}
+
+/** Carrito con líneas de este producto (idProducto 5). */
+function carritoCon(...lineas: { idVariante: number; cantidad: number; fecha?: string }[]) {
+  return crearCarrito({
+    items: lineas.map((l, i) =>
+      crearLineaCarrito({
+        idCarritoDetalle: i + 1,
+        idProducto: 5,
+        idVariante: l.idVariante,
+        cantidad: l.cantidad,
+        fechaAgregado: l.fecha ?? '2026-11-02T10:00:00.000Z',
+      }),
+    ),
+  });
+}
+
 describe('ProductoPage', () => {
   beforeEach(() => {
     producto.mockReset().mockResolvedValue(detalle);
     agregarItem.mockReset();
+    obtenerCarrito.mockReset().mockResolvedValue(crearCarritoVacio());
   });
 
   it('muestra la variante inicial con su precio y existencia', async () => {
@@ -271,5 +297,112 @@ describe('ProductoPage', () => {
     // Assert
     await screen.findByText(/Disponible: 1/);
     await waitFor(() => expect(producto).toHaveBeenCalledTimes(2));
+  });
+
+  describe('lo que ya está en el carrito', () => {
+    it('arranca en la variante del carrito y muestra cuántas hay con enlace al carrito', async () => {
+      // Arrange
+      producto.mockResolvedValue({
+        ...detalle,
+        variantes: detalle.variantes.map((v) => ({ ...v, existenciaDisponible: 3 })),
+      });
+      obtenerCarrito.mockResolvedValue(carritoCon({ idVariante: 12, cantidad: 2 }));
+
+      // Act
+      paginaCliente();
+
+      // Assert
+      expect(await screen.findByText(/En tu carrito: 2/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '42' })).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByRole('link', { name: 'Ver carrito' })).toHaveAttribute('href', '/carrito');
+      expect(screen.getByLabelText('Cantidad')).toHaveValue(1);
+    });
+
+    it('con varias variantes en el carrito → arranca en la agregada al final', async () => {
+      // Arrange
+      producto.mockResolvedValue({
+        ...detalle,
+        variantes: detalle.variantes.map((v) => ({ ...v, existenciaDisponible: 3 })),
+      });
+      obtenerCarrito.mockResolvedValue(
+        carritoCon(
+          { idVariante: 12, cantidad: 1, fecha: '2026-11-02T10:00:00.000Z' },
+          { idVariante: 11, cantidad: 1, fecha: '2026-11-02T11:00:00.000Z' },
+        ),
+      );
+
+      // Act
+      paginaCliente();
+
+      // Assert
+      expect(await screen.findByRole('button', { name: '40' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByText(/En tu carrito: 1/)).toBeInTheDocument();
+    });
+
+    it('el tope del contador es lo disponible menos lo que ya está en el carrito', async () => {
+      // Arrange
+      obtenerCarrito.mockResolvedValue(carritoCon({ idVariante: 11, cantidad: 2 }));
+      paginaCliente();
+      const campo = await screen.findByLabelText('Cantidad');
+
+      // Act
+      await userEvent.clear(campo);
+      await userEvent.type(campo, '3');
+
+      // Assert
+      expect(campo).toHaveValue(1);
+      expect(screen.getByRole('button', { name: 'Aumentar cantidad' })).toBeDisabled();
+    });
+
+    it('todo lo disponible ya está en el carrito → lo avisa y bloquea agregar', async () => {
+      // Arrange
+      obtenerCarrito.mockResolvedValue(carritoCon({ idVariante: 11, cantidad: 3 }));
+
+      // Act
+      paginaCliente();
+
+      // Assert
+      expect(
+        await screen.findByText('Ya tienes en tu carrito todo lo disponible.'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('3 disponibles')).toBeInTheDocument();
+      expect(screen.queryByText('Agotado')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Agregar al carrito' })).toBeDisabled();
+    });
+
+    it('al agregar → el contador vuelve a 1 y se ve el total del carrito', async () => {
+      // Arrange
+      agregarItem.mockResolvedValue(carritoCon({ idVariante: 11, cantidad: 2 }));
+      paginaCliente();
+      await userEvent.click(await screen.findByRole('button', { name: 'Aumentar cantidad' }));
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Agregar al carrito' }));
+
+      // Assert
+      expect(await screen.findByText(/En tu carrito: 2/)).toBeInTheDocument();
+      expect(agregarItem).toHaveBeenCalledWith(11, 2);
+      expect(screen.getByLabelText('Cantidad')).toHaveValue(1);
+      expect(screen.queryByRole('link', { name: 'Ir al carrito' })).not.toBeInTheDocument();
+    });
+
+    it('si el carrito no se puede leer → la ficha se muestra como siempre', async () => {
+      // Arrange
+      obtenerCarrito.mockRejectedValue(new ApiError(500, 'ERROR_INTERNO', 'Falla.'));
+
+      // Act
+      paginaCliente();
+
+      // Assert
+      expect(await screen.findByRole('button', { name: '40' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.queryByText(/En tu carrito/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Agregar al carrito' })).toBeEnabled();
+    });
   });
 });

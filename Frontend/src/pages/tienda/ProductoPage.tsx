@@ -1,16 +1,17 @@
 import { ShoppingCart } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/useAuth';
 import { Badge, Button, Money, Skeleton } from '../../components/atoms';
 import { ErrorState, Notice, QuantityStepper } from '../../components/molecules';
 import { ProductGallery, VariantSelector } from '../../components/organisms';
-import { useAgregarItem, useProducto } from '../../hooks/queries';
+import { useAgregarItem, useCarrito, useProducto } from '../../hooks/queries';
 import { useSeleccionVariante } from '../../hooks/useSeleccionVariante';
 import { ApiError } from '../../services/http';
 import type { ProductoDetalle } from '../../types/catalogo';
 import { avisoExito, errorNotice, type Aviso } from '../../utils/notice';
+import { productoEnCarrito, type ProductoEnCarrito } from '../../utils/variantes';
 import NoEncontradoPage from '../errores/NoEncontradoPage';
 
 function ProductoCargando() {
@@ -26,13 +27,24 @@ function ProductoCargando() {
   );
 }
 
-function DetalleProducto({ producto }: { producto: ProductoDetalle }) {
+interface PropsDetalle {
+  producto: ProductoDetalle;
+  /** Lo que ya hay de este producto en el carrito: fija la variante inicial y baja el tope. */
+  carrito: ProductoEnCarrito;
+}
+
+function DetalleProducto({ producto, carrito }: PropsDetalle) {
   const { usuario } = useAuth();
   const queryClient = useQueryClient();
   const agregar = useAgregarItem();
   const [aviso, setAviso] = useState<Aviso | null>(null);
-  const seleccion = useSeleccionVariante(producto.variantes);
-  const { variante, maximo, cantidad } = seleccion;
+  const seleccion = useSeleccionVariante(producto.variantes, {
+    idVarianteInicial: carrito.idVarianteReciente,
+    enCarrito: carrito.porVariante,
+  });
+  const { variante, enCarrito, maximo, cantidad } = seleccion;
+  // Hay existencia, pero toda ya está en el carrito.
+  const todoEnCarrito = !!variante && maximo === 0 && variante.existenciaDisponible > 0;
 
   // Operador y Administrador no tienen carrito.
   const puedeComprar = !usuario || usuario.rol === 'Cliente';
@@ -43,7 +55,11 @@ function DetalleProducto({ producto }: { producto: ProductoDetalle }) {
     agregar.mutate(
       { idVariante: variante.idVariante, cantidad },
       {
-        onSuccess: () => setAviso(avisoExito('Agregado al carrito.')),
+        onSuccess: () => {
+          setAviso(avisoExito('Agregado al carrito.'));
+          // La API suma: el contador vuelve a 1 y "En tu carrito" ya muestra el total.
+          seleccion.setCantidad(1);
+        },
         onError: (error) => {
           const base = errorNotice(error, 'No se pudo agregar al carrito.');
           if (error instanceof ApiError && error.code === 'STOCK_INSUFICIENTE') {
@@ -103,14 +119,29 @@ function DetalleProducto({ producto }: { producto: ProductoDetalle }) {
         />
 
         {variante ? (
-          <p className="text-sm text-texto-suave">
-            SKU {variante.sku} ·{' '}
-            {maximo > 0 ? (
-              <span>{variante.existenciaDisponible} disponibles</span>
-            ) : (
-              <Badge tono="rojo">Agotado</Badge>
+          <div className="space-y-1 text-sm text-texto-suave">
+            <p>
+              SKU {variante.sku} ·{' '}
+              {variante.existenciaDisponible > 0 ? (
+                <span>{variante.existenciaDisponible} disponibles</span>
+              ) : (
+                <Badge tono="rojo">Agotado</Badge>
+              )}
+            </p>
+            {puedeComprar && enCarrito > 0 && (
+              <p>
+                En tu carrito: {enCarrito} ·{' '}
+                <Link to="/carrito" className="font-medium text-acento hover:underline">
+                  Ver carrito
+                </Link>
+              </p>
             )}
-          </p>
+            {puedeComprar && todoEnCarrito && (
+              <p role="status" className="text-aviso-texto">
+                Ya tienes en tu carrito todo lo disponible.
+              </p>
+            )}
+          </div>
         ) : (
           <p role="status" className="text-sm text-aviso-texto">
             Esa combinación no está disponible. Elige otra.
@@ -133,7 +164,7 @@ function DetalleProducto({ producto }: { producto: ProductoDetalle }) {
           </p>
         )}
 
-        {aviso?.tipo === 'exito' && (
+        {aviso?.tipo === 'exito' && enCarrito === 0 && (
           <Link
             to="/carrito"
             className="inline-block text-sm font-medium text-acento hover:underline"
@@ -150,9 +181,14 @@ export default function ProductoPage() {
   const { id } = useParams();
   const idProducto = Number(id);
   const producto = useProducto(idProducto);
+  // Deshabilitada para el personal y para el invitado sin token: entonces no está cargando.
+  const carrito = useCarrito();
+  const items = carrito.data?.items;
+  const enCarrito = useMemo(() => productoEnCarrito(items ?? [], idProducto), [items, idProducto]);
 
   if (!Number.isInteger(idProducto) || idProducto < 1) return <NoEncontradoPage />;
-  if (producto.isPending) return <ProductoCargando />;
+  // Se espera al carrito porque la variante inicial se fija una sola vez al montar.
+  if (producto.isPending || carrito.isLoading) return <ProductoCargando />;
   if (producto.isError) {
     if (producto.error instanceof ApiError && producto.error.status === 404) {
       return <NoEncontradoPage />;
@@ -160,5 +196,7 @@ export default function ProductoPage() {
     return <ErrorState error={producto.error} onReintentar={() => void producto.refetch()} />;
   }
   // La clave reinicia la selección si cambia de producto.
-  return <DetalleProducto key={producto.data.idProducto} producto={producto.data} />;
+  return (
+    <DetalleProducto key={producto.data.idProducto} producto={producto.data} carrito={enCarrito} />
+  );
 }

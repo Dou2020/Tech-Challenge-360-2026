@@ -1,3 +1,4 @@
+import type { LineaCarrito } from '../types/carrito';
 import type { Variante } from '../types/catalogo';
 
 export interface GrupoAtributo {
@@ -66,4 +67,22 @@ export function elegirValor(
   );
   const alterna = conValor.find((v) => v.existenciaDisponible > 0) ?? conValor[0];
   return alterna ? seleccionDeVariante(alterna) : seleccion;
+}
+
+/** Lo que ya hay en el carrito de un producto: unidades por variante y la línea agregada al final. */
+export interface ProductoEnCarrito {
+  porVariante: Map<number, number>;
+  idVarianteReciente: number | undefined;
+}
+
+export function productoEnCarrito(items: LineaCarrito[], idProducto: number): ProductoEnCarrito {
+  const porVariante = new Map<number, number>();
+  let reciente: LineaCarrito | undefined;
+  for (const linea of items) {
+    if (linea.idProducto !== idProducto) continue;
+    porVariante.set(linea.idVariante, (porVariante.get(linea.idVariante) ?? 0) + linea.cantidad);
+    // Las fechas son ISO 8601 UTC: se comparan como texto.
+    if (!reciente || linea.fechaAgregado >= reciente.fechaAgregado) reciente = linea;
+  }
+  return { porVariante, idVarianteReciente: reciente?.idVariante };
 }

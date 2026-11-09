@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { crearLineaCarrito } from '../test/fixtures/carrito';
 import type { Variante } from '../types/catalogo';
 import {
   agruparAtributos,
   elegirValor,
   encontrarVariante,
+  productoEnCarrito,
   seleccionDeVariante,
   varianteInicial,
 } from './variantes';
@@ -112,5 +114,50 @@ describe('variantes', () => {
 
     // Assert
     expect(seleccion).toEqual({ 1: 10, 2: 21 });
+  });
+});
+
+describe('productoEnCarrito', () => {
+  it('suma las unidades por variante del producto y toma la línea agregada al final', () => {
+    // Arrange
+    const items = [
+      crearLineaCarrito({
+        idProducto: 5,
+        idVariante: 12,
+        cantidad: 1,
+        fechaAgregado: '2026-11-02T10:00:00.000Z',
+      }),
+      crearLineaCarrito({
+        idProducto: 9,
+        idVariante: 41,
+        cantidad: 4,
+        fechaAgregado: '2026-11-03T10:00:00.000Z',
+      }),
+      crearLineaCarrito({
+        idProducto: 5,
+        idVariante: 11,
+        cantidad: 2,
+        fechaAgregado: '2026-11-02T12:00:00.000Z',
+      }),
+    ];
+
+    // Act
+    const resultado = productoEnCarrito(items, 5);
+
+    // Assert
+    expect([...resultado.porVariante]).toEqual([
+      [12, 1],
+      [11, 2],
+    ]);
+    expect(resultado.idVarianteReciente).toBe(11);
+  });
+
+  it('producto que no está en el carrito → mapa vacío y sin variante', () => {
+    // Act
+    const resultado = productoEnCarrito([crearLineaCarrito({ idProducto: 9 })], 5);
+
+    // Assert
+    expect(resultado.porVariante.size).toBe(0);
+    expect(resultado.idVarianteReciente).toBeUndefined();
   });
 });

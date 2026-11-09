@@ -3,6 +3,7 @@
 Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Tiene la **tienda**, las **vistas del Cliente** y la **consola** de Operador y Administrador:
 
 - Tienda: inicio, catálogo con filtros y paginación, detalle de producto con selección de variante y carrito (de invitado con `X-Cart-Token`, o del Cliente con su sesión).
+  - El detalle de producto refleja el carrito: arranca en la variante de ese producto agregada al final, muestra "En tu carrito: N · Ver carrito" y limita el contador a lo disponible menos lo que ya está en el carrito, porque `POST /carrito/items` suma. Tras agregar, el contador vuelve a 1.
 - Autenticación: login, registro sin contraseña, recuperar contraseña y crear/restablecer contraseña desde el enlace del correo.
 - Cliente (rutas protegidas por rol): checkout con reserva de 15 min, `Idempotency-Key` y tarjetas guardadas, pedido confirmado, Mis pedidos con detalle y cancelación, Mis direcciones, Mis tarjetas y Mi perfil.
 - Consola (`/consola`, ver [Rutas de la consola](#rutas-de-la-consola)): panel de operación (inicio del Operador), pedidos, inventario con kardex y perfil para Operador y Administrador; dashboard, reportes, categorías, productos, cupones, usuarios, bitácora y configuración solo para Administrador.
