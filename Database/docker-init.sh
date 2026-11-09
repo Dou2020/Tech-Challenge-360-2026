@@ -2,8 +2,11 @@
 # Crea la base de datos de ShopCart ejecutando scripts/*.sql en orden.
 # Es el punto de entrada del servicio db-init de docker compose y también se puede ejecutar a mano.
 #
-# Si la base ya existe la conserva (así `docker compose up` no borra los datos en cada arranque);
-# con DB_RESET=true la elimina y la vuelve a crear desde cero.
+# Si la base no existe, o con DB_RESET=true, la crea desde cero con todos los scripts en orden.
+# Si ya existe la conserva (así `docker compose up` no borra los datos en cada arranque) y solo aplica los
+# scripts incrementales: los de scripts/ con prefijo numérico >= 100 (100_sucursales.sql, 101_...). Son
+# idempotentes, así que se pueden ejecutar en cada arranque y actualizan una base existente sin reset.
+# Un cambio de esquema posterior a 090 va en un script nuevo >= 100, no en 002.
 # Con DB_PRUEBAS=true ejecuta además pruebas/*.sql, que comprueban las restricciones de integridad
 # y no dejan datos.
 #
@@ -59,6 +62,16 @@ if (( ${#scripts[@]} == 0 )); then
   exit 1
 fi
 
+# Scripts incrementales: prefijo numérico >= 100 (10# evita que 080 o 090 se lean como octal).
+incrementales=()
+for script in "${scripts[@]}"; do
+  prefijo="$(basename "$script")"
+  prefijo="${prefijo%%_*}"
+  if [[ "$prefijo" =~ ^[0-9]+$ ]] && (( 10#$prefijo >= 100 )); then
+    incrementales+=("$script")
+  fi
+done
+
 ejecutar() {
   echo "-> $(basename "$1")"
   "$SQLCMD" -S "$DB_SERVER" -U "$DB_USER" -P "$DB_PASSWORD" -C -b -I \
@@ -71,6 +84,12 @@ existe="$("$SQLCMD" -S "$DB_SERVER" -U "$DB_USER" -P "$DB_PASSWORD" -C -b -h -1 
 
 if [[ "$existe" == "1" && "$DB_RESET" != "true" ]]; then
   echo "La base $DB_NAME ya existe; se conserva. Usa DB_RESET=true para recrearla."
+  if (( ${#incrementales[@]} > 0 )); then
+    echo "Aplicando scripts incrementales…"
+    for script in "${incrementales[@]}"; do
+      ejecutar "$script"
+    done
+  fi
 else
   echo "Servidor: $DB_SERVER | Base: $DB_NAME | Login de la aplicación: $APP_DB_LOGIN"
 

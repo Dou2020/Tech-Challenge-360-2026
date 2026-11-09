@@ -12,6 +12,7 @@ El backend (arquitectura, Redis y sus pruebas) está en [Backend/README.md](../B
    - [Con Docker Compose](#con-docker-compose)
    - [Con `docker-init.sh`](#con-docker-initsh)
    - [Con `script.sql`](#con-scriptsql)
+   - [Actualizar una base existente](#actualizar-una-base-existente)
    - [Cambios de esquema](#cambios-de-esquema)
 4. [Datos iniciales](#datos-iniciales)
    - [Catálogos del sistema](#catálogos-del-sistema)
@@ -54,7 +55,7 @@ El backend (arquitectura, Redis y sus pruebas) está en [Backend/README.md](../B
 Database/
 ├── scripts/
 │   ├── 001_crear_base_datos.sql     # Elimina y crea la base (collation Modern_Spanish_100_CI_AI, READ_COMMITTED_SNAPSHOT)
-│   ├── 002_tablas.sql               # 30 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
+│   ├── 002_tablas.sql               # 29 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT (la tabla 30, Sucursal, la crea 100)
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
 │   ├── 005_funciones.sql            # Funciones tipo tabla (FU_): existencia disponible, búsqueda, catálogo, cupones, totales del carrito, reserva del checkout y JSON para la bitácora
@@ -68,23 +69,24 @@ Database/
 │   ├── 013_sp_reportes.sql          # SPs de reportes y dashboard
 │   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema
 │   ├── 015_sp_tarjetas.sql          # SPs de tarjetas guardadas del cliente
-│   ├── 016_sp_sucursales.sql        # SPs de sucursales de retiro (catálogo público y gestión)
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
-│   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
-│   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
+│   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío (Estándar, Express, Recoger en tienda), configuración
+│   ├── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
+│   ├── 100_sucursales.sql           # Incremental e idempotente: tabla Sucursal, columnas y restricciones de Pedido y MetodoEnvio, sucursales de ejemplo y ajuste de los retiros existentes
+│   └── 101_sp_sucursales.sql        # Incremental e idempotente: SPs de sucursales (catálogo público y gestión) y los de checkout, reserva y pedidos que las usan
 ├── pruebas/
 │   └── integridad.sql               # Intenta romper cada regla de integridad y verifica qué restricción lo impide; no deja datos
 ├── diagrama/
 │   ├── diagrama_er.svg              # Diagrama entidad-relación (vectorial; GitHub lo muestra directamente)
 │   └── diagrama_er.png              # El mismo diagrama en PNG
 ├── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose), la opción manual y las pruebas del backend
-├── script.sql                       # Los 19 scripts de scripts/ en un solo archivo, para crear la base desde SSMS o sqlcmd
+├── script.sql                       # Los 20 scripts de scripts/ en un solo archivo, para crear la base desde SSMS o sqlcmd
 └── README.md                        # Este documento
 ```
 
 ## Crear la base de datos
 
-Las tres formas crean lo mismo: la base, sus objetos, el login de la aplicación y los datos iniciales. Docker Compose y `docker-init.sh` ejecutan los scripts numerados de `scripts/`, que son la fuente de verdad; `script.sql` es una copia de esos scripts en un solo archivo.
+Las tres formas crean lo mismo: la base, sus objetos, el login de la aplicación y los datos iniciales. Docker Compose y `docker-init.sh` ejecutan los scripts numerados de `scripts/`, que son la fuente de verdad (001 a 090 crean la base y 100 en adelante son [incrementales](#actualizar-una-base-existente)); `script.sql` es una copia de esos scripts en un solo archivo.
 
 ### Con Docker Compose
 
@@ -126,7 +128,7 @@ APP_DB_PASSWORD='ShopCartApp#2026' \
 | `DB_RESET` | Opcional; `true` para borrar y volver a crear la base aunque ya exista |
 | `DB_PRUEBAS` | Opcional; `true` para ejecutar `Database/pruebas` al terminar. Comprueba que la base rechace los datos que rompen las reglas y no deja filas |
 
-> Si la base ya existe, el script la conserva (con `DB_PRUEBAS=true` solo ejecuta las pruebas). Con `DB_RESET=true`, `001_crear_base_datos.sql` **la elimina y la vuelve a crear** en su estado inicial con los datos semilla.
+> Si la base ya existe, el script la conserva y solo aplica los [scripts incrementales](#actualizar-una-base-existente) (100 en adelante, imprimiendo "Aplicando scripts incrementales…"); con `DB_PRUEBAS=true` ejecuta además las pruebas. Con `DB_RESET=true`, `001_crear_base_datos.sql` **la elimina y la vuelve a crear** en su estado inicial con los datos semilla.
 
 Si no tienes `sqlcmd` instalado, puedes ejecutarlo dentro del contenedor de SQL Server (`shopcart-sql`, del paso [2. Levantar SQL Server](../Backend/README.md#2-levantar-sql-server) del README del backend), desde la raíz del repositorio:
 
@@ -142,7 +144,7 @@ Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, a
 
 ### Con `script.sql`
 
-`script.sql` reúne en un solo archivo los 19 scripts de `scripts/` (001 a 090), copiados en orden y sin cambios en el commit `b14e7b5`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
+`script.sql` reúne en un solo archivo los 20 scripts de `scripts/` (001 a 015, 080, 085, 090, 100 y 101), copiados en orden y sin cambios en el commit `COMMIT_PENDIENTE`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
 
 Se ejecuta en **modo SQLCMD**, con un login con rol `sysadmin`: usa las variables `DbName`, `AppLogin` y `AppPassword` (se cambian en sus líneas `:setvar`) y se detiene en el primer error. Sin modo SQLCMD se detiene al inicio con un aviso, sin crear nada.
 
@@ -154,11 +156,41 @@ Se ejecuta en **modo SQLCMD**, con un login con rol `sysadmin`: usa las variable
 
 > Igual que `docker-init.sh` con `DB_RESET=true`, **elimina la base si ya existe** y la vuelve a crear con los datos semilla. `AppPassword` debe coincidir con `DB_PASSWORD` del `.env` del backend y cumplir la política de contraseñas del servidor (`CHECK_POLICY = ON`).
 
+### Actualizar una base existente
+
+Una base que ya existe se actualiza **sin `DB_RESET` y sin perder datos**. `docker-init.sh` (y por tanto `db-init` de docker compose) hace lo siguiente según el caso:
+
+| Situación | Qué ejecuta |
+| :--- | :--- |
+| La base no existe, o `DB_RESET=true` | Todos los scripts de `scripts/` en orden (001 a 101) |
+| La base existe | Solo los scripts con prefijo numérico **100 o mayor**, en orden, tras el aviso "Aplicando scripts incrementales…" |
+
+Los scripts incrementales son **idempotentes**: cada paso comprueba si ya se aplicó (`OBJECT_ID`, `COL_LENGTH`, `sys.foreign_keys`, `sys.check_constraints`, `sys.indexes`, `COLUMNPROPERTY`) y los programables usan `CREATE OR ALTER`, así que pueden correr en cada arranque sin efecto. Los de esquema o datos van en una sola transacción con `XACT_ABORT ON`.
+
+Hoy hay dos:
+
+- `100_sucursales.sql` crea la tabla `Sucursal`, agrega `MetodoEnvio.RequiereSucursal` y `Pedido.IDSucursal`/`RetiroEnSucursal`, deja `Pedido.IDDireccion` en NULL, recrea `FK_Pedido_Direccion` y `FK_Pedido_MetodoEnvio` (ahora compuesta), crea `FK_Pedido_Sucursal`, `CK_Pedido_Entrega` e `IX_Pedido_IDSucursal`, renombra "Recoger en tienda" a "Recoger en sucursal" (conserva su `IDMetodoEnvio`) e inserta las cuatro sucursales de ejemplo si no existen.
+- `101_sp_sucursales.sql` instala los SPs de sucursales y la versión nueva de `SP_Checkout_ListarMetodosEnvio`, `SP_Inventario_ReservarExistencia`, `SP_Pedidos_CrearPedido` y `SP_Pedidos_ObtenerPorId`.
+
+**Pedidos de retiro que ya existen.** Los pedidos hechos con "Recoger en tienda" antes de esta funcionalidad no tienen sucursal. `100_sucursales.sql` les asigna `RetiroEnSucursal = 1` (copia del método), los pasa a **Sucursal Zona 10** y deja su `IDDireccion` en NULL. `DireccionEntrega` no se toca: es la copia histórica de a dónde se envió. Esto incluye los pedidos 3 y 7 de la semilla. No actualiza `IDEstadoPedido`, así que `TR_Pedidos_ValidarTransicion` no interviene. Si hubiera retiros por migrar y no existiera "Sucursal Zona 10" (por ejemplo, si se renombró), el script falla con `THROW 50000` y revierte todo.
+
+**Respaldo recomendado antes de actualizar.** Con docker compose, desde la raíz del repositorio (el archivo queda dentro del volumen del contenedor; cópialo después con `docker compose cp`):
+
+```bash
+docker compose exec -T sqlserver bash -c '/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C' <<'SQL'
+BACKUP DATABASE [ShopCart] TO DISK = N'/var/opt/mssql/data/ShopCart.bak' WITH INIT, COMPRESSION;
+GO
+SQL
+docker compose cp sqlserver:/var/opt/mssql/data/ShopCart.bak ./ShopCart.bak
+```
+
+Para restaurarlo: `RESTORE DATABASE [ShopCart] FROM DISK = N'/var/opt/mssql/data/ShopCart.bak' WITH REPLACE` (con la base sin conexiones activas).
+
 ### Cambios de esquema
 
-No hay migraciones. `docker-init.sh` crea la base solo si no existe, así que `docker compose up` conserva los datos entre arranques y el despliegue (`docker compose --profile app up -d --build`) tampoco migra una base existente. Un cambio en las tablas se aplica recreando la base con `DB_RESET=true`, que **borra los datos** y vuelve a cargar los catálogos y la semilla.
+No hay un framework de migraciones. `docker-init.sh` crea la base solo si no existe, y con una base existente aplica únicamente los scripts incrementales (100 en adelante). Por eso **un cambio de esquema, de datos o de SPs posterior a 090 va en un script nuevo con prefijo 100 o mayor** (`102_…`), idempotente, y no editando `002_tablas.sql` ni los demás scripts base: así el servidor se actualiza con `docker compose --profile app up -d --build` sin recrear la base. Una instalación nueva ejecuta el script nuevo después de 090, y el resultado de ambos caminos debe ser el mismo esquema. Los scripts base solo se editan para corregir algo anterior a 100 que no afecte a las bases ya creadas. `DB_RESET=true` sigue siendo la forma de volver al estado inicial, pero **borra los datos**.
 
-Después de cambiar un script numerado hay que actualizar también `script.sql` y, si cambian tablas o relaciones, el [diagrama entidad-relación](#diagrama-entidad-relación).
+Después de agregar o cambiar un script hay que actualizar también `script.sql` y, si cambian tablas o relaciones, el [diagrama entidad-relación](#diagrama-entidad-relación). Cada restricción nueva lleva su caso en `pruebas/integridad.sql`.
 
 ## Datos iniciales
 
@@ -166,7 +198,7 @@ Después de cambiar un script numerado hay que actualizar también `script.sql` 
 
 ### Catálogos del sistema
 
-Datos que crea `085_datos_catalogos.sql`:
+Datos que crea `085_datos_catalogos.sql`, salvo el método de envío con retiro y las sucursales, que crea `100_sucursales.sql` (en una instalación nueva corre después de la semilla, que usa "Recoger en tienda" y la migración lo renombra):
 
 | Catálogo | Valores |
 | :--- | :--- |

@@ -114,7 +114,7 @@ Comandos útiles:
 | `docker compose down` | Detener todo y conservar los datos |
 | `docker compose down -v` | Detener todo y borrar el volumen de la base |
 
-`docker compose up` no borra la base en cada arranque: `db-init` la crea solo si no existe. En equipos con Apple Silicon, la imagen de SQL Server corre emulada (`platform: linux/amd64`).
+`docker compose up` no borra la base en cada arranque: `db-init` la crea solo si no existe y, si ya existe, aplica solo los scripts incrementales de `Database/scripts` (prefijo numérico 100 en adelante, idempotentes) para actualizarla sin perder datos. En equipos con Apple Silicon, la imagen de SQL Server corre emulada (`platform: linux/amd64`).
 
 #### Integración continua y despliegue
 
@@ -122,7 +122,7 @@ El workflow `.github/workflows/ci-despliegue.yml` se ejecuta en cada pull reques
 - **Backend:** typecheck, lint, formato, pruebas unitarias y pruebas de integración (testcontainers levanta SQL Server y Redis, y además corre `Database/pruebas`).
 - **Frontend:** typecheck, lint, formato, pruebas y build.
 
-Por ahora no hay despliegue automático. En el servidor se despliega a mano desde esta carpeta con `docker compose --env-file /opt/shopcart/.env --profile app up -d --build` (el `.env` del servidor vive fuera del repo) y se comprueba que `/api/health` responda a través de nginx.
+Por ahora no hay despliegue automático. En el servidor se despliega a mano desde esta carpeta con `docker compose --env-file /opt/shopcart/.env --profile app up -d --build` (el `.env` del servidor vive fuera del repo; `db-init` actualiza la base existente con los scripts incrementales, sin `DB_RESET` y sin perder datos, así que conviene un respaldo antes: ver [Actualizar una base existente](Database/README.md#actualizar-una-base-existente)) y se comprueba que `/api/health` responda a través de nginx.
 
 El sitio se publica con un túnel de Cloudflare gestionado en el host (`cloudflared` como servicio de systemd), fuera de docker compose. Las copias de referencia de su configuración están en `.cloudflared/` y las credenciales del túnel nunca se versionan. En el `.env` del servidor, `APP_URL_PUBLICA` y `CORS_ORIGIN` llevan la URL pública del túnel, y `FRONTEND_PORT` y `BACKEND_PORT` deben coincidir con los puertos de `.cloudflared/shopcart.yml`. El despliegue no migra una base existente: un cambio de tablas requiere `DB_RESET=true … run --rm db-init` manual, que borra los datos.
 
@@ -177,12 +177,12 @@ Catálogo de ejemplo: 4 categorías, atributos Talla y Color, 7 productos (uno i
 
 Sucursales de retiro (método de envío "Recoger en sucursal", sin dirección del cliente; los pedidos 3 y 7 se recogen en Sucursal Zona 10):
 
-| IDSucursal | Nombre | Municipio, departamento | Estado |
-| :---: | :--- | :--- | :--- |
-| 1 | `Sucursal Zona 10` | Guatemala, Guatemala | activa |
-| 2 | `Sucursal Zona 1` | Guatemala, Guatemala | activa |
-| 3 | `Sucursal Mixco` | Mixco, Guatemala | activa |
-| 4 | `Sucursal Antigua` | Antigua Guatemala, Sacatepéquez | **inactiva** (no se ofrece en el checkout) |
+| IDSucursal | Nombre | Teléfono | Municipio, departamento | Estado |
+| :---: | :--- | :--- | :--- | :--- |
+| 1 | `Sucursal Zona 10` | `24001010` | Guatemala, Guatemala | activa |
+| 2 | `Sucursal Zona 1` | `24001001` | Guatemala, Guatemala | activa |
+| 3 | `Sucursal Mixco` | `24001020` | Mixco, Guatemala | activa |
+| 4 | `Sucursal Antigua` | `24001030` | Antigua Guatemala, Sacatepéquez | **inactiva** (no se ofrece en el checkout) |
 
 ---
 
