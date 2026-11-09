@@ -666,13 +666,9 @@ GO
 
 -- POST /api/checkout/iniciar: reserva la existencia de cada línea del carrito del cliente por
 -- Configuracion.MinutosReserva (15 si falta o no es un entero entre 1 y 1440) y devuelve el resumen.
+--   @IDDireccion    dirección del propio cliente y activa; si no, 50004
 --   @IDMetodoEnvio  método de envío activo; si no, 50004
---   @IDDireccion    con un método a domicilio: dirección del propio cliente y activa (falta → 50001; si no, 50004).
---                   Con un método que requiere sucursal se ignora.
---   @IDSucursal     con un método que requiere sucursal: sucursal activa (falta → 50001; si no, 50004).
---                   Con un método a domicilio se ignora.
--- Validaciones, en orden: solicitante (50004/50012), método y destino (SP_Checkout_ResolverEntrega: 50004/50001),
--- carrito vacío (50001),
+-- Validaciones, en orden: solicitante (50004/50012), dirección y método (50004), carrito vacío (50001),
 -- línea no vendible (variante, producto o categoría inactivos → 50001), cupón del carrito
 -- (FU_Cupones_Validar → su código 50060–50067; el carrito conserva el cupón, el cliente lo quita) y
 -- existencia (50030).
@@ -692,16 +688,14 @@ GO
 -- el mismo @IDMetodoEnvio.
 CREATE OR ALTER PROCEDURE dbo.SP_Inventario_ReservarExistencia
     @IDUsuarioSolicitante INT,
-    @IDDireccion          INT = NULL,
-    @IDMetodoEnvio        INT,
-    @IDSucursal           INT = NULL
+    @IDDireccion          INT,
+    @IDMetodoEnvio        INT
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
     DECLARE @Ahora DATETIME2(3);
-    DECLARE @RequiereSucursal BIT, @CostoEnvio DECIMAL(12,2), @DireccionEntrega NVARCHAR(800);
     DECLARE @IDCarrito INT, @IDCupon INT, @IDVariante INT, @Minutos INT, @Error INT, @Bloqueada INT;
     DECLARE @Mensaje NVARCHAR(2048), @Detalle NVARCHAR(MAX), @Skus NVARCHAR(MAX);
     DECLARE @Linea TABLE (
@@ -725,9 +719,14 @@ BEGIN
         -- 1. Validar
         EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
 
-        EXEC dbo.SP_Checkout_ResolverEntrega @IDUsuarioSolicitante, @IDMetodoEnvio, @IDDireccion OUTPUT,
-                                             @IDSucursal OUTPUT, @RequiereSucursal OUTPUT, @CostoEnvio OUTPUT,
-                                             @DireccionEntrega OUTPUT;
+        IF NOT EXISTS (
+            SELECT 1 FROM dbo.Direccion
+            WHERE IDDireccion = @IDDireccion AND IDUsuario = @IDUsuarioSolicitante AND Activo = 1
+        )
+            THROW 50004, N'La dirección no existe.', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM dbo.MetodoEnvio WHERE IDMetodoEnvio = @IDMetodoEnvio AND Activo = 1)
+            THROW 50004, N'El método de envío no existe o no está disponible.', 1;
 
         -- 2. Bloquear el carrito (primero en el orden de bloqueo)
         EXEC dbo.SP_Carrito_BuscarActivo @IDUsuarioSolicitante, NULL, 1, @IDCarrito OUTPUT;

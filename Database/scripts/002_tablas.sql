@@ -251,39 +251,14 @@ GO
    Pedidos
    ========================================================= */
 
--- Sucursal donde el cliente puede recoger su pedido (método de envío con RequiereSucursal = 1).
--- Se desactiva en lugar de borrarse cuando ya tiene pedidos; el pedido guarda además una copia textual
--- de su dirección en DireccionEntrega.
-CREATE TABLE dbo.Sucursal (
-    IDSucursal        INT IDENTITY(1,1) NOT NULL,
-    Nombre            NVARCHAR(100)     NOT NULL,
-    Telefono          NVARCHAR(20)      NOT NULL,
-    Linea1            NVARCHAR(200)     NOT NULL,
-    Linea2            NVARCHAR(200)     NULL,
-    Municipio         NVARCHAR(100)     NOT NULL,
-    Departamento      NVARCHAR(100)     NOT NULL,
-    CodigoPostal      NVARCHAR(10)      NULL,
-    Horario           NVARCHAR(200)     NULL,
-    Activo            BIT               NOT NULL CONSTRAINT DF_Sucursal_Activo DEFAULT (1),
-    FechaCreacion     DATETIME2(3)      NOT NULL CONSTRAINT DF_Sucursal_FechaCreacion DEFAULT (SYSUTCDATETIME()),
-    FechaModificacion DATETIME2(3)      NOT NULL CONSTRAINT DF_Sucursal_FechaModificacion DEFAULT (SYSUTCDATETIME()),
-    CONSTRAINT PK_Sucursal PRIMARY KEY (IDSucursal),
-    CONSTRAINT UQ_Sucursal_Nombre UNIQUE (Nombre)
-);
-GO
-
 CREATE TABLE dbo.MetodoEnvio (
     IDMetodoEnvio INT IDENTITY(1,1) NOT NULL,
     Nombre        NVARCHAR(100)     NOT NULL,
     Costo         DECIMAL(12,2)     NOT NULL,
     DiasEstimados TINYINT           NOT NULL,
     Activo        BIT               NOT NULL CONSTRAINT DF_MetodoEnvio_Activo DEFAULT (1),
-    -- 1 = el cliente recoge el pedido en una sucursal y no necesita dirección de entrega.
-    RequiereSucursal BIT            NOT NULL CONSTRAINT DF_MetodoEnvio_RequiereSucursal DEFAULT (0),
     CONSTRAINT PK_MetodoEnvio PRIMARY KEY (IDMetodoEnvio),
     CONSTRAINT UQ_MetodoEnvio_Nombre UNIQUE (Nombre),
-    -- Destino de la FK compuesta de Pedido: RetiroEnSucursal siempre coincide con el método elegido.
-    CONSTRAINT UQ_MetodoEnvio_IDMetodoEnvio_RequiereSucursal UNIQUE (IDMetodoEnvio, RequiereSucursal),
     CONSTRAINT CK_MetodoEnvio_Costo CHECK (Costo >= 0)
 );
 GO
@@ -320,12 +295,10 @@ CREATE TABLE dbo.Pedido (
     HuellaSolicitud   CHAR(64)          NOT NULL,  -- SHA-256 del contenido del carrito; detecta misma clave con otro carrito
     IDUsuario         INT               NOT NULL,
     IDEstadoPedido    INT               NOT NULL,
-    IDDireccion       INT               NULL,      -- NULL cuando el cliente recoge en sucursal
-    IDSucursal        INT               NULL,      -- NULL cuando el pedido es a domicilio
-    RetiroEnSucursal  BIT               NOT NULL,  -- copia de MetodoEnvio.RequiereSucursal (FK compuesta)
+    IDDireccion       INT               NOT NULL,
     IDMetodoEnvio     INT               NOT NULL,
     IDCupon           INT               NULL,
-    DireccionEntrega  NVARCHAR(800)     NOT NULL,  -- copia de la dirección (o de la sucursal) al momento de la compra
+    DireccionEntrega  NVARCHAR(800)     NOT NULL,  -- copia de la dirección al momento de la compra
     Subtotal          DECIMAL(12,2)     NOT NULL,
     Descuento         DECIMAL(12,2)     NOT NULL CONSTRAINT DF_Pedido_Descuento DEFAULT (0),
     CostoEnvio        DECIMAL(12,2)     NOT NULL CONSTRAINT DF_Pedido_CostoEnvio DEFAULT (0),
@@ -337,18 +310,12 @@ CREATE TABLE dbo.Pedido (
     CONSTRAINT FK_Pedido_EstadoPedido FOREIGN KEY (IDEstadoPedido) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
     -- La dirección de entrega es del mismo cliente del pedido.
     CONSTRAINT FK_Pedido_Direccion FOREIGN KEY (IDDireccion, IDUsuario) REFERENCES dbo.Direccion (IDDireccion, IDUsuario),
-    -- Con una sucursal el pedido usa un método que la requiere, y a domicilio uno que no.
-    CONSTRAINT FK_Pedido_MetodoEnvio FOREIGN KEY (IDMetodoEnvio, RetiroEnSucursal) REFERENCES dbo.MetodoEnvio (IDMetodoEnvio, RequiereSucursal),
-    CONSTRAINT FK_Pedido_Sucursal FOREIGN KEY (IDSucursal) REFERENCES dbo.Sucursal (IDSucursal),
+    CONSTRAINT FK_Pedido_MetodoEnvio FOREIGN KEY (IDMetodoEnvio) REFERENCES dbo.MetodoEnvio (IDMetodoEnvio),
     CONSTRAINT FK_Pedido_Cupon FOREIGN KEY (IDCupon) REFERENCES dbo.Cupon (IDCupon),
     CONSTRAINT UQ_Pedido_NumeroPedido UNIQUE (NumeroPedido),
     CONSTRAINT UQ_Pedido_ClaveIdempotencia UNIQUE (ClaveIdempotencia),
     -- Destino de la FK compuesta de UsoCupon: el uso es del mismo cliente y cupón del pedido.
     CONSTRAINT UQ_Pedido_IDPedido_IDUsuario_IDCupon UNIQUE (IDPedido, IDUsuario, IDCupon),
-    -- Exactamente un destino: dirección del cliente (domicilio) o sucursal (retiro).
-    CONSTRAINT CK_Pedido_Entrega CHECK (
-        (RetiroEnSucursal = 0 AND IDDireccion IS NOT NULL AND IDSucursal IS NULL)
-        OR (RetiroEnSucursal = 1 AND IDSucursal IS NOT NULL AND IDDireccion IS NULL)),
     CONSTRAINT CK_Pedido_Montos CHECK (Subtotal >= 0 AND Descuento >= 0 AND CostoEnvio >= 0 AND MontoIVA >= 0),
     CONSTRAINT CK_Pedido_Descuento CHECK (Descuento <= Subtotal),
     -- El único descuento del pedido es el del cupón.

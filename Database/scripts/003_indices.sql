@@ -49,7 +49,6 @@ CREATE INDEX IX_Pedido_IDUsuario_FechaCreacion ON dbo.Pedido (IDUsuario, FechaCr
 CREATE INDEX IX_Pedido_IDEstadoPedido_FechaCreacion ON dbo.Pedido (IDEstadoPedido, FechaCreacion) INCLUDE (Total);
 CREATE INDEX IX_Pedido_FechaCreacion ON dbo.Pedido (FechaCreacion) INCLUDE (IDEstadoPedido, Total);
 CREATE INDEX IX_Pedido_IDCupon ON dbo.Pedido (IDCupon) WHERE IDCupon IS NOT NULL;
-CREATE INDEX IX_Pedido_IDSucursal ON dbo.Pedido (IDSucursal) WHERE IDSucursal IS NOT NULL;
 CREATE INDEX IX_PedidoDetalle_IDVariante ON dbo.PedidoDetalle (IDVariante);
 CREATE INDEX IX_HistorialEstadoPedido_IDPedido ON dbo.HistorialEstadoPedido (IDPedido, Fecha);
 CREATE INDEX IX_Devolucion_IDPedido ON dbo.Devolucion (IDPedido);

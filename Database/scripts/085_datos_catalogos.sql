@@ -67,25 +67,12 @@ VALUES
     (N'DEVOLUCION',         N'Devolución de cliente',       1),
     (N'CANCELACION',        N'Reintegro por cancelación',   1);
 
-/* Métodos de envío (el que requiere sucursal no pide dirección: el cliente elige una sucursal) */
-INSERT INTO dbo.MetodoEnvio (Nombre, Costo, DiasEstimados, RequiereSucursal)
+/* Métodos de envío */
+INSERT INTO dbo.MetodoEnvio (Nombre, Costo, DiasEstimados)
 VALUES
-    (N'Estándar',            25.00, 3, 0),
-    (N'Express',             45.00, 1, 0),
-    (N'Recoger en sucursal',  0.00, 0, 1);
-
-/* Sucursales de retiro: departamento y municipio existen en el catálogo del frontend (guatemala-locations.json).
-   Sucursal Antigua está inactiva: no se ofrece en el checkout. */
-INSERT INTO dbo.Sucursal (Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal, Horario, Activo)
-VALUES
-    (N'Sucursal Zona 10', N'2400-1010', N'6a Avenida 12-34, Zona 10', N'Edificio Plaza Fontabella, local 5',
-     N'Guatemala', N'Guatemala', N'01010', N'Lunes a sábado de 9:00 a 19:00', 1),
-    (N'Sucursal Zona 1',  N'2400-1001', N'7a Avenida 8-25, Zona 1', NULL,
-     N'Guatemala', N'Guatemala', N'01001', N'Lunes a sábado de 9:00 a 18:00', 1),
-    (N'Sucursal Mixco',   N'2400-1020', N'Calzada Roosevelt 15-60, Zona 3 de Mixco', N'Centro Comercial Mixco, local 12',
-     N'Mixco', N'Guatemala', N'01057', N'Todos los días de 10:00 a 20:00', 1),
-    (N'Sucursal Antigua', N'2400-1030', N'4a Calle Poniente 14', NULL,
-     N'Antigua Guatemala', N'Sacatepéquez', N'03001', N'Lunes a viernes de 9:00 a 17:00', 0);
+    (N'Estándar',          25.00, 3),
+    (N'Express',           45.00, 1),
+    (N'Recoger en tienda',  0.00, 0);
 
 /* Configuración */
 INSERT INTO dbo.Configuracion (Clave, Valor, Descripcion)
