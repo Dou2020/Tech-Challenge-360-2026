@@ -1,5 +1,6 @@
 export { ConfirmationDialog } from './ConfirmationDialog';
 export { DateRangeFilter } from './DateRangeFilter';
+export { Dialog } from './Dialog';
 export { EmptyState } from './EmptyState';
 export { ErrorState } from './ErrorState';
 export { ExportButtons } from './ExportButtons';

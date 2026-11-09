@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { Skeleton } from '../../components/atoms';
+import { Badge, Skeleton } from '../../components/atoms';
 import { EmptyState, ErrorState, PageHeading, StatCard } from '../../components/molecules';
 import { colaOperacion, infoEstadoPedido } from '../../config';
 import { useExistencias, useTotalesPedidos } from '../../hooks/queries';
@@ -107,9 +107,17 @@ export default function OperacionPage() {
                     {bajoStock.data.items.map((e) => (
                       <tr key={e.idVariante}>
                         <td className="px-4 py-3 font-medium text-texto">{e.sku}</td>
-                        <td className="px-4 py-3 text-texto-suave">{e.producto}</td>
+                        <td className="px-4 py-3 text-texto-suave">
+                          <span className="block">{e.producto}</span>
+                          {e.descripcion && (
+                            <span className="block text-xs text-texto-tenue">{e.descripcion}</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-right font-semibold text-peligro-texto tabular-nums">
-                          {e.existenciaDisponible}
+                          <span className="inline-flex items-center justify-end gap-2">
+                            {e.existenciaDisponible <= 0 && <Badge tono="rojo">Agotado</Badge>}
+                            {e.existenciaDisponible}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-right text-texto-suave tabular-nums">
                           {e.umbralBajoStock}
@@ -117,7 +125,7 @@ export default function OperacionPage() {
                         <td className="px-4 py-3 text-right">
                           <Link
                             to={`/consola/inventario/${e.idVariante}/kardex`}
-                            state={{ sku: e.sku, producto: e.producto }}
+                            state={{ sku: e.sku, producto: e.producto, descripcion: e.descripcion }}
                             aria-label={`Ver kardex de ${e.sku}`}
                             className="rounded-lg border border-borde-fuerte px-3 py-1.5 text-xs font-medium text-texto hover:bg-superficie-suave"
                           >

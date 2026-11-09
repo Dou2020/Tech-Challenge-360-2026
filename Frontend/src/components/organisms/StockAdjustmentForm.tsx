@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { ApiError } from '../../services/http';
 import type { Existencia } from '../../types/inventario';
 import { aplicarErroresApi } from '../../utils/formularios';
+import { proyectarExistencia, type ClaseMovimiento } from '../../utils/inventario';
 import { Button } from '../atoms/Button';
 import { InlineAlert } from '../atoms/InlineAlert';
 import { Input } from '../atoms/Input';
@@ -13,7 +14,7 @@ import { Select } from '../atoms/Select';
 const MAX_MOTIVO = 300;
 const MAX_CANTIDAD = 1_000_000;
 
-export type ClaseMovimiento = 'ENTRADA_COMPRA' | 'AJUSTE_ENTRADA' | 'AJUSTE_SALIDA';
+export type { ClaseMovimiento };
 
 const esquema = z
   .object({
@@ -41,7 +42,7 @@ export interface DatosMovimiento {
 interface Props {
   variante: Pick<
     Existencia,
-    'idVariante' | 'sku' | 'producto' | 'existenciaFisica' | 'existenciaDisponible'
+    'idVariante' | 'sku' | 'producto' | 'descripcion' | 'existenciaFisica' | 'existenciaDisponible'
   >;
   /** Registra el movimiento; debe rechazar con el error de la API si falla. */
   onEnviar: (datos: DatosMovimiento) => Promise<unknown>;
@@ -62,7 +63,16 @@ export function StockAdjustmentForm({ variante, onEnviar, onCancelar }: Props) {
     resolver: zodResolver(esquema),
     defaultValues: { clase: 'ENTRADA_COMPRA', cantidad: '', motivo: '' },
   });
-  const esAjuste = useWatch({ control, name: 'clase' }) !== 'ENTRADA_COMPRA';
+  const clase = useWatch({ control, name: 'clase' });
+  const cantidadTexto = useWatch({ control, name: 'cantidad' }).trim();
+  const esAjuste = clase !== 'ENTRADA_COMPRA';
+  const cantidad =
+    /^\d+$/.test(cantidadTexto) &&
+    Number(cantidadTexto) >= 1 &&
+    Number(cantidadTexto) <= MAX_CANTIDAD
+      ? Number(cantidadTexto)
+      : null;
+  const proyeccion = cantidad === null ? null : proyectarExistencia(variante, clase, cantidad);
 
   async function enviar(valores: Formulario) {
     setErrorEnvio(null);
@@ -90,8 +100,9 @@ export function StockAdjustmentForm({ variante, onEnviar, onCancelar }: Props) {
   return (
     <form onSubmit={(e) => void handleSubmit(enviar)(e)} noValidate className="space-y-4">
       <p className="text-sm text-texto-suave">
-        {variante.producto} · SKU {variante.sku} · física {variante.existenciaFisica}, disponible{' '}
-        {variante.existenciaDisponible}
+        {variante.producto}
+        {variante.descripcion ? ` · ${variante.descripcion}` : ''} · SKU {variante.sku} · física{' '}
+        {variante.existenciaFisica}, disponible {variante.existenciaDisponible}
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
         <Select label="Tipo de movimiento" {...register('clase')}>
@@ -114,6 +125,20 @@ export function StockAdjustmentForm({ variante, onEnviar, onCancelar }: Props) {
           {...register('motivo')}
         />
       </div>
+      {proyeccion && (
+        <div aria-live="polite" className="space-y-2 text-sm">
+          <p className="text-texto-suave">
+            Quedaría: física {variante.existenciaFisica} → {proyeccion.fisica}, disponible{' '}
+            {variante.existenciaDisponible} → {proyeccion.disponible}.
+          </p>
+          {proyeccion.disponible < 0 && (
+            <p className="rounded-lg border border-aviso-borde bg-aviso-suave px-3 py-2 text-aviso-texto">
+              La salida supera lo disponible ({variante.existenciaDisponible}): con la existencia
+              actual, el sistema la rechazará.
+            </p>
+          )}
+        </div>
+      )}
       {errorEnvio && <InlineAlert>{errorEnvio}</InlineAlert>}
       <div className="flex justify-end gap-2">
         {onCancelar && (

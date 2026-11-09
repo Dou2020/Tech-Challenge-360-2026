@@ -130,6 +130,30 @@ describe('OperacionPage', () => {
     );
   });
 
+  it('variante agotada con descripción → muestra la descripción y el badge Agotado', async () => {
+    // Arrange
+    inventario.existencias.mockResolvedValue({
+      items: [
+        { ...existencia, descripcion: 'Color negro', existenciaFisica: 0, existenciaDisponible: 0 },
+        { ...existencia, idVariante: 5, sku: 'AUD-BT-BLA' },
+      ],
+      page: 1,
+      pageSize: 5,
+      total: 2,
+    });
+
+    // Act
+    montar();
+
+    // Assert
+    const tabla = await screen.findByRole('table', { name: 'Variantes por agotarse' });
+    const agotada = within(tabla).getByRole('row', { name: /AUD-BT-NEG/ });
+    expect(within(agotada).getByText('Color negro')).toBeInTheDocument();
+    expect(within(agotada).getByText('Agotado')).toBeInTheDocument();
+    const otra = within(tabla).getByRole('row', { name: /AUD-BT-BLA/ });
+    expect(within(otra).queryByText('Agotado')).not.toBeInTheDocument();
+  });
+
   it('sin variantes en bajo stock → estado vacío y total 0', async () => {
     // Arrange
     inventario.existencias.mockResolvedValue({ items: [], page: 1, pageSize: 5, total: 0 });

@@ -56,6 +56,18 @@ describe('KardexPage', () => {
     expect(screen.getByText('Camiseta')).toBeInTheDocument();
   });
 
+  it('con descripción en el estado → la agrega al producto en el encabezado', () => {
+    // Act
+    renderizar(<KardexPage />, {
+      ruta: '/consola/inventario/41/kardex',
+      patron: '/consola/inventario/:idVariante/kardex',
+      estadoRuta: { sku: 'CAM-LIM-NEG-M', producto: 'Camiseta', descripcion: 'Talla M · Negro' },
+    });
+
+    // Assert
+    expect(screen.getByText('Camiseta · Talla M · Negro')).toBeInTheDocument();
+  });
+
   it('enlace de regreso al inventario', () => {
     // Act
     renderizar(<KardexPage />, {

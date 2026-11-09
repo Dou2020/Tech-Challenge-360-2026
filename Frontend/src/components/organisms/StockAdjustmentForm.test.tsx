@@ -9,6 +9,7 @@ const variante = {
   idVariante: 41,
   sku: 'CAM-BAS-M-AZ',
   producto: 'Camiseta',
+  descripcion: null,
   existenciaFisica: 9,
   existenciaDisponible: 7,
 };
@@ -197,5 +198,71 @@ describe('StockAdjustmentForm', () => {
 
     // Assert
     expect(onCancelar).toHaveBeenCalledTimes(1);
+  });
+  it('con descripción → la muestra junto al producto', () => {
+    // Act
+    renderizar(
+      <StockAdjustmentForm
+        variante={{ ...variante, descripcion: 'Talla M · Azul' }}
+        onEnviar={vi.fn()}
+      />,
+    );
+
+    // Assert
+    expect(screen.getByText(/Camiseta · Talla M · Azul · SKU CAM-BAS-M-AZ/)).toBeInTheDocument();
+  });
+
+  it('sin cantidad válida → no muestra la vista previa', async () => {
+    // Arrange
+    renderizar(<StockAdjustmentForm variante={variante} onEnviar={vi.fn()} />);
+
+    // Act
+    await userEvent.type(screen.getByLabelText('Cantidad'), '0');
+
+    // Assert
+    expect(screen.queryByText(/Quedaría/)).not.toBeInTheDocument();
+  });
+
+  it('entrada por compra → la vista previa suma a física y disponible', async () => {
+    // Arrange
+    renderizar(<StockAdjustmentForm variante={variante} onEnviar={vi.fn()} />);
+
+    // Act
+    await userEvent.type(screen.getByLabelText('Cantidad'), '5');
+
+    // Assert
+    expect(screen.getByText('Quedaría: física 9 → 14, disponible 7 → 12.')).toBeInTheDocument();
+  });
+
+  it('ajuste de salida → la vista previa resta, sin aviso si alcanza', async () => {
+    // Arrange
+    renderizar(<StockAdjustmentForm variante={variante} onEnviar={vi.fn()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Tipo de movimiento'), 'Ajuste de salida');
+
+    // Act
+    await userEvent.type(screen.getByLabelText('Cantidad'), '7');
+
+    // Assert
+    expect(screen.getByText('Quedaría: física 9 → 2, disponible 7 → 0.')).toBeInTheDocument();
+    expect(screen.queryByText(/supera lo disponible/)).not.toBeInTheDocument();
+  });
+
+  it('salida mayor que lo disponible → avisa pero deja enviar', async () => {
+    // Arrange: el envío queda pendiente para que el formulario no se limpie
+    const onEnviar = vi.fn().mockReturnValue(new Promise(() => undefined));
+    renderizar(<StockAdjustmentForm variante={variante} onEnviar={onEnviar} />);
+
+    // Act
+    await enviarCon('8');
+
+    // Assert
+    expect(screen.getByText(/La salida supera lo disponible \(7\)/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(onEnviar).toHaveBeenCalledWith({
+        clase: 'AJUSTE_SALIDA',
+        cantidad: 8,
+        motivo: 'Merma',
+      }),
+    );
   });
 });

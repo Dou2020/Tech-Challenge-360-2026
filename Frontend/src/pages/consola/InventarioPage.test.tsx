@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
+import { useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogoApi } from '../../services/api/catalogo';
 import { inventarioApi } from '../../services/api/inventario';
@@ -239,9 +240,10 @@ describe('InventarioPage', () => {
       await screen.findByText('Movimiento registrado en CAM-BAS-M-AZ: física 14, disponible 9.'),
     ).toBeInTheDocument();
     expect(api.registrarEntrada).toHaveBeenCalledWith({ idVariante: 41, cantidad: 5 });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('un 422 EXISTENCIA_NEGATIVA queda en el campo cantidad del panel', async () => {
+  it('un 422 EXISTENCIA_NEGATIVA queda en el campo cantidad y el diálogo sigue abierto', async () => {
     // Arrange
     api.registrarAjuste.mockRejectedValue(
       new ApiError(422, 'EXISTENCIA_NEGATIVA', 'La existencia quedaría negativa.'),
@@ -257,9 +259,10 @@ describe('InventarioPage', () => {
     // Assert
     expect(await screen.findByLabelText('Cantidad')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText(/dejaría la existencia en negativo/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Registrar movimiento' })).toBeInTheDocument();
   });
 
-  it('Cerrar → oculta el panel sin llamar a la API', async () => {
+  it('Cerrar → cierra el diálogo sin llamar a la API', async () => {
     // Arrange
     await abrirPanel();
 
@@ -267,7 +270,149 @@ describe('InventarioPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
 
     // Assert
-    expect(screen.queryByRole('heading', { name: 'Registrar movimiento' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(api.registrarEntrada).not.toHaveBeenCalled();
+  });
+
+  it('Escape → cierra el diálogo sin llamar a la API', async () => {
+    // Arrange
+    await abrirPanel();
+
+    // Act
+    await userEvent.keyboard('{Escape}');
+
+    // Assert
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.registrarEntrada).not.toHaveBeenCalled();
+    expect(api.registrarAjuste).not.toHaveBeenCalled();
+  });
+
+  it('Registrar movimiento → abre un diálogo con la variante y el foco en el tipo', async () => {
+    // Arrange
+    renderizar(<InventarioPage />, { ruta: '/consola/inventario' });
+    const boton = await screen.findByRole('button', {
+      name: 'Registrar movimiento de CAM-BAS-M-AZ',
+    });
+
+    // Act
+    await userEvent.click(boton);
+
+    // Assert
+    const dialogo = screen.getByRole('dialog', { name: 'Registrar movimiento' });
+    expect(
+      within(dialogo).getByText(/SKU CAM-BAS-M-AZ · física 9, disponible 4/),
+    ).toBeInTheDocument();
+    expect(within(dialogo).getByLabelText('Tipo de movimiento')).toHaveFocus();
+  });
+
+  it('muestra la descripción de la variante bajo el producto', async () => {
+    // Arrange
+    api.existencias.mockResolvedValue({
+      items: [{ ...existencia, descripcion: 'Talla M · Azul' }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+
+    // Act
+    renderizar(<InventarioPage />, { ruta: '/consola/inventario' });
+
+    // Assert
+    const tabla = await screen.findByRole('table', { name: 'Existencias por variante' });
+    expect(within(tabla).getByText('Talla M · Azul')).toBeInTheDocument();
+  });
+
+  it('producto y categoría inactivos → los marca en la fila', async () => {
+    // Arrange
+    api.existencias.mockResolvedValue({
+      items: [{ ...existencia, productoActivo: false, categoriaActiva: false }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+
+    // Act
+    renderizar(<InventarioPage />, { ruta: '/consola/inventario' });
+
+    // Assert
+    expect(await screen.findByText('Producto inactivo')).toBeInTheDocument();
+    expect(screen.getByText('Categoría inactiva')).toBeInTheDocument();
+    expect(screen.queryByText('Variante inactiva')).not.toBeInTheDocument();
+  });
+
+  it('disponible 0 → Agotado en vez de Bajo stock', async () => {
+    // Arrange
+    api.existencias.mockResolvedValue({
+      items: [
+        { ...existencia, existenciaFisica: 2, existenciaReservada: 2, existenciaDisponible: 0 },
+        { ...existencia, idVariante: 42, sku: 'CAM-BAS-L-AZ', existenciaDisponible: 3 },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    });
+
+    // Act
+    renderizar(<InventarioPage />, { ruta: '/consola/inventario' });
+
+    // Assert
+    const tabla = await screen.findByRole('table', { name: 'Existencias por variante' });
+    const [, agotada, baja] = within(tabla).getAllByRole('row');
+    expect(within(agotada!).getByText('Agotado')).toBeInTheDocument();
+    expect(within(agotada!).queryByText('Bajo stock')).not.toBeInTheDocument();
+    expect(within(baja!).getByText('Bajo stock')).toBeInTheDocument();
+  });
+
+  it('con filas → muestra el umbral en el encabezado y en el filtro', async () => {
+    // Act
+    renderizar(<InventarioPage />, { ruta: '/consola/inventario' });
+
+    // Assert
+    expect(await screen.findByText(/Bajo stock: disponible ≤ 5\./)).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Solo bajo stock (≤ 5)' })).toBeInTheDocument();
+  });
+
+  it('sin filas → el filtro no muestra umbral', async () => {
+    // Arrange
+    api.existencias.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+
+    // Act
+    renderizar(<InventarioPage />, { ruta: '/consola/inventario' });
+
+    // Assert
+    expect(await screen.findByText('Sin variantes')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Solo bajo stock' })).toBeInTheDocument();
+    expect(screen.queryByText(/Bajo stock: disponible/)).not.toBeInTheDocument();
+  });
+
+  it('el state del enlace al kardex incluye la descripción', async () => {
+    // Arrange
+    function VerState() {
+      return <pre>{JSON.stringify(useLocation().state)}</pre>;
+    }
+    api.existencias.mockResolvedValue({
+      items: [{ ...existencia, descripcion: 'Talla M · Azul' }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    renderizar(<InventarioPage />, {
+      ruta: '/consola/inventario',
+      rutas: [{ path: '/consola/inventario/:id/kardex', element: <VerState /> }],
+    });
+
+    // Act
+    await userEvent.click(await screen.findByRole('link', { name: 'Ver kardex de CAM-BAS-M-AZ' }));
+
+    // Assert
+    expect(
+      await screen.findByText(
+        JSON.stringify({
+          sku: 'CAM-BAS-M-AZ',
+          producto: 'Camiseta básica',
+          descripcion: 'Talla M · Azul',
+        }),
+      ),
+    ).toBeInTheDocument();
   });
 });

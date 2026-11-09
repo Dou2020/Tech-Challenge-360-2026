@@ -162,7 +162,7 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | `/consola/perfil` | Mi perfil del personal (la misma página que `/cuenta/perfil`) | Operador, Administrador |
 | `/consola/pedidos` | Pedidos: filtros `estado`, `q`, `desde`, `hasta`, `idCliente` y orden en la URL. Con `?vista=tablero` se ven como tablero kanban (Pagado, En preparación, Despachado, Entregado, Cancelado; 20 por columna, con "Ver todos" a la lista filtrada). Arrastrar una tarjeta (puntero o teclado) o usar su selector "Mover a" pide confirmación y ejecuta el cambio por `PATCH /estado` o `POST /cancelar`, solo hacia los destinos con `permitida` en `GET /api/pedidos/estados`. Las devoluciones siguen en el detalle | Operador, Administrador |
 | `/consola/pedidos/:id` | Gestión del pedido: avanzar estado, cancelar y registrar devolución según `transiciones[].via` | Operador, Administrador |
-| `/consola/inventario` | Existencias con filtros, bajo stock, entradas y ajustes | Operador, Administrador |
+| `/consola/inventario` | Existencias con filtros. Cada fila muestra la descripción de la variante (atributos), marca variante, producto o categoría inactivos y distingue "Agotado" (disponible 0) de "Bajo stock"; el umbral se ve en el encabezado y en el filtro. Entradas y ajustes se registran en un diálogo modal con vista previa de la existencia resultante (el 422 del backend sigue mandando) | Operador, Administrador |
 | `/consola/inventario/:idVariante/kardex` | Kardex de la variante con filtros `desde`, `hasta`, `tipo` | Operador, Administrador |
 | otra ruta de `/consola/…` | No encontrada, dentro del layout de la consola | Operador, Administrador |
 

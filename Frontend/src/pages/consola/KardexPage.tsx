@@ -7,14 +7,20 @@ import NoEncontradoPage from '../errores/NoEncontradoPage';
 export default function KardexPage() {
   const { idVariante } = useParams();
   const id = Number(idVariante);
-  const { state } = useLocation() as { state: { sku?: string; producto?: string } | null };
+  const { state } = useLocation() as {
+    state: { sku?: string; producto?: string; descripcion?: string | null } | null;
+  };
   if (!Number.isInteger(id) || id < 1) return <NoEncontradoPage />;
 
   return (
     <>
       <PageHeading
         titulo={state?.sku ? `Kardex de ${state.sku}` : `Kardex de la variante ${id}`}
-        descripcion={state?.producto ?? 'Movimientos de inventario de la variante.'}
+        descripcion={
+          state?.producto
+            ? [state.producto, state.descripcion].filter(Boolean).join(' · ')
+            : 'Movimientos de inventario de la variante.'
+        }
       />
       <Link
         to="/consola/inventario"
