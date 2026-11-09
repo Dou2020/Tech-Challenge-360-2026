@@ -173,6 +173,70 @@ describe('Consultar', () => {
     });
   });
 
+  describe('filtros activo y vigente', () => {
+    // Cupones propios con un prefijo común: q los aísla de la semilla y de los demás archivos.
+    const prefijo = codigoUnico().slice(0, 10);
+    const dia = 86_400_000;
+    const instante = (dias: number) => new Date(Date.now() + dias * dia).toISOString();
+
+    beforeAll(async () => {
+      await crear({ codigo: `${prefijo}EN`, fechaInicio: instante(-1), fechaFin: instante(30) });
+      await crear({ codigo: `${prefijo}VE`, fechaInicio: instante(-30), fechaFin: instante(-1) });
+      await crear({ codigo: `${prefijo}PR`, fechaInicio: instante(1), fechaFin: instante(30) });
+      // Dentro de fechas pero desactivado: "vigente" solo mira las fechas.
+      const inactivo = await crear({
+        codigo: `${prefijo}IN`,
+        fechaInicio: instante(-1),
+        fechaFin: instante(30),
+      });
+      const estado = await admin
+        .patch(`/api/cupones/${inactivo.idCupon}/estado`)
+        .send({ activo: false });
+      expect(estado.status).toBe(200);
+    });
+
+    it.each([
+      { filtros: {}, esperados: ['EN', 'IN', 'PR', 'VE'] },
+      { filtros: { vigente: 'true' }, esperados: ['EN', 'IN'] },
+      { filtros: { vigente: 'false' }, esperados: ['PR', 'VE'] },
+      { filtros: { activo: 'true' }, esperados: ['EN', 'PR', 'VE'] },
+      { filtros: { activo: 'false' }, esperados: ['IN'] },
+      { filtros: { activo: 'true', vigente: 'true' }, esperados: ['EN'] },
+      { filtros: { activo: 'false', vigente: 'false' }, esperados: [] },
+    ])('$filtros → $esperados', async ({ filtros, esperados }) => {
+      // Arrange
+      const consulta = { q: prefijo, sort: 'codigo:asc', pageSize: 100, ...filtros };
+
+      // Act
+      const respuesta = await admin.get('/api/cupones').query(consulta);
+
+      // Assert
+      expect(respuesta.status).toBe(200);
+      expect(respuesta.body.total).toBe(esperados.length);
+      expect((respuesta.body.items as Cupon[]).map((c) => c.codigo)).toEqual(
+        esperados.map((sufijo) => `${prefijo}${sufijo}`),
+      );
+    });
+
+    it.each(['si', '1', 'TRUE'])('vigente=%s → 400 VALIDACION', async (valor) => {
+      // Act
+      const respuesta = await admin.get('/api/cupones').query({ vigente: valor });
+
+      // Assert
+      expect(respuesta.status).toBe(400);
+      expect(respuesta.body.error.code).toBe('VALIDACION');
+    });
+
+    it('q de más de 100 caracteres → 400 VALIDACION', async () => {
+      // Act
+      const respuesta = await admin.get('/api/cupones').query({ q: 'A'.repeat(101) });
+
+      // Assert
+      expect(respuesta.status).toBe(400);
+      expect(respuesta.body.error.code).toBe('VALIDACION');
+    });
+  });
+
   it('un orden fuera de la lista blanca → 400; un id inexistente → 404', async () => {
     expect((await admin.get('/api/cupones').query({ sort: 'activo:asc' })).status).toBe(400);
     expect((await admin.get('/api/cupones/999999')).status).toBe(404);

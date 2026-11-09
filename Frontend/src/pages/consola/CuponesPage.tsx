@@ -10,6 +10,8 @@ import { estadoDeCupon, type EstadoCupon } from '../../utils/cuponForm';
 import { formatearFecha } from '../../utils/format';
 
 const FILTROS = ['q', 'activo', 'vigente'] as const;
+/** Igual que `q` en listarCuponesQuery (backend); un texto más largo daría 400. */
+const MAX_BUSQUEDA = 100;
 
 const TONOS: Record<EstadoCupon, TonoBadge> = {
   Vigente: 'verde',
@@ -100,11 +102,13 @@ export default function CuponesPage() {
             className="mt-1"
             etiqueta="Buscar cupón por código"
             valor={filtros.q}
+            maxLength={MAX_BUSQUEDA}
             onBuscar={(q) => tabla.setFiltros({ q })}
           />
         </div>
+        {/* "Activación" y "Fechas" filtran un solo dato cada uno; la columna Estado los combina con los usos. */}
         <Select
-          label="Estado"
+          label="Activación"
           value={filtros.activo}
           onChange={(e) => tabla.setFiltros({ activo: e.target.value })}
         >
@@ -113,13 +117,14 @@ export default function CuponesPage() {
           <option value="false">Inactivos</option>
         </Select>
         <Select
-          label="Vigencia"
+          label="Fechas"
+          ayuda="Solo compara la fecha de inicio y la de fin."
           value={filtros.vigente}
           onChange={(e) => tabla.setFiltros({ vigente: e.target.value })}
         >
-          <option value="">Toda</option>
-          <option value="true">Vigentes</option>
-          <option value="false">No vigentes</option>
+          <option value="">Todas</option>
+          <option value="true">Dentro de fechas</option>
+          <option value="false">Fuera de fechas</option>
         </Select>
         {hayFiltros && (
           <div className="flex items-end">

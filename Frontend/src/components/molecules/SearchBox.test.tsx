@@ -48,4 +48,20 @@ describe('SearchBox', () => {
     // Assert
     expect(screen.getByRole('searchbox')).toHaveValue('gorra');
   });
+
+  it('sin maxLength → limita a 150 caracteres', () => {
+    // Act
+    render(<SearchBox onBuscar={vi.fn()} />);
+
+    // Assert
+    expect(screen.getByRole('searchbox')).toHaveAttribute('maxLength', '150');
+  });
+
+  it('con maxLength → usa ese límite', () => {
+    // Act
+    render(<SearchBox maxLength={100} onBuscar={vi.fn()} />);
+
+    // Assert
+    expect(screen.getByRole('searchbox')).toHaveAttribute('maxLength', '100');
+  });
 });

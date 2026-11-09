@@ -6,6 +6,8 @@ interface Props {
   valor?: string;
   placeholder?: string;
   etiqueta?: string;
+  /** Máximo de caracteres; debe coincidir con el límite del filtro en la API. */
+  maxLength?: number;
   onBuscar: (texto: string) => void;
   className?: string;
 }
@@ -15,6 +17,7 @@ export function SearchBox({
   valor = '',
   placeholder = 'Buscar…',
   etiqueta = 'Buscar',
+  maxLength = 150,
   onBuscar,
   className = '',
 }: Props) {
@@ -38,7 +41,7 @@ export function SearchBox({
         value={texto}
         onChange={(e) => setTexto(e.target.value)}
         placeholder={placeholder}
-        maxLength={150}
+        maxLength={maxLength}
         className="block w-full rounded-lg border border-borde-fuerte bg-superficie py-2 pr-3 pl-9 text-sm text-texto shadow-xs outline-none transition-shadow placeholder:text-texto-tenue focus:border-primario focus:ring-3 focus:ring-primario/20"
       />
       <button

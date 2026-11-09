@@ -178,20 +178,62 @@ describe('CuponesPage', () => {
     expect(screen.getByText('Todo el carrito')).toBeInTheDocument();
   });
 
-  it('cambiar estado y vigencia → filtros en la URL y vuelve a la página 1', async () => {
+  it('elegir "Dentro de fechas" → vigente=true en la URL y vuelve a la página 1', async () => {
     // Arrange
     vi.mocked(cuponesApi.listar).mockResolvedValue(pagina([cupon]));
     const { router } = renderizar(<CuponesPage />, { ruta: '/consola/cupones?page=3' });
     await screen.findByRole('link', { name: 'VERANO25' });
 
     // Act
-    await userEvent.selectOptions(screen.getByLabelText('Vigencia'), 'Vigentes');
+    await userEvent.selectOptions(screen.getByLabelText('Fechas'), 'Dentro de fechas');
 
     // Assert
     expect(router.state.location.search).toBe('?vigente=true');
     expect(cuponesApi.listar).toHaveBeenLastCalledWith(
       expect.objectContaining({ vigente: 'true', page: 1 }),
     );
+  });
+
+  it('elegir "Inactivos" en Activación → activo=false en la URL', async () => {
+    // Arrange
+    vi.mocked(cuponesApi.listar).mockResolvedValue(pagina([cupon]));
+    const { router } = renderizar(<CuponesPage />, { ruta: '/consola/cupones' });
+    await screen.findByRole('link', { name: 'VERANO25' });
+
+    // Act
+    await userEvent.selectOptions(screen.getByLabelText('Activación'), 'Inactivos');
+
+    // Assert
+    expect(router.state.location.search).toBe('?activo=false');
+    expect(cuponesApi.listar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ activo: 'false', page: 1 }),
+    );
+  });
+
+  it('el filtro Fechas aclara que solo compara inicio y fin', async () => {
+    // Arrange
+    vi.mocked(cuponesApi.listar).mockResolvedValue(pagina([cupon]));
+
+    // Act
+    renderizar(<CuponesPage />, { ruta: '/consola/cupones' });
+
+    // Assert
+    expect(await screen.findByLabelText('Fechas')).toHaveAccessibleDescription(
+      'Solo compara la fecha de inicio y la de fin.',
+    );
+  });
+
+  it('la búsqueda admite como máximo 100 caracteres (el límite de q en la API)', async () => {
+    // Arrange
+    vi.mocked(cuponesApi.listar).mockResolvedValue(pagina([cupon]));
+
+    // Act
+    renderizar(<CuponesPage />, { ruta: '/consola/cupones' });
+
+    // Assert
+    expect(
+      await screen.findByRole('searchbox', { name: 'Buscar cupón por código' }),
+    ).toHaveAttribute('maxLength', '100');
   });
 
   it('buscar por código → q en la URL', async () => {
