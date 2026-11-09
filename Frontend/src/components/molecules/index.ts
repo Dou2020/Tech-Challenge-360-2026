@@ -2,6 +2,7 @@ export { ConfirmationDialog } from './ConfirmationDialog';
 export { DateRangeFilter } from './DateRangeFilter';
 export { EmptyState } from './EmptyState';
 export { ErrorState } from './ErrorState';
+export { ExportButtons } from './ExportButtons';
 export { Notice } from './Notice';
 export { OrderStatusBadge } from './OrderStatusBadge';
 export { PageHeading } from './PageHeading';

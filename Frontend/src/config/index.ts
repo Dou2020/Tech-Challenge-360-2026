@@ -10,3 +10,4 @@ export {
   resumenTarjeta,
   tiposTarjeta,
 } from './tarjetas';
+export { exportCarritos, exportCategorias, exportTop, exportVentas } from './exportacionReportes';

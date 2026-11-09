@@ -17,6 +17,10 @@ export default defineConfig(({ mode }) => {
         '/api': { target: env.VITE_PROXY_TARGET ?? 'http://localhost:4000', changeOrigin: true },
       },
     },
+    build: {
+      // exceljs (~0.9 MB) queda en su propio chunk, que solo se descarga al exportar un reporte.
+      chunkSizeWarningLimit: 1000,
+    },
     test: {
       environment: 'jsdom',
       setupFiles: ['src/test/setup.ts'],

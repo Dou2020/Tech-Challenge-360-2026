@@ -1,7 +1,15 @@
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { Badge, Money, Select } from '../../components/atoms';
-import { DateRangeFilter, PageHeading, ReportSection } from '../../components/molecules';
+import {
+  DateRangeFilter,
+  ExportButtons,
+  Notice,
+  PageHeading,
+  ReportSection,
+} from '../../components/molecules';
 import { DataTable, ReportTable, type Columna } from '../../components/organisms';
+import { exportCarritos, exportCategorias, exportTop, exportVentas } from '../../config';
 import {
   useCarritosAbandonados,
   useProductosMasVendidos,
@@ -11,6 +19,9 @@ import {
 import { AGRUPACIONES, useAgrupacion } from '../../hooks/useAgrupacion';
 import { useRangoFechas } from '../../hooks/useRangoFechas';
 import { useServerTable } from '../../hooks/useServerTable';
+import { reportesApi } from '../../services/api/reportes';
+import { exportarReporte } from '../../services/exportacion';
+import type { DefinicionExportacion, FormatoExportacion } from '../../types/exportacion';
 import type {
   CarritoAbandonado,
   ProductoVendido,
@@ -18,6 +29,7 @@ import type {
   VentaPeriodo,
 } from '../../types/reportes';
 import { formatearFecha } from '../../utils/format';
+import { errorNotice, type Aviso } from '../../utils/notice';
 import { formatearDia } from '../../utils/rangoFechas';
 
 const columnasVentas: Columna<VentaPeriodo>[] = [
@@ -126,7 +138,8 @@ export default function ReportesPage() {
   const consulta = { desde: rango.desde, hasta: rango.hasta };
   const { agrupacion, setAgrupacion } = useAgrupacion();
   const ventas = useVentasPorPeriodo(consulta, agrupacion, rango.valido);
-  const tituloVentas = `Ventas por ${AGRUPACIONES.find((a) => a.valor === agrupacion)?.etiqueta.slice(4) ?? 'día'}`;
+  const periodo = AGRUPACIONES.find((a) => a.valor === agrupacion)?.etiqueta.slice(4) ?? 'día';
+  const tituloVentas = `Ventas por ${periodo}`;
   const categorias = useVentasPorCategoria(consulta, rango.valido);
   const top = useProductosMasVendidos(consulta, 10, rango.valido);
 
@@ -137,12 +150,53 @@ export default function ReportesPage() {
   });
   const carritos = useCarritosAbandonados({ ...tablaCarritos.params, ...consulta }, rango.valido);
 
+  const [aviso, setAviso] = useState<Aviso | null>(null);
+
+  /** Genera el archivo con las filas que ya están en pantalla (carritos las pide aparte). */
+  async function exportar<T>(
+    formato: FormatoExportacion,
+    def: Omit<DefinicionExportacion<T>, 'rango'>,
+  ) {
+    setAviso(null);
+    try {
+      await exportarReporte(formato, { ...def, rango: consulta });
+    } catch (error) {
+      setAviso(errorNotice(error, 'No se pudo generar el archivo. Intenta de nuevo.'));
+    }
+  }
+
+  /** Carritos va paginado: se exporta el periodo completo, con el orden de la tabla. */
+  async function exportarCarritos(formato: FormatoExportacion) {
+    setAviso(null);
+    let filas: CarritoAbandonado[];
+    try {
+      filas = await reportesApi.todosLosCarritosAbandonados({
+        ...consulta,
+        sort: tablaCarritos.params.sort,
+      });
+    } catch (error) {
+      setAviso(errorNotice(error, 'No se pudieron obtener los carritos abandonados.'));
+      return;
+    }
+    await exportar(formato, {
+      reporte: 'carritos-abandonados',
+      titulo: 'Carritos abandonados',
+      columnas: exportCarritos,
+      filas,
+    });
+  }
+
   return (
     <>
       <PageHeading
         titulo="Reportes"
         descripcion="Pedidos completados (entregados y con devolución parcial), sin envío y descontando devoluciones."
       />
+      {aviso && (
+        <div className="mb-4">
+          <Notice aviso={aviso} onCerrar={() => setAviso(null)} />
+        </div>
+      )}
       <DateRangeFilter
         desde={rango.desde}
         hasta={rango.hasta}
@@ -167,7 +221,24 @@ export default function ReportesPage() {
           </Select>
         </div>
 
-        <ReportSection titulo={tituloVentas} consulta={ventas}>
+        <ReportSection
+          titulo={tituloVentas}
+          consulta={ventas}
+          acciones={(filas) => (
+            <ExportButtons
+              titulo={tituloVentas}
+              onExportar={(formato) =>
+                exportar(formato, {
+                  reporte: `ventas-por-${agrupacion}`,
+                  titulo: tituloVentas,
+                  extra: `Agrupación: ${periodo}`,
+                  columnas: exportVentas,
+                  filas,
+                })
+              }
+            />
+          )}
+        >
           {(filas) => (
             <ReportTable
               titulo={tituloVentas}
@@ -178,7 +249,23 @@ export default function ReportesPage() {
           )}
         </ReportSection>
 
-        <ReportSection titulo="Ventas por categoría" consulta={categorias}>
+        <ReportSection
+          titulo="Ventas por categoría"
+          consulta={categorias}
+          acciones={(filas) => (
+            <ExportButtons
+              titulo="Ventas por categoría"
+              onExportar={(formato) =>
+                exportar(formato, {
+                  reporte: 'ventas-por-categoria',
+                  titulo: 'Ventas por categoría',
+                  columnas: exportCategorias,
+                  filas,
+                })
+              }
+            />
+          )}
+        >
           {(filas) => (
             <ReportTable
               titulo="Ventas por categoría"
@@ -189,7 +276,24 @@ export default function ReportesPage() {
           )}
         </ReportSection>
 
-        <ReportSection titulo="Productos más vendidos" consulta={top}>
+        <ReportSection
+          titulo="Productos más vendidos"
+          consulta={top}
+          acciones={(filas) => (
+            <ExportButtons
+              titulo="Productos más vendidos"
+              onExportar={(formato) =>
+                exportar(formato, {
+                  reporte: 'productos-mas-vendidos',
+                  titulo: 'Productos más vendidos',
+                  extra: `Los ${filas.length} con más venta neta`,
+                  columnas: exportTop,
+                  filas,
+                })
+              }
+            />
+          )}
+        >
           {(filas) => (
             <ReportTable
               titulo="Productos más vendidos"
@@ -201,9 +305,16 @@ export default function ReportesPage() {
         </ReportSection>
 
         <section aria-labelledby="titulo-carritos">
-          <h2 id="titulo-carritos" className="mb-3 font-semibold tracking-tight text-texto">
-            Carritos abandonados
-          </h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 id="titulo-carritos" className="font-semibold tracking-tight text-texto">
+              Carritos abandonados
+            </h2>
+            <ExportButtons
+              titulo="Carritos abandonados"
+              deshabilitado={!rango.valido || !carritos.data || carritos.data.total === 0}
+              onExportar={exportarCarritos}
+            />
+          </div>
           {rango.valido ? (
             <DataTable
               titulo="Carritos abandonados"

@@ -12,6 +12,9 @@ import { construirQuery } from './consulta';
 
 type Params = Record<string, string | number | undefined>;
 
+/** Máximo `pageSize` que acepta la API (TAMANO_PAGINA_MAXIMO del backend). */
+export const TAMANO_PAGINA_EXPORTACION = 100;
+
 /** Endpoints de /api/reportes (Administrador). `desde` y `hasta` son días de Guatemala (YYYY-MM-DD). */
 export const reportesApi = {
   resumen: (params: Params) =>
@@ -28,4 +31,18 @@ export const reportesApi = {
 
   carritosAbandonados: (params: Params) =>
     request<Page<CarritoAbandonado>>(`/reportes/carritos-abandonados${construirQuery(params)}`),
+
+  /** Todos los carritos abandonados del periodo (para exportar): recorre las páginas de 100. */
+  todosLosCarritosAbandonados: async (params: Params): Promise<CarritoAbandonado[]> => {
+    const filas: CarritoAbandonado[] = [];
+    for (let page = 1; ; page++) {
+      const pagina = await reportesApi.carritosAbandonados({
+        ...params,
+        page,
+        pageSize: TAMANO_PAGINA_EXPORTACION,
+      });
+      filas.push(...pagina.items);
+      if (pagina.items.length === 0 || filas.length >= pagina.total) return filas;
+    }
+  },
 };

@@ -105,4 +105,41 @@ describe('ReportSection', () => {
     // Assert
     expect(screen.getByText('2 filas')).toBeInTheDocument();
   });
+
+  it('acciones con datos → se muestran junto al título y reciben los datos', () => {
+    // Act
+    render(
+      <ReportSection
+        titulo="Ventas"
+        consulta={{ ...base, data: [1, 2, 3] }}
+        acciones={(d) => <button type="button">Exportar {d.length}</button>}
+      >
+        {() => <p>datos</p>}
+      </ReportSection>,
+    );
+
+    // Assert
+    expect(screen.getByRole('button', { name: 'Exportar 3' })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['cargando', { ...base, isPending: true }],
+    ['con error', { ...base, isError: true, error: new Error('x') }],
+    ['vacío', { ...base, data: [] }],
+    ['rango inválido', { ...base, isPending: true, fetchStatus: 'idle' }],
+  ])('acciones %s → no se muestran', (_estado, consulta) => {
+    // Act
+    render(
+      <ReportSection
+        titulo="Ventas"
+        consulta={consulta}
+        acciones={() => <button type="button">Exportar</button>}
+      >
+        {() => <p>datos</p>}
+      </ReportSection>,
+    );
+
+    // Assert
+    expect(screen.queryByRole('button', { name: 'Exportar' })).not.toBeInTheDocument();
+  });
 });

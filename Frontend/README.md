@@ -52,9 +52,9 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `@fontsource-variable/inter` | 5.3 | Tipografía Inter variable, servida desde el propio sitio (sin CDN ni peticiones a terceros) |
 | `vite`, `@vitejs/plugin-react` | 8.3 / 6.1 | Servidor de desarrollo y build (desarrollo) |
 | `typescript`, `eslint` | 6.0 / 10.13 | Tipado y análisis estático (desarrollo) |
-| `jspdf`, `jspdf-autotable`, `exceljs` | 4.2 / 5.0 / 4.4 | Exportación de reportes a PDF y Excel (extra opcional); se cargan solo al exportar |
+| `jspdf`, `jspdf-autotable`, `exceljs` | 4.2 / 5.0 / 4.4 | Exportación de reportes a PDF y Excel (extra opcional); se cargan solo al exportar (ver [Exportar reportes](#exportar-reportes)) |
 
-`recharts` se carga solo en las páginas con gráficas, en su propio chunk (`graficas-*.js`): los organismos de gráficas no se reexportan desde `components/organisms/index.ts` para que no entren al bundle inicial. `jspdf`, `jspdf-autotable` y `exceljs` todavía no están en `package.json`: se instalan al implementar la exportación de reportes.
+`recharts` se carga solo en las páginas con gráficas, en su propio chunk (`graficas-*.js`): los organismos de gráficas no se reexportan desde `components/organisms/index.ts` para que no entren al bundle inicial. `jspdf`, `jspdf-autotable` y `exceljs` tampoco entran al bundle inicial: `services/exportacion/index.ts` carga los generadores con `import()` al pulsar Excel o PDF, y quedan en sus propios chunks (`excel-*.js`, ~0.9 MB, y `pdf-*.js`). Por el de Excel, `vite.config.ts` sube `build.chunkSizeWarningLimit` a 1000 kB.
 
 ### Librerías de pruebas
 
@@ -116,6 +116,7 @@ src/
 ├── styles.css            Tailwind, variante dark, color de marca (marca-50 … marca-950) y tokens semánticos
 ├── services/
 │   ├── http.ts           request(): Bearer en memoria, ApiError, renovación única compartida ante 401
+│   ├── exportacion/      exportarReporte(): generadores de Excel (exceljs) y PDF (jspdf + jspdf-autotable), con carga diferida
 │   └── api/              una función por endpoint (sistema, auth, catálogo, carrito, checkout, pedidos, direcciones, perfil,
 │                         tarjetas, sucursales, inventario, gestión del catálogo, reportes y administración)
 ├── auth/                 tokenStore (token en memoria), AuthProvider (fusiona el carrito de invitado al iniciar sesión), useAuth,
@@ -123,14 +124,14 @@ src/
 ├── hooks/                useServerTable, useSeleccionVariante, useTema, useCuentaRegresiva, useRangoFechas, useAgrupacion
 │                         (día/semana/mes en la URL) y queries/ (las de la tienda y la cuenta, más sucursales, inventario, gestión,
 │                         reportes, administración y estado del sistema)
-├── config/               navegación por rol, estados de pedido, etiquetas de tarjetas y graficas (estilos de recharts
-│                         con las variables crudas del tema, p. ej. var(--primario))
+├── config/               navegación por rol, estados de pedido, etiquetas de tarjetas, columnas de exportación de cada reporte
+│                         y graficas (estilos de recharts con las variables crudas del tema, p. ej. var(--primario))
 ├── types/                api (ApiErrorBody, Page<T>), auth, catálogo, carrito, checkout, pedidos, direcciones, sucursales, perfil, tarjetas,
 │                         inventario, gestión, reportes y administración
 ├── utils/                formato GTQ/fechas, token del carrito de invitado, avisos, accesibilidad y clases de campos, chunks lazy,
 │                         variantes, tema, Idempotency-Key del checkout, errores de la API → campos del formulario,
 │                         política de contraseñas, datos de pago, departamentos/municipios, rango de fechas y
-│                         formularios de producto, cupón y configuración
+│                         formularios de producto, cupón y configuración, y exportación (nombres de archivo, encabezado, celdas)
 ├── data/                 guatemala-locations.json (22 departamentos, 340 municipios)
 ├── components/           atoms, molecules, organisms de la tienda, de la cuenta del Cliente y de la consola
 ├── templates/            StoreLayout, AuthLayout y ConsoleLayout
@@ -149,7 +150,7 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | Ruta | Página | Acceso |
 | :--- | :--- | :--- |
 | `/consola` | Dashboard: indicadores y gráficas (recharts, carga diferida) con rango de fechas y agrupación en la URL | Administrador |
-| `/consola/reportes` | Reportes en tablas y carritos abandonados paginados | Administrador |
+| `/consola/reportes` | Reportes en tablas y carritos abandonados paginados; cada reporte se exporta a Excel y PDF | Administrador |
 | `/consola/categorias` | Categorías: crear, editar, activar y eliminar | Administrador |
 | `/consola/sucursales` | Sucursales de retiro: lista con filtros `q`, `activo` y orden en la URL, crear, editar, activar/desactivar y eliminar (con `EN_USO` sugiere desactivar) | Administrador |
 | `/consola/productos`, `/consola/productos/nuevo`, `/consola/productos/:id` | Productos: lista, alta con variantes, edición (imágenes, variantes, cambio de precio, atributos) | Administrador |
@@ -166,6 +167,16 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | otra ruta de `/consola/…` | No encontrada, dentro del layout de la consola | Operador, Administrador |
 
 Todas las tablas de la consola usan el organismo `DataTable` (columnas declarativas, orden con `aria-sort`, página y estados de carga, vacío y error); el estado vive en la URL vía `useServerTable`. Los montos se muestran tal como los envía el backend, nunca se recalculan.
+
+## Exportar reportes
+
+Cada reporte de `/consola/reportes` (ventas por día/semana/mes, ventas por categoría, productos más vendidos y carritos abandonados) tiene botones **Excel** y **PDF** (`ExportButtons`). El archivo se genera en el navegador con los mismos datos que devuelve la API; no hay endpoint de exportación.
+
+- Exporta lo que se ve: mismo rango de fechas, agrupación y, en carritos, el orden de la tabla. Carritos va paginado, así que antes de exportar se piden todas las páginas del periodo de 100 en 100 (`reportesApi.todosLosCarritosAbandonados`, el máximo `pageSize` de la API).
+- Los montos no se recalculan ni se suman: no hay fila de totales. En Excel van como número con formato `"Q" #,##0.00` (se pueden sumar en la hoja); días y fechas van como texto ya en hora de Guatemala, para que Excel no los corra de zona.
+- Encabezado: título, periodo ("Del 01/11/2026 al 30/11/2026"), línea extra si aplica (agrupación) y fecha de generación. El Excel lleva filtro y la cabecera inmovilizada; el PDF es tamaño carta (horizontal con más de 5 columnas), con páginas numeradas.
+- Nombre del archivo: `<reporte>_<desde>_<hasta>.xlsx|pdf`, p. ej. `ventas-por-semana_2026-11-01_2026-11-30.xlsx`.
+- Las columnas de cada reporte están en `config/exportacionReportes.ts`. Los botones solo aparecen con datos (`ReportSection` → `acciones`); en carritos se deshabilitan sin rango válido o sin resultados. Un fallo se muestra como aviso con la referencia de la API.
 
 ## Tiempo real de pedidos
 

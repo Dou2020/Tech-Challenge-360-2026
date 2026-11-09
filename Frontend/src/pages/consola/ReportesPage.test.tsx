@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportesApi } from '../../services/api/reportes';
 import { userEvent } from '@testing-library/user-event';
 import { ApiError } from '../../services/http';
+import { exportarReporte } from '../../services/exportacion';
 import { renderizar } from '../../test/renderizar';
 import ReportesPage from './ReportesPage';
 
@@ -12,13 +13,19 @@ vi.mock('../../services/api/reportes', () => ({
     ventasPorCategoria: vi.fn(),
     productosMasVendidos: vi.fn(),
     carritosAbandonados: vi.fn(),
+    todosLosCarritosAbandonados: vi.fn(),
   },
 }));
 const api = vi.mocked(reportesApi);
+vi.mock('../../services/exportacion', () => ({ exportarReporte: vi.fn() }));
+const exportar = vi.mocked(exportarReporte);
+const rangoNoviembre = { desde: '2026-11-01', hasta: '2026-11-30' };
 
 describe('ReportesPage', () => {
   beforeEach(() => {
     Object.values(api).forEach((fn) => fn.mockReset());
+    exportar.mockReset();
+    exportar.mockResolvedValue(undefined);
     api.ventas.mockResolvedValue([
       { periodoInicio: '2026-11-03', ventas: '500.00', pedidos: 2, unidadesNetas: 4 },
     ]);
@@ -191,5 +198,156 @@ describe('ReportesPage', () => {
     ).toBeInTheDocument();
     expect(api.ventas).not.toHaveBeenCalled();
     expect(api.carritosAbandonados).not.toHaveBeenCalled();
+  });
+
+  describe('exportación', () => {
+    const ruta = '/consola/reportes?desde=2026-11-01&hasta=2026-11-30';
+
+    it('ventas a Excel → exporta las filas cargadas con el rango y la agrupación', async () => {
+      // Arrange
+      renderizar(<ReportesPage />, { ruta: `${ruta}&agrupacion=semana` });
+      const boton = await screen.findByRole('button', {
+        name: 'Exportar ventas por semana a Excel',
+      });
+
+      // Act
+      await userEvent.click(boton);
+
+      // Assert
+      expect(exportar).toHaveBeenCalledWith(
+        'excel',
+        expect.objectContaining({
+          reporte: 'ventas-por-semana',
+          titulo: 'Ventas por semana',
+          extra: 'Agrupación: semana',
+          rango: rangoNoviembre,
+          filas: [{ periodoInicio: '2026-11-03', ventas: '500.00', pedidos: 2, unidadesNetas: 4 }],
+        }),
+      );
+    });
+
+    it('ventas por categoría a PDF → exporta su reporte', async () => {
+      // Arrange
+      renderizar(<ReportesPage />, { ruta });
+      const boton = await screen.findByRole('button', {
+        name: 'Exportar ventas por categoría a PDF',
+      });
+
+      // Act
+      await userEvent.click(boton);
+
+      // Assert
+      const [formato, def] = exportar.mock.calls[0]!;
+      expect(formato).toBe('pdf');
+      expect(def).toMatchObject({ reporte: 'ventas-por-categoria', rango: rangoNoviembre });
+      expect(def.filas).toHaveLength(1);
+      expect(def.columnas.map((c) => c.titulo)).toContain('Reembolsado');
+    });
+
+    it('productos más vendidos → indica cuántos se exportan', async () => {
+      // Arrange
+      renderizar(<ReportesPage />, { ruta });
+      const boton = await screen.findByRole('button', {
+        name: 'Exportar productos más vendidos a Excel',
+      });
+
+      // Act
+      await userEvent.click(boton);
+
+      // Assert
+      expect(exportar).toHaveBeenCalledWith(
+        'excel',
+        expect.objectContaining({
+          reporte: 'productos-mas-vendidos',
+          extra: 'Los 1 con más venta neta',
+        }),
+      );
+    });
+
+    it('carritos → pide todas las páginas con el orden de la tabla y las exporta', async () => {
+      // Arrange
+      const todos = [{ idCarrito: 1 }, { idCarrito: 2 }] as never;
+      api.todosLosCarritosAbandonados.mockResolvedValue(todos);
+      renderizar(<ReportesPage />, { ruta: `${ruta}&sort=valor:desc` });
+      await screen.findByText('Invitado');
+
+      // Act
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Exportar carritos abandonados a PDF' }),
+      );
+
+      // Assert
+      expect(api.todosLosCarritosAbandonados).toHaveBeenCalledWith({
+        ...rangoNoviembre,
+        sort: 'valor:desc',
+      });
+      expect(exportar).toHaveBeenCalledWith(
+        'pdf',
+        expect.objectContaining({ reporte: 'carritos-abandonados', filas: todos }),
+      );
+    });
+
+    it('falla la descarga de carritos → aviso con la referencia y no genera archivo', async () => {
+      // Arrange
+      api.todosLosCarritosAbandonados.mockRejectedValue(
+        new ApiError(503, 'SERVICIO_NO_DISPONIBLE', 'Servicio no disponible.', [], 'req-90'),
+      );
+      renderizar(<ReportesPage />, { ruta });
+      await screen.findByText('Invitado');
+
+      // Act
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Exportar carritos abandonados a Excel' }),
+      );
+
+      // Assert
+      const alerta = await screen.findByRole('alert');
+      expect(alerta).toHaveTextContent('Servicio no disponible.');
+      expect(alerta).toHaveTextContent('Referencia: req-90');
+      expect(exportar).not.toHaveBeenCalled();
+    });
+
+    it('falla la generación del archivo → aviso genérico', async () => {
+      // Arrange
+      exportar.mockRejectedValue(new Error('chunk no disponible'));
+      renderizar(<ReportesPage />, { ruta });
+      const boton = await screen.findByRole('button', { name: 'Exportar ventas por día a PDF' });
+
+      // Act
+      await userEvent.click(boton);
+
+      // Assert
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'No se pudo generar el archivo. Intenta de nuevo.',
+      );
+    });
+
+    it('sin carritos en el periodo → sus botones quedan deshabilitados', async () => {
+      // Arrange
+      api.carritosAbandonados.mockResolvedValue({ items: [], page: 1, pageSize: 10, total: 0 });
+
+      // Act
+      renderizar(<ReportesPage />, { ruta });
+
+      // Assert
+      expect(await screen.findByText('Sin carritos abandonados')).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Exportar carritos abandonados a Excel' }),
+      ).toBeDisabled();
+    });
+
+    it('rango invertido → no hay botones en los reportes y los de carritos están deshabilitados', async () => {
+      // Act
+      renderizar(<ReportesPage />, {
+        ruta: '/consola/reportes?desde=2026-11-30&hasta=2026-11-01',
+      });
+
+      // Assert
+      await screen.findByText('Debe ser igual o posterior a la fecha inicial.');
+      expect(screen.queryByRole('button', { name: /Exportar ventas/ })).not.toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Exportar carritos abandonados a PDF' }),
+      ).toBeDisabled();
+    });
   });
 });
