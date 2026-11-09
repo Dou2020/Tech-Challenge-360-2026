@@ -3,6 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pedidosApi } from '../../services/api/pedidos';
+import { ApiError } from '../../services/http';
 import { crearPedidoDetalle } from '../../test/fixtures/pedidos';
 import {
   CLAVE_PEDIDOS,
@@ -14,6 +15,8 @@ import {
   usePedido,
   usePedidos,
   useRegistrarDevolucion,
+  useTableroPedidos,
+  useTransicionarPedido,
 } from './usePedidos';
 
 vi.mock('../../services/api/pedidos', () => ({
@@ -154,5 +157,109 @@ describe('usePedidos (mutaciones)', () => {
     await waitFor(() =>
       expect(claves(invalidar)).toEqual(expect.arrayContaining(['["pedidos"]', '["inventario"]'])),
     );
+  });
+});
+
+describe('usePedidos (tablero)', () => {
+  beforeEach(() => {
+    Object.values(api).forEach((fn) => fn.mockReset());
+  });
+
+  it('useTableroPedidos → una consulta por columna con su estado, su orden y los mismos filtros', async () => {
+    // Arrange
+    api.listar.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
+    const { Envoltura } = contexto();
+    const columnas = [
+      { estado: 'PAGADO', sort: 'fechaCreacion:asc' },
+      { estado: 'ENTREGADO', sort: 'fechaCreacion:desc' },
+    ];
+
+    // Act
+    const { result } = renderHook(() => useTableroPedidos(columnas, { q: 'SC-2026' }), {
+      wrapper: Envoltura,
+    });
+
+    // Assert
+    await waitFor(() => expect(result.current.every((c) => c.isSuccess)).toBe(true));
+    expect(api.listar).toHaveBeenCalledWith({
+      q: 'SC-2026',
+      estado: 'PAGADO',
+      sort: 'fechaCreacion:asc',
+      page: 1,
+      pageSize: 20,
+    });
+    expect(api.listar).toHaveBeenCalledWith({
+      q: 'SC-2026',
+      estado: 'ENTREGADO',
+      sort: 'fechaCreacion:desc',
+      page: 1,
+      pageSize: 20,
+    });
+  });
+
+  it('transicionar por ESTADO → PATCH /estado, escribe el detalle e invalida solo pedidos', async () => {
+    // Arrange
+    const detalle = crearPedidoDetalle({ estado: 'EN_PREPARACION' });
+    api.cambiarEstado.mockResolvedValue(detalle);
+    const { Envoltura, invalidar, queryClient } = contexto();
+    const { result } = renderHook(() => useTransicionarPedido(), { wrapper: Envoltura });
+
+    // Act
+    result.current.mutate({ idPedido: 1503, estado: 'EN_PREPARACION', via: 'ESTADO', texto: 'Ok' });
+
+    // Assert
+    await waitFor(() =>
+      expect(queryClient.getQueryData([...CLAVE_PEDIDOS, 'detalle', 1503])).toEqual(detalle),
+    );
+    expect(api.cambiarEstado).toHaveBeenCalledWith(1503, 'EN_PREPARACION', 'Ok');
+    expect(api.cancelar).not.toHaveBeenCalled();
+    expect(claves(invalidar)).toEqual(['["pedidos"]']);
+  });
+
+  it('transicionar por CANCELAR → POST /cancelar e invalida pedidos, carrito e inventario', async () => {
+    // Arrange
+    api.cancelar.mockResolvedValue(crearPedidoDetalle({ estado: 'CANCELADO' }));
+    const { Envoltura, invalidar } = contexto();
+    const { result } = renderHook(() => useTransicionarPedido(), { wrapper: Envoltura });
+
+    // Act
+    result.current.mutate({ idPedido: 1503, estado: 'CANCELADO', via: 'CANCELAR' });
+
+    // Assert
+    await waitFor(() =>
+      expect(claves(invalidar)).toEqual(['["pedidos"]', '["carrito"]', '["inventario"]']),
+    );
+    expect(api.cancelar).toHaveBeenCalledWith(1503, undefined);
+    expect(api.cambiarEstado).not.toHaveBeenCalled();
+  });
+
+  it('409 TRANSICION_NO_PERMITIDA → invalida pedidos para refrescar el tablero', async () => {
+    // Arrange
+    api.cambiarEstado.mockRejectedValue(
+      new ApiError(409, 'TRANSICION_NO_PERMITIDA', 'No.', [], 'req-1'),
+    );
+    const { Envoltura, invalidar } = contexto();
+    const { result } = renderHook(() => useTransicionarPedido(), { wrapper: Envoltura });
+
+    // Act
+    result.current.mutate({ idPedido: 1503, estado: 'DESPACHADO', via: 'ESTADO' });
+
+    // Assert
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(claves(invalidar)).toEqual(['["pedidos"]']);
+  });
+
+  it('otro error → no invalida nada', async () => {
+    // Arrange
+    api.cambiarEstado.mockRejectedValue(new ApiError(500, 'ERROR_INTERNO', 'Falla.', [], 'r'));
+    const { Envoltura, invalidar } = contexto();
+    const { result } = renderHook(() => useTransicionarPedido(), { wrapper: Envoltura });
+
+    // Act
+    result.current.mutate({ idPedido: 1503, estado: 'DESPACHADO', via: 'ESTADO' });
+
+    // Assert
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidar).not.toHaveBeenCalled();
   });
 });

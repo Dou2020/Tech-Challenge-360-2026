@@ -38,6 +38,13 @@ export interface TransicionPedido {
   via: 'ESTADO' | 'CANCELAR' | 'DEVOLUCION';
 }
 
+/** Estado al que se puede mover un pedido desde la consola (las devoluciones van aparte, por línea). */
+export interface DestinoPedido {
+  estado: string;
+  nombre: string;
+  via: Exclude<TransicionPedido['via'], 'DEVOLUCION'>;
+}
+
 export interface PagoPedido {
   idPago: number;
   metodoPago: string;

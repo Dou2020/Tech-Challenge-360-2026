@@ -32,3 +32,22 @@ export function errorNotice(
   }
   return { tipo: 'error', mensaje: mensajePorDefecto };
 }
+
+/**
+ * Error al cambiar el estado de un pedido o cancelarlo. Un 409 TRANSICION_NO_PERMITIDA significa
+ * que alguien más cambió el pedido: se explica claro en vez del mensaje técnico.
+ */
+export function avisoErrorTransicion(
+  error: unknown,
+  mensajePorDefecto = 'No se pudo completar la acción.',
+): Aviso {
+  if (error instanceof ApiError && error.code === 'TRANSICION_NO_PERMITIDA') {
+    return {
+      tipo: 'error',
+      mensaje:
+        'El pedido ya no admite ese cambio: su estado es otro. Se actualizó la información; revisa las acciones disponibles.',
+      referencia: error.requestId,
+    };
+  }
+  return errorNotice(error, mensajePorDefecto);
+}

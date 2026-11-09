@@ -34,3 +34,15 @@ export const colaOperacion: { estado: EstadoPedido; etiqueta: string }[] = [
   { estado: 'EN_PREPARACION', etiqueta: 'Por despachar' },
   { estado: 'DESPACHADO', etiqueta: 'Por entregar' },
 ];
+
+/**
+ * Columnas del tablero de pedidos de la consola, en el orden del flujo. Las de trabajo muestran
+ * primero lo más antiguo (la cola); Entregado y Cancelado, lo más reciente.
+ */
+export const columnasTablero: { estado: EstadoPedido; sort: string }[] = [
+  { estado: 'PAGADO', sort: 'fechaCreacion:asc' },
+  { estado: 'EN_PREPARACION', sort: 'fechaCreacion:asc' },
+  { estado: 'DESPACHADO', sort: 'fechaCreacion:asc' },
+  { estado: 'ENTREGADO', sort: 'fechaCreacion:desc' },
+  { estado: 'CANCELADO', sort: 'fechaCreacion:desc' },
+];

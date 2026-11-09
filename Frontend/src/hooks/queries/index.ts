@@ -34,6 +34,7 @@ export {
 } from './useInventario';
 export {
   CLAVE_PEDIDOS,
+  TAMANO_COLUMNA_TABLERO,
   useCambiarEstadoPedido,
   useCancelarPedido,
   useDevolucionesPedido,
@@ -42,7 +43,9 @@ export {
   usePedido,
   usePedidos,
   useRegistrarDevolucion,
+  useTableroPedidos,
   useTotalesPedidos,
+  useTransicionarPedido,
 } from './usePedidos';
 export { useProducto } from './useProducto';
 export {

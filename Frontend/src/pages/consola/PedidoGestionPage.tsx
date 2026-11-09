@@ -26,25 +26,12 @@ import {
 import { ApiError } from '../../services/http';
 import type { DatosDevolucion } from '../../types/pedidos';
 import { formatearFecha, formatearMonto } from '../../utils/format';
-import { avisoExito, errorNotice, type Aviso } from '../../utils/notice';
+import { avisoErrorTransicion, avisoExito, type Aviso } from '../../utils/notice';
 import NoEncontradoPage from '../errores/NoEncontradoPage';
 
 const MAX_TEXTO = 300;
 
 type Accion = { tipo: 'ESTADO'; estado: string; nombre: string } | { tipo: 'CANCELAR' };
-
-/** Un 409 TRANSICION_NO_PERMITIDA significa que alguien más cambió el pedido: se explica claro. */
-function avisoDeError(error: unknown, porDefecto: string): Aviso {
-  if (error instanceof ApiError && error.code === 'TRANSICION_NO_PERMITIDA') {
-    return {
-      tipo: 'error',
-      mensaje:
-        'El pedido ya no admite ese cambio: su estado es otro. Se actualizó la información; revisa las acciones disponibles.',
-      referencia: error.requestId,
-    };
-  }
-  return errorNotice(error, porDefecto);
-}
 
 /** Detalle de un pedido para el personal: acciones según `transiciones[].via`. */
 export default function PedidoGestionPage() {
@@ -90,7 +77,7 @@ export default function PedidoGestionPage() {
     if (!accion) return;
     const opcional = texto.trim() || undefined;
     const alFallar = (error: unknown) => {
-      setAviso(avisoDeError(error, 'No se pudo completar la acción.'));
+      setAviso(avisoErrorTransicion(error));
       if (error instanceof ApiError && error.code === 'TRANSICION_NO_PERMITIDA')
         void pedido.refetch();
     };

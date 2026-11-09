@@ -47,7 +47,7 @@ La columna **Línea** indica la versión mayor.menor elegida. Las versiones exac
 | `recharts` | 3.10 | Gráficas del dashboard |
 | `tailwindcss`, `@tailwindcss/vite` | 4.3 | Estilos |
 | `lucide-react` | 1.63 | Íconos |
-| `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` | 6.3 / 10.0 / 3.2 | Reordenar las imágenes del producto arrastrando (también con teclado); la primera es la principal |
+| `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` | 6.3 / 10.0 / 3.2 | Reordenar las imágenes del producto arrastrando (también con teclado); la primera es la principal. Tablero de pedidos de la consola (`OrdersBoard`). Ninguno de los dos entra al barrel de organismos, para que dnd-kit quede fuera del bundle inicial |
 | `@fontsource-variable/inter` | 5.3 | Tipografía Inter variable, servida desde el propio sitio (sin CDN ni peticiones a terceros) |
 | `vite`, `@vitejs/plugin-react` | 8.3 / 6.1 | Servidor de desarrollo y build (desarrollo) |
 | `typescript`, `eslint` | 6.0 / 10.13 | Tipado y análisis estático (desarrollo) |
@@ -158,7 +158,7 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | `/consola/configuracion` | Parámetros del sistema editables con validación | Administrador |
 | `/consola/operacion` | Panel de operación: pedidos que esperan en cada etapa y variantes en bajo stock, con enlaces a las listas filtradas. Es el inicio del Operador | Operador, Administrador |
 | `/consola/perfil` | Mi perfil del personal (la misma página que `/cuenta/perfil`) | Operador, Administrador |
-| `/consola/pedidos` | Pedidos: filtros `estado`, `q`, `desde`, `hasta`, `idCliente` y orden en la URL | Operador, Administrador |
+| `/consola/pedidos` | Pedidos: filtros `estado`, `q`, `desde`, `hasta`, `idCliente` y orden en la URL. Con `?vista=tablero` se ven como tablero kanban (Pagado, En preparación, Despachado, Entregado, Cancelado; 20 por columna, con "Ver todos" a la lista filtrada). Arrastrar una tarjeta (puntero o teclado) o usar su selector "Mover a" pide confirmación y ejecuta el cambio por `PATCH /estado` o `POST /cancelar`, solo hacia los destinos con `permitida` en `GET /api/pedidos/estados`. Las devoluciones siguen en el detalle | Operador, Administrador |
 | `/consola/pedidos/:id` | Gestión del pedido: avanzar estado, cancelar y registrar devolución según `transiciones[].via` | Operador, Administrador |
 | `/consola/inventario` | Existencias con filtros, bajo stock, entradas y ajustes | Operador, Administrador |
 | `/consola/inventario/:idVariante/kardex` | Kardex de la variante con filtros `desde`, `hasta`, `tipo` | Operador, Administrador |

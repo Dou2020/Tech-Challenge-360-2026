@@ -6,7 +6,8 @@ import {
   useQueryClient,
 } from '@tanstack/react-query';
 import { pedidosApi } from '../../services/api/pedidos';
-import type { DatosDevolucion } from '../../types/pedidos';
+import { ApiError } from '../../services/http';
+import type { DatosDevolucion, TransicionPedido } from '../../types/pedidos';
 
 /** Todas las claves cuelgan de ['pedidos'] para invalidar lista, detalle e historial juntos. */
 export const CLAVE_PEDIDOS = ['pedidos'] as const;
@@ -40,6 +41,30 @@ export function useTotalesPedidos(estados: readonly string[]) {
       refetch: () => {
         for (const r of resultados) void r.refetch();
       },
+    }),
+  });
+}
+
+/** Tarjetas que muestra cada columna del tablero; el resto se ve en la lista filtrada. */
+export const TAMANO_COLUMNA_TABLERO = 20;
+
+/**
+ * Tablero de pedidos: la primera página de cada estado, con los mismos filtros (número, fechas,
+ * cliente) en todas las columnas. Comparte las claves de `usePedidos`, así que cualquier mutación de
+ * pedidos también refresca el tablero.
+ */
+export function useTableroPedidos(
+  columnas: readonly { estado: string; sort: string }[],
+  filtros: Record<string, string | number | undefined>,
+) {
+  return useQueries({
+    queries: columnas.map(({ estado, sort }) => {
+      const params = { ...filtros, estado, sort, page: 1, pageSize: TAMANO_COLUMNA_TABLERO };
+      return {
+        queryKey: [...CLAVE_PEDIDOS, 'lista', params],
+        queryFn: () => pedidosApi.listar(params),
+        placeholderData: keepPreviousData,
+      };
     }),
   });
 }
@@ -113,6 +138,44 @@ export function useRegistrarDevolucion(id: number) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: CLAVE_PEDIDOS });
       void queryClient.invalidateQueries({ queryKey: ['inventario'] });
+    },
+  });
+}
+
+/**
+ * Mueve un pedido cualquiera (el tablero no tiene un id fijo): `via` elige el endpoint, como en el
+ * detalle (`ESTADO` → PATCH /estado, `CANCELAR` → POST /cancelar). `texto` es el comentario o el motivo.
+ */
+export function useTransicionarPedido() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      idPedido,
+      estado,
+      via,
+      texto,
+    }: {
+      idPedido: number;
+      estado: string;
+      via: Exclude<TransicionPedido['via'], 'DEVOLUCION'>;
+      texto?: string | undefined;
+    }) =>
+      via === 'CANCELAR'
+        ? pedidosApi.cancelar(idPedido, texto)
+        : pedidosApi.cambiarEstado(idPedido, estado, texto),
+    onSuccess: (detalle, { via }) => {
+      queryClient.setQueryData([...CLAVE_PEDIDOS, 'detalle', detalle.idPedido], detalle);
+      void queryClient.invalidateQueries({ queryKey: CLAVE_PEDIDOS });
+      if (via === 'CANCELAR') {
+        // Cancelar devuelve existencia y libera el cupón.
+        void queryClient.invalidateQueries({ queryKey: ['carrito'] });
+        void queryClient.invalidateQueries({ queryKey: ['inventario'] });
+      }
+    },
+    // Otro usuario ya cambió el pedido: se refresca el tablero para que la tarjeta quede donde está.
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === 'TRANSICION_NO_PERMITIDA')
+        void queryClient.invalidateQueries({ queryKey: CLAVE_PEDIDOS });
     },
   });
 }

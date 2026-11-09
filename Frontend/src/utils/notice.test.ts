@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../services/http';
-import { avisoExito, avisoInfo, errorNotice } from './notice';
+import { avisoErrorTransicion, avisoExito, avisoInfo, errorNotice } from './notice';
 
 describe('notice', () => {
   it('avisoExito → tipo exito con el mensaje', () => {
@@ -44,5 +44,26 @@ describe('notice', () => {
 
     // Assert
     expect(aviso.mensaje).toBe('Ocurrió un error inesperado.');
+  });
+
+  it('avisoErrorTransicion con 409 TRANSICION_NO_PERMITIDA → mensaje claro con la referencia', () => {
+    // Arrange
+    const error = new ApiError(409, 'TRANSICION_NO_PERMITIDA', 'Técnico.', [], 'req-9');
+
+    // Act
+    const aviso = avisoErrorTransicion(error);
+
+    // Assert
+    expect(aviso.tipo).toBe('error');
+    expect(aviso.mensaje).toMatch(/ya no admite ese cambio/);
+    expect(aviso.referencia).toBe('req-9');
+  });
+
+  it('avisoErrorTransicion con otro error → se comporta como errorNotice', () => {
+    // Act
+    const aviso = avisoErrorTransicion(new Error('x'));
+
+    // Assert
+    expect(aviso).toEqual({ tipo: 'error', mensaje: 'No se pudo completar la acción.' });
   });
 });
