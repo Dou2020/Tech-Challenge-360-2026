@@ -13,7 +13,7 @@ describe('checkoutApi', () => {
 
   it('iniciar → POST con idDireccion e idMetodoEnvio', async () => {
     // Act
-    await checkoutApi.iniciar(5, 2);
+    await checkoutApi.iniciar({ idDireccion: 5, idMetodoEnvio: 2 });
 
     // Assert
     expect(pedir).toHaveBeenCalledWith('/checkout/iniciar', {

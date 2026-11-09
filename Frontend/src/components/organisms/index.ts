@@ -7,6 +7,7 @@ export { CartButton } from './CartButton';
 export { CartLine } from './CartLine';
 export { CartSummary } from './CartSummary';
 export { CardForm } from './CardForm';
+export { BranchForm } from './BranchForm';
 export { CategoryForm } from './CategoryForm';
 export { CheckoutSelection } from './CheckoutSelection';
 export { CheckoutSummary } from './CheckoutSummary';

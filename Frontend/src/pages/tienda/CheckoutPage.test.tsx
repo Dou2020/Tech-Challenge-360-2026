@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { carritoApi } from '../../services/api/carrito';
 import { catalogoApi } from '../../services/api/catalogo';
 import { checkoutApi } from '../../services/api/checkout';
+import { sucursalesPublicasApi } from '../../services/api/sucursales';
 import { tarjetasApi } from '../../services/api/tarjetas';
 import { direccionesApi } from '../../services/api/direcciones';
 import { ApiError } from '../../services/http';
 import { crearDireccion } from '../../test/fixtures/direcciones';
+import { crearSucursalPublica } from '../../test/fixtures/sucursales';
 import { crearTarjeta } from '../../test/fixtures/tarjetas';
 import { crearAuth, renderizar } from '../../test/renderizar';
 import type { Usuario } from '../../types/auth';
@@ -28,12 +30,14 @@ vi.mock('../../services/api/carrito', () => ({ carritoApi: { obtener: vi.fn() } 
 vi.mock('../../services/api/direcciones', () => ({
   direccionesApi: { listar: vi.fn(), crear: vi.fn() },
 }));
+vi.mock('../../services/api/sucursales', () => ({ sucursalesPublicasApi: { listar: vi.fn() } }));
 vi.mock('../../services/api/tarjetas', () => ({ tarjetasApi: { listar: vi.fn() } }));
 vi.mock('../../services/api/catalogo', () => ({ catalogoApi: { metodosEnvio: vi.fn() } }));
 
 const checkout = vi.mocked(checkoutApi);
 const direcciones = vi.mocked(direccionesApi);
 const metodos = vi.mocked(catalogoApi.metodosEnvio);
+const sucursales = vi.mocked(sucursalesPublicasApi.listar);
 
 const cliente: Usuario = {
   idUsuario: 7,
@@ -99,6 +103,7 @@ describe('CheckoutPage', () => {
     direcciones.crear.mockReset();
     vi.mocked(tarjetasApi.listar).mockReset().mockResolvedValue([]);
     metodos.mockReset();
+    sucursales.mockReset().mockResolvedValue([]);
     sessionStorage.clear();
   });
   afterEach(() => sessionStorage.clear());
@@ -325,7 +330,13 @@ describe('CheckoutPage', () => {
     );
     direcciones.listar.mockResolvedValue([crearDireccion()]);
     metodos.mockResolvedValue([
-      { idMetodoEnvio: 1, nombre: 'Estándar', costo: '25.00', diasEstimados: 3 },
+      {
+        idMetodoEnvio: 1,
+        nombre: 'Estándar',
+        costo: '25.00',
+        diasEstimados: 3,
+        requiereSucursal: false,
+      },
     ]);
 
     // Act
@@ -366,7 +377,13 @@ describe('CheckoutPage', () => {
     // Arrange
     direcciones.listar.mockResolvedValue([crearDireccion()]);
     metodos.mockResolvedValue([
-      { idMetodoEnvio: 1, nombre: 'Estándar', costo: '25.00', diasEstimados: 3 },
+      {
+        idMetodoEnvio: 1,
+        nombre: 'Estándar',
+        costo: '25.00',
+        diasEstimados: 3,
+        requiereSucursal: false,
+      },
     ]);
     checkout.iniciar.mockResolvedValue(resumen);
     const { router } = renderizar(<CheckoutPage />, {
@@ -382,15 +399,59 @@ describe('CheckoutPage', () => {
 
     // Assert
     expect(await screen.findByRole('timer')).toBeInTheDocument();
-    expect(checkout.iniciar).toHaveBeenCalledWith(5, 1);
+    expect(checkout.iniciar).toHaveBeenCalledWith({ idDireccion: 5, idMetodoEnvio: 1 });
     expect(router.state.location.search).toBe('?idDireccion=5&idMetodoEnvio=1');
+  });
+
+  it('retiro en sucursal → reserva con idSucursal (sin dirección) y lo pone en la URL', async () => {
+    // Arrange
+    direcciones.listar.mockResolvedValue([crearDireccion()]);
+    metodos.mockResolvedValue([
+      {
+        idMetodoEnvio: 1,
+        nombre: 'Estándar',
+        costo: '25.00',
+        diasEstimados: 3,
+        requiereSucursal: false,
+      },
+      {
+        idMetodoEnvio: 4,
+        nombre: 'Recoger en sucursal',
+        costo: '0.00',
+        diasEstimados: 0,
+        requiereSucursal: true,
+      },
+    ]);
+    sucursales.mockResolvedValue([crearSucursalPublica()]);
+    checkout.iniciar.mockResolvedValue(resumen);
+    const { router } = renderizar(<CheckoutPage />, {
+      auth: crearAuth({ usuario: cliente, estado: 'autenticado' }),
+      ruta: '/checkout',
+      rutas,
+    });
+    await userEvent.click(await screen.findByRole('radio', { name: /Recoger en sucursal/ }));
+    await userEvent.click(await screen.findByRole('radio', { name: /Zona 10/ }));
+
+    // Act
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar al pago' }));
+
+    // Assert
+    expect(await screen.findByRole('timer')).toBeInTheDocument();
+    expect(checkout.iniciar).toHaveBeenCalledWith({ idMetodoEnvio: 4, idSucursal: 3 });
+    expect(router.state.location.search).toBe('?idSucursal=3&idMetodoEnvio=4');
   });
 
   it('iniciar con 409 STOCK_INSUFICIENTE → lista las variantes afectadas', async () => {
     // Arrange
     direcciones.listar.mockResolvedValue([crearDireccion()]);
     metodos.mockResolvedValue([
-      { idMetodoEnvio: 1, nombre: 'Estándar', costo: '25.00', diasEstimados: 3 },
+      {
+        idMetodoEnvio: 1,
+        nombre: 'Estándar',
+        costo: '25.00',
+        diasEstimados: 3,
+        requiereSucursal: false,
+      },
     ]);
     checkout.iniciar.mockRejectedValue(
       new ApiError(409, 'STOCK_INSUFICIENTE', 'No hay existencia suficiente.', [
@@ -577,6 +638,139 @@ describe('CheckoutPage', () => {
       // Assert
       expect(await screen.findByRole('status', { name: 'Cargando tarjetas' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Pagar' })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('retiro en sucursal', () => {
+    const retiro = {
+      idMetodoEnvio: 4,
+      nombre: 'Recoger en sucursal',
+      costo: '0.00',
+      diasEstimados: 0,
+      requiereSucursal: true,
+    };
+    const resumenRetiro: ResumenCheckout = {
+      ...resumen,
+      costoEnvio: '0.00',
+      total: '268.20',
+      metodoEnvio: { idMetodoEnvio: 4, nombre: 'Recoger en sucursal', diasEstimados: 0 },
+    };
+    const abrirRetiro = () =>
+      renderizar(<CheckoutPage />, {
+        auth: crearAuth({ usuario: cliente, estado: 'autenticado' }),
+        ruta: '/checkout?idSucursal=3&idMetodoEnvio=4',
+        rutas,
+      });
+
+    beforeEach(() => {
+      checkout.obtenerResumen.mockResolvedValue(resumenRetiro);
+      direcciones.listar.mockResolvedValue([crearDireccion()]);
+      metodos.mockResolvedValue([retiro]);
+      sucursales.mockResolvedValue([crearSucursalPublica()]);
+    });
+
+    it('recargar con ?idSucursal&idMetodoEnvio → retoma la reserva del retiro sin pedir dirección', async () => {
+      // Arrange / Act
+      abrirRetiro();
+
+      // Assert
+      expect(await screen.findByRole('timer')).toBeInTheDocument();
+      expect(checkout.obtenerResumen).toHaveBeenCalledWith(4);
+      expect(screen.getAllByText('Q 268.20').length).toBeGreaterThan(0);
+      expect(checkout.iniciar).not.toHaveBeenCalled();
+    });
+
+    it('pagar un retiro → manda idSucursal y no manda idDireccion', async () => {
+      // Arrange
+      checkout.pagar.mockResolvedValue({
+        idPedido: 1504,
+        numeroPedido: 'SC-2026-001504',
+        estado: 'PAGADO',
+        total: '268.20',
+        idTarjetaGuardada: null,
+      });
+      abrirRetiro();
+      await userEvent.type(await screen.findByLabelText('Titular de la tarjeta'), 'Ana López');
+      await userEvent.type(screen.getByLabelText('Últimos 4 dígitos de la tarjeta'), '4242');
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Pagar' }));
+
+      // Assert
+      expect(await screen.findByText('Pedido confirmado')).toBeInTheDocument();
+      expect(checkout.pagar).toHaveBeenCalledWith(
+        {
+          idSucursal: 3,
+          idMetodoEnvio: 4,
+          metodoPago: 'TARJETA',
+          datosPago: { titular: 'Ana López', ultimos4: '4242' },
+        },
+        expect.any(String),
+      );
+      expect(checkout.pagar.mock.calls[0]?.[0]).not.toHaveProperty('idDireccion');
+    });
+
+    it('iniciar con la sucursal inactiva (404) → muestra el mensaje y sigue en el paso 1', async () => {
+      // Arrange
+      checkout.obtenerResumen.mockRejectedValue(
+        new ApiError(409, 'RESERVA_VENCIDA', 'La reserva venció.'),
+      );
+      checkout.iniciar.mockRejectedValue(
+        new ApiError(404, 'NO_ENCONTRADO', 'La sucursal no existe o está inactiva.', [], 'req-s1'),
+      );
+      renderizar(<CheckoutPage />, {
+        auth: crearAuth({ usuario: cliente, estado: 'autenticado' }),
+        ruta: '/checkout',
+        rutas,
+      });
+      await userEvent.click(await screen.findByRole('radio', { name: /Recoger en sucursal/ }));
+      await userEvent.click(await screen.findByRole('radio', { name: /Zona 10/ }));
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Continuar al pago' }));
+
+      // Assert
+      expect(await screen.findByText('La sucursal no existe o está inactiva.')).toBeInTheDocument();
+      expect(screen.getByText('Referencia: req-s1')).toBeInTheDocument();
+      expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Continuar al pago' })).toBeEnabled();
+    });
+
+    it('pagar con la sucursal inactiva (404) → muestra el mensaje y conserva el formulario', async () => {
+      // Arrange
+      checkout.pagar.mockRejectedValue(
+        new ApiError(404, 'NO_ENCONTRADO', 'La sucursal no existe o está inactiva.'),
+      );
+      abrirRetiro();
+      await userEvent.type(await screen.findByLabelText('Titular de la tarjeta'), 'Ana López');
+      await userEvent.type(screen.getByLabelText('Últimos 4 dígitos de la tarjeta'), '4242');
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Pagar' }));
+
+      // Assert
+      expect(await screen.findByText('La sucursal no existe o está inactiva.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Pagar' })).toBeInTheDocument();
+      expect(screen.queryByText('Pedido confirmado')).not.toBeInTheDocument();
+    });
+
+    it('IDEMPOTENCIA_CONFLICTO al pagar un retiro → descarta la clave y avisa', async () => {
+      // Arrange
+      checkout.pagar.mockRejectedValue(
+        new ApiError(409, 'IDEMPOTENCIA_CONFLICTO', 'La clave ya se usó con otra sucursal.'),
+      );
+      abrirRetiro();
+      await userEvent.type(await screen.findByLabelText('Titular de la tarjeta'), 'Ana López');
+      await userEvent.type(screen.getByLabelText('Últimos 4 dígitos de la tarjeta'), '4242');
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Pagar' }));
+
+      // Assert
+      expect(
+        await screen.findByText('No pudimos confirmar el pago. Inténtalo de nuevo.'),
+      ).toBeInTheDocument();
+      expect(idempotencia.actual()).toBeNull();
     });
   });
 

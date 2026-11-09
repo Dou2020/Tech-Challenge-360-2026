@@ -15,6 +15,7 @@ import { catalogoApi } from './services/api/catalogo';
 import { inventarioApi } from './services/api/inventario';
 import { pedidosApi } from './services/api/pedidos';
 import { perfilApi } from './services/api/perfil';
+import { sucursalesApi } from './services/api/sucursales';
 import { tarjetasApi } from './services/api/tarjetas';
 import { ApiError } from './services/http';
 import { crearCarrito } from './test/fixtures/carrito';
@@ -39,6 +40,10 @@ vi.mock('./services/api/administracion', () => ({
 }));
 vi.mock('./services/api/inventario', () => ({ inventarioApi: { existencias: vi.fn() } }));
 vi.mock('./services/api/perfil', () => ({ perfilApi: { obtener: vi.fn() } }));
+vi.mock('./services/api/sucursales', () => ({
+  sucursalesApi: { listar: vi.fn() },
+  sucursalesPublicasApi: { listar: vi.fn() },
+}));
 const catalogo = vi.mocked(catalogoApi);
 const carrito = vi.mocked(carritoApi);
 const pedidos = vi.mocked(pedidosApi);
@@ -235,6 +240,7 @@ describe('router: consola de Operador y Administrador', () => {
     '/consola',
     '/consola/reportes',
     '/consola/categorias',
+    '/consola/sucursales',
     '/consola/productos',
     '/consola/productos/nuevo',
     '/consola/productos/5',
@@ -331,6 +337,7 @@ describe('router: consola de Operador y Administrador', () => {
   });
 
   it.each([
+    ['/consola/sucursales', 'Sucursales'],
     ['/consola/cupones', 'Cupones'],
     ['/consola/usuarios', 'Usuarios'],
     ['/consola/bitacora', 'Bitácora'],
@@ -342,6 +349,12 @@ describe('router: consola de Operador y Administrador', () => {
     vi.mocked(bitacoraApi.listar).mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 });
     vi.mocked(bitacoraApi.modulos).mockResolvedValue([]);
     vi.mocked(configuracionApi.listar).mockResolvedValue([]);
+    vi.mocked(sucursalesApi.listar).mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    });
 
     // Act
     const router = navegar(ruta, admin());

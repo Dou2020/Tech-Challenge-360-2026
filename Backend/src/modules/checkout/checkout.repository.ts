@@ -1,6 +1,7 @@
 import sql from 'mssql';
 import { executeSp, type NombreSp, type ParametroSp } from '../../db/executeSp.js';
 import type {
+  DatosEntrega,
   DatosPago,
   FilaLiberacionReserva,
   FilaLineaCheckout,
@@ -25,6 +26,13 @@ const solicitante = (idUsuario: number): ParametroSp => ({
   valor: idUsuario,
 });
 
+/** Dirección o sucursal ausentes viajan como NULL: el SP decide cuál exige según el método. */
+const parametrosEntrega = (entrega: DatosEntrega): ParametroSp[] => [
+  { nombre: 'IDDireccion', tipo: sql.Int, valor: entrega.idDireccion ?? null },
+  { nombre: 'IDMetodoEnvio', tipo: sql.Int, valor: entrega.idMetodoEnvio },
+  { nombre: 'IDSucursal', tipo: sql.Int, valor: entrega.idSucursal ?? null },
+];
+
 async function resumen(nombre: NombreSp, parametros: ParametroSp[]): Promise<ResultadoResumenSp> {
   const { resultSets } = await executeSp(nombre, parametros);
   const encabezado = resultSets[0]?.[0] as FilaResumenCheckout | undefined;
@@ -33,11 +41,10 @@ async function resumen(nombre: NombreSp, parametros: ParametroSp[]): Promise<Res
 }
 
 export const checkoutRepository = {
-  reservar: (idUsuario: number, idDireccion: number, idMetodoEnvio: number) =>
+  reservar: (idUsuario: number, entrega: DatosEntrega) =>
     resumen('SP_Inventario_ReservarExistencia', [
       solicitante(idUsuario),
-      { nombre: 'IDDireccion', tipo: sql.Int, valor: idDireccion },
-      { nombre: 'IDMetodoEnvio', tipo: sql.Int, valor: idMetodoEnvio },
+      ...parametrosEntrega(entrega),
     ]),
 
   obtenerResumen: (idUsuario: number, idMetodoEnvio: number | null) =>
@@ -63,8 +70,7 @@ export const checkoutRepository = {
     const { filas } = await executeSp<FilaPedidoCreado>('SP_Pedidos_CrearPedido', [
       solicitante(idUsuario),
       { nombre: 'ClaveIdempotencia', tipo: sql.UniqueIdentifier, valor: claveIdempotencia },
-      { nombre: 'IDDireccion', tipo: sql.Int, valor: datos.idDireccion },
-      { nombre: 'IDMetodoEnvio', tipo: sql.Int, valor: datos.idMetodoEnvio },
+      ...parametrosEntrega(datos),
       { nombre: 'MetodoPago', tipo: sql.NVarChar(20), valor: datos.metodoPago },
       // Con tarjeta guardada el SP ignora titular y últimos 4 y toma los de la tarjeta.
       {

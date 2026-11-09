@@ -54,6 +54,8 @@ export interface MetodoEnvio {
   nombre: string;
   costo: string;
   diasEstimados: number;
+  /** true en "Recoger en sucursal": exige elegir sucursal en vez de dirección. */
+  requiereSucursal: boolean;
 }
 
 /** Filtros de GET /api/catalogo/productos. */

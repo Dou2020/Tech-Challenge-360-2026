@@ -18,7 +18,7 @@ import {
 } from '../../hooks/queries';
 import { ApiError } from '../../services/http';
 import type { DetalleError } from '../../types/api';
-import type { DatosPago } from '../../types/checkout';
+import type { DatosPago, EntregaCheckout } from '../../types/checkout';
 import { idempotencia } from '../../utils/idempotencia';
 import { avisoInfo, errorNotice, type Aviso } from '../../utils/notice';
 
@@ -32,10 +32,12 @@ export default function CheckoutPage() {
   const queryClient = useQueryClient();
   const [params, setParams] = useSearchParams();
   const idDireccion = entero(params.get('idDireccion'));
+  const idSucursal = entero(params.get('idSucursal'));
   const idMetodoEnvio = entero(params.get('idMetodoEnvio'));
+  const tieneEntrega = idDireccion !== null || idSucursal !== null;
 
   const carrito = useCarrito();
-  const resumenQ = useResumenCheckout(idDireccion !== null ? idMetodoEnvio : null);
+  const resumenQ = useResumenCheckout(tieneEntrega ? idMetodoEnvio : null);
   const iniciar = useIniciarCheckout();
   const liberar = useLiberarReserva();
   const pagar = usePagar();
@@ -65,28 +67,37 @@ export default function CheckoutPage() {
     setAviso(errorNotice(error, 'No se pudo completar la operación.'));
   }
 
-  function continuar(idDir: number, idMetodo: number) {
+  function continuar(entrega: EntregaCheckout) {
     setAviso(null);
     setDetalles([]);
-    iniciar.mutate(
-      { idDireccion: idDir, idMetodoEnvio: idMetodo },
-      {
-        onSuccess: () => setParams({ idDireccion: String(idDir), idMetodoEnvio: String(idMetodo) }),
-        onError: mostrarError,
-      },
-    );
+    iniciar.mutate(entrega, {
+      onSuccess: () =>
+        setParams({
+          ...(entrega.idDireccion !== undefined
+            ? { idDireccion: String(entrega.idDireccion) }
+            : {}),
+          ...(entrega.idSucursal !== undefined ? { idSucursal: String(entrega.idSucursal) } : {}),
+          idMetodoEnvio: String(entrega.idMetodoEnvio),
+        }),
+      onError: mostrarError,
+    });
   }
 
   async function pagarAhora(datos: DatosPago) {
     // Doble clic o doble envío: una sola petición en curso, con una sola clave.
-    if (pagoEnCurso.current || idDireccion === null || idMetodoEnvio === null) return;
+    if (pagoEnCurso.current || !tieneEntrega || idMetodoEnvio === null) return;
     pagoEnCurso.current = true;
     setAviso(null);
     setDetalles([]);
     const clave = idempotencia.obtenerOCrear();
     try {
       const pedido = await pagar.mutateAsync({
-        solicitud: { idDireccion, idMetodoEnvio, metodoPago: 'TARJETA', datosPago: datos },
+        solicitud: {
+          idMetodoEnvio,
+          ...(idSucursal !== null ? { idSucursal } : { idDireccion: idDireccion as number }),
+          metodoPago: 'TARJETA',
+          datosPago: datos,
+        },
         clave,
       });
       idempotencia.descartar();
@@ -124,7 +135,7 @@ export default function CheckoutPage() {
   const titulo = <PageHeading titulo="Finalizar compra" />;
 
   // Paso 2: hay reserva vigente.
-  if (resumen && idDireccion !== null && idMetodoEnvio !== null) {
+  if (resumen && tieneEntrega && idMetodoEnvio !== null) {
     return (
       <>
         {titulo}
@@ -202,7 +213,7 @@ export default function CheckoutPage() {
     );
   }
 
-  // Paso 1: dirección y método de envío.
+  // Paso 1: método de envío y dirección o sucursal.
   return (
     <>
       {titulo}
@@ -224,6 +235,7 @@ export default function CheckoutPage() {
       <CheckoutSelection
         idDireccionInicial={idDireccion}
         idMetodoEnvioInicial={idMetodoEnvio}
+        idSucursalInicial={idSucursal}
         iniciando={iniciar.isPending}
         onContinuar={continuar}
       />

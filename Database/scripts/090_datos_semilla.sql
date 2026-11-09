@@ -302,7 +302,8 @@ GO
      4  hace  6 días 16:00 UTC  ENTREGADO         4 x CAM-BAS-BLA-M + ACC-GOR-ROJ-U con VERANO25, Estándar
      5  hace  4 días 18:00 UTC  DEVUELTO_PARCIAL  3 x CAM-BAS-AZU-L + 2 x ACC-GOR-ROJ-U; devuelve 1 x CAM-BAS-AZU-L
      6  hace  2 días 09:00 UTC  EN_PREPARACION    PAN-JOG-NEG-L + PAN-JEA-NEG-34, Express
-     7  hace  1 día  10:00 UTC  PAGADO            CAM-BAS-NEG-M + PAN-JEA-AZU-32, Recoger en tienda
+     7  hace  1 día  10:00 UTC  PAGADO            CAM-BAS-NEG-M + PAN-JEA-AZU-32, Recoger en sucursal (Sucursal Zona 10)
+   Los pedidos 3 y 7 se recogen en sucursal: no llevan dirección y guardan la de la sucursal.
    Las fechas son relativas al día de ejecución. Cada pedido pasa por los SPs (carrito directo como sa; reservar,
    pagar, cambiar estado, cancelar y devolver por los SPs). Los result sets que devuelven los SPs salen en la
    consola de sqlcmd; no afectan los datos. */
@@ -322,7 +323,8 @@ DECLARE @Pedido TABLE (
     DiasAtras   INT           NOT NULL,
     MinutoDia   INT           NOT NULL,   -- minutos desde las 00:00 UTC
     Cupon       NVARCHAR(30)  NULL,
-    Envio       NVARCHAR(100) NOT NULL
+    Envio       NVARCHAR(100) NOT NULL,
+    Sucursal    NVARCHAR(100) NULL        -- solo con el método que requiere sucursal
 );
 DECLARE @Linea TABLE (
     Orden      INT          NOT NULL,
@@ -342,14 +344,14 @@ DECLARE @Paso TABLE (
     PRIMARY KEY (Orden, Secuencia)
 );
 
-INSERT INTO @Pedido (Orden, DiasAtras, MinutoDia, Cupon, Envio)
-VALUES (1, 12,  930, NULL,       N'Estándar'),
-       (2,  9,  120, NULL,       N'Express'),
-       (3,  8,  840, N'VERANO25', N'Recoger en tienda'),
-       (4,  6,  960, N'VERANO25', N'Estándar'),
-       (5,  4, 1080, NULL,       N'Estándar'),
-       (6,  2,  540, NULL,       N'Express'),
-       (7,  1,  600, NULL,       N'Recoger en tienda');
+INSERT INTO @Pedido (Orden, DiasAtras, MinutoDia, Cupon, Envio, Sucursal)
+VALUES (1, 12,  930, NULL,       N'Estándar',            NULL),
+       (2,  9,  120, NULL,       N'Express',             NULL),
+       (3,  8,  840, N'VERANO25', N'Recoger en sucursal', N'Sucursal Zona 10'),
+       (4,  6,  960, N'VERANO25', N'Estándar',            NULL),
+       (5,  4, 1080, NULL,       N'Estándar',            NULL),
+       (6,  2,  540, NULL,       N'Express',             NULL),
+       (7,  1,  600, NULL,       N'Recoger en sucursal', N'Sucursal Zona 10');
 
 INSERT INTO @Linea (Orden, SKU, Cantidad, Devolver)
 VALUES (1, N'CAM-BAS-NEG-M',  2, NULL),
@@ -385,7 +387,8 @@ VALUES (1, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación'),
 
 DECLARE @Orden INT = 0, @Secuencia INT;
 DECLARE @Fecha DATETIME2(3), @FechaPaso DATETIME2(3);
-DECLARE @Cupon NVARCHAR(30), @Envio NVARCHAR(100), @IDCupon INT, @IDEnvio INT, @IDCarrito INT, @IDPedido INT;
+DECLARE @Cupon NVARCHAR(30), @Envio NVARCHAR(100), @Sucursal NVARCHAR(100), @IDSucursal INT, @IDDir INT,
+        @IDCupon INT, @IDEnvio INT, @IDCarrito INT, @IDPedido INT;
 DECLARE @Clave UNIQUEIDENTIFIER, @Accion NVARCHAR(10), @Estado NVARCHAR(30), @Minutos INT, @Comentario NVARCHAR(300);
 DECLARE @Lineas NVARCHAR(MAX);
 DECLARE @MaxRes INT, @MaxHist INT, @MaxMov BIGINT, @MaxBit BIGINT, @MaxDev INT;
@@ -394,7 +397,7 @@ WHILE 1 = 1
 BEGIN
     SELECT TOP (1) @Orden = Orden,
            @Fecha = DATEADD(MINUTE, MinutoDia, DATEADD(DAY, -DiasAtras, @Hoy)),
-           @Cupon = Cupon, @Envio = Envio
+           @Cupon = Cupon, @Envio = Envio, @Sucursal = Sucursal
     FROM @Pedido
     WHERE Orden > @Orden
     ORDER BY Orden;
@@ -405,8 +408,11 @@ BEGIN
     SELECT @IDCupon = IDCupon FROM dbo.Cupon WHERE Codigo = @Cupon;
     SELECT @IDEnvio = IDMetodoEnvio FROM dbo.MetodoEnvio WHERE Nombre = @Envio;
 
-    IF @IDEnvio IS NULL OR (@Cupon IS NOT NULL AND @IDCupon IS NULL)
-        THROW 50000, N'Semilla: falta un método de envío o un cupón de los pedidos de ejemplo.', 1;
+    SET @IDSucursal = (SELECT IDSucursal FROM dbo.Sucursal WHERE Nombre = @Sucursal);
+    SET @IDDir = CASE WHEN @Sucursal IS NULL THEN @IDDireccion END;
+
+    IF @IDEnvio IS NULL OR (@Sucursal IS NOT NULL AND @IDSucursal IS NULL) OR (@Cupon IS NOT NULL AND @IDCupon IS NULL)
+        THROW 50000, N'Semilla: falta un método de envío, una sucursal o un cupón de los pedidos de ejemplo.', 1;
 
     SET @IDCupon = CASE WHEN @Cupon IS NULL THEN NULL ELSE @IDCupon END;
     SET @Clave = CONVERT(UNIQUEIDENTIFIER, CONCAT(N'5eed0000-0000-4000-8000-0000000000', RIGHT(CONCAT(N'00', @Orden), 2)));
@@ -433,11 +439,11 @@ BEGIN
     SELECT @MaxMov = ISNULL(MAX(IDMovimientoInventario), 0) FROM dbo.MovimientoInventario;
     SELECT @MaxBit = ISNULL(MAX(IDBitacora), 0) FROM dbo.Bitacora;
 
-    EXEC dbo.SP_Inventario_ReservarExistencia @IDUsuarioSolicitante = @IDCliente, @IDDireccion = @IDDireccion,
-                                              @IDMetodoEnvio = @IDEnvio;
+    EXEC dbo.SP_Inventario_ReservarExistencia @IDUsuarioSolicitante = @IDCliente, @IDDireccion = @IDDir,
+                                              @IDMetodoEnvio = @IDEnvio, @IDSucursal = @IDSucursal;
 
     EXEC dbo.SP_Pedidos_CrearPedido @IDUsuarioSolicitante = @IDCliente, @ClaveIdempotencia = @Clave,
-                                    @IDDireccion = @IDDireccion, @IDMetodoEnvio = @IDEnvio,
+                                    @IDDireccion = @IDDir, @IDMetodoEnvio = @IDEnvio, @IDSucursal = @IDSucursal,
                                     @MetodoPago = N'TARJETA', @TitularTarjeta = N'Diego Ramírez',
                                     @UltimosTarjeta = '4242';
 

@@ -42,7 +42,7 @@ El backend (arquitectura, Redis y sus pruebas) está en [Backend/README.md](../B
 | :--- | :--- |
 | Motor | SQL Server 2019 o superior (Docker Compose usa SQL Server 2022 Developer) |
 | Base | `ShopCart`; las pruebas del backend crean `ShopCart_Test` con los mismos scripts. Collation `Modern_Spanish_100_CI_AI` (búsquedas y `UNIQUE` sin distinguir mayúsculas ni tildes) y `READ_COMMITTED_SNAPSHOT ON` (las lecturas no bloquean a las escrituras) |
-| Objetos | 29 tablas, 94 stored procedures, 14 funciones tipo tabla, 4 vistas y 3 triggers |
+| Objetos | 30 tablas, 102 stored procedures, 14 funciones tipo tabla, 4 vistas y 3 triggers |
 | Acceso | El backend solo ejecuta stored procedures. El login `shopcart_app` tiene únicamente `GRANT EXECUTE` sobre el esquema `dbo`, más `DENY UPDATE, DELETE` explícito sobre `Bitacora` y `MovimientoInventario`: la base rechaza cualquier `SELECT`, `INSERT`, `UPDATE` o `DELETE` directo sobre una tabla. Las vistas y funciones se usan desde los SPs por encadenamiento de propiedad (mismo dueño `dbo`) |
 | Montos y fechas | Montos en `DECIMAL(12,2)`, cantidades en `INT`, fechas en `DATETIME2(3)` UTC |
 | Errores de negocio | Los SPs los señalan con `THROW 50xxx` y el backend los traduce con `sqlErrorMapper`. El catálogo de códigos está en [Backend/API.md §4](../Backend/API.md#4-catálogo-de-códigos-de-error) |
@@ -54,7 +54,7 @@ El backend (arquitectura, Redis y sus pruebas) está en [Backend/README.md](../B
 Database/
 ├── scripts/
 │   ├── 001_crear_base_datos.sql     # Elimina y crea la base (collation Modern_Spanish_100_CI_AI, READ_COMMITTED_SNAPSHOT)
-│   ├── 002_tablas.sql               # 29 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
+│   ├── 002_tablas.sql               # 30 tablas con PK, FK (algunas compuestas), UNIQUE, NOT NULL, CHECK y DEFAULT
 │   ├── 003_indices.sql              # Índices de búsqueda, filtros, reportes y FKs; únicos filtrados
 │   ├── 004_triggers.sql             # Bitácora y kardex inmutables; el pedido nace en PAGADO y cambia solo por transiciones válidas
 │   ├── 005_funciones.sql            # Funciones tipo tabla (FU_): existencia disponible, búsqueda, catálogo, cupones, totales del carrito, reserva del checkout y JSON para la bitácora
@@ -68,6 +68,7 @@ Database/
 │   ├── 013_sp_reportes.sql          # SPs de reportes y dashboard
 │   ├── 014_sp_bitacora.sql          # SPs de bitácora, configuración y sistema
 │   ├── 015_sp_tarjetas.sql          # SPs de tarjetas guardadas del cliente
+│   ├── 016_sp_sucursales.sql        # SPs de sucursales de retiro (catálogo público y gestión)
 │   ├── 080_permisos.sql             # Login shopcart_app con permiso EXECUTE únicamente
 │   ├── 085_datos_catalogos.sql      # Roles, estados y transiciones, tipos de movimiento, métodos de envío, configuración
 │   └── 090_datos_semilla.sql        # Usuarios de prueba, productos, cupones y 7 pedidos de ejemplo
@@ -77,7 +78,7 @@ Database/
 │   ├── diagrama_er.svg              # Diagrama entidad-relación (vectorial; GitHub lo muestra directamente)
 │   └── diagrama_er.png              # El mismo diagrama en PNG
 ├── docker-init.sh                   # Ejecuta los scripts en orden con sqlcmd; lo usan db-init (compose), la opción manual y las pruebas del backend
-├── script.sql                       # Los 18 scripts de scripts/ en un solo archivo, para crear la base desde SSMS o sqlcmd
+├── script.sql                       # Los 19 scripts de scripts/ en un solo archivo, para crear la base desde SSMS o sqlcmd
 └── README.md                        # Este documento
 ```
 
@@ -141,7 +142,7 @@ Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, a
 
 ### Con `script.sql`
 
-`script.sql` reúne en un solo archivo los 18 scripts de `scripts/` (001 a 090), copiados en orden y sin cambios en el commit `b14e7b5`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
+`script.sql` reúne en un solo archivo los 19 scripts de `scripts/` (001 a 090), copiados en orden y sin cambios en el commit `b14e7b5`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
 
 Se ejecuta en **modo SQLCMD**, con un login con rol `sysadmin`: usa las variables `DbName`, `AppLogin` y `AppPassword` (se cambian en sus líneas `:setvar`) y se detiene en el primer error. Sin modo SQLCMD se detiene al inicio con un aviso, sin crear nada.
 
@@ -173,7 +174,8 @@ Datos que crea `085_datos_catalogos.sql`:
 | Estados del pedido | `PAGADO`, `EN_PREPARACION`, `DESPACHADO`, `ENTREGADO`, `DEVUELTO_PARCIAL`, `CANCELADO` (final), `DEVUELTO` (final) |
 | Transiciones | `PAGADO → EN_PREPARACION → DESPACHADO → ENTREGADO → DEVUELTO_PARCIAL → DEVUELTO` (Operador, Administrador); `ENTREGADO → DEVUELTO`; `PAGADO` o `EN_PREPARACION` → `CANCELADO` (también el Cliente) |
 | Tipos de movimiento | `INVENTARIO_INICIAL`, `ENTRADA_COMPRA`, `AJUSTE_ENTRADA`, `DEVOLUCION`, `CANCELACION` (+1); `SALIDA_VENTA`, `AJUSTE_SALIDA` (−1) |
-| Métodos de envío | Estándar Q25.00 (3 días), Express Q45.00 (1 día), Recoger en tienda Q0.00 |
+| Métodos de envío | Estándar Q25.00 (3 días), Express Q45.00 (1 día), Recoger en sucursal Q0.00 (`RequiereSucursal = 1`: el cliente elige una sucursal y no una dirección) |
+| Sucursales | Sucursal Zona 10, Sucursal Zona 1 (Guatemala), Sucursal Mixco (Mixco), activas; Sucursal Antigua (Antigua Guatemala, Sacatepéquez), inactiva. Los departamentos y municipios existen en `Frontend/src/data/guatemala-locations.json` |
 | Configuración | `MinutosReserva` 15, `HorasCarritoAbandonado` 24, `PorcentajeIVA` 12.00, `UmbralBajoStock` 5 |
 
 ### Datos semilla
@@ -191,14 +193,14 @@ Los SPs graban la fecha actual; la semilla reescribe las fechas como `sa`, con l
 | Inventario | `TipoMovimientoInventario`, `MovimientoInventario`, `ReservaExistencia` | Kardex de entradas, salidas y ajustes; reservas temporales del checkout |
 | Carrito | `Carrito`, `CarritoDetalle` | Carrito de cliente o de invitado (por token) |
 | Cupones | `Cupon`, `UsoCupon` | Reglas de descuento y registro de cada uso |
-| Pedidos | `MetodoEnvio`, `EstadoPedido`, `TransicionEstadoPedido`, `Pedido`, `PedidoDetalle`, `Pago`, `HistorialEstadoPedido`, `Devolucion`, `DevolucionDetalle` | Pedidos con precios congelados, ciclo de vida, pagos y devoluciones |
+| Pedidos | `Sucursal`, `MetodoEnvio`, `EstadoPedido`, `TransicionEstadoPedido`, `Pedido`, `PedidoDetalle`, `Pago`, `HistorialEstadoPedido`, `Devolucion`, `DevolucionDetalle` | Pedidos con precios congelados (a domicilio o para recoger en una sucursal), ciclo de vida, pagos y devoluciones |
 | Auditoría | `Bitacora`, `Configuracion` | Bitácora inmutable y parámetros del sistema |
 
 ## Diagrama entidad-relación
 
 [![Diagrama entidad-relación de ShopCart](diagrama/diagrama_er.svg)](diagrama/diagrama_er.svg)
 
-Las 29 tablas con sus columnas, las 44 llaves foráneas (las compuestas en rojo) y los `UNIQUE`, índices únicos filtrados y dominios `CHECK` de cada tabla. El color del encabezado indica el módulo. También está en PNG: [`diagrama/diagrama_er.png`](diagrama/diagrama_er.png).
+Las 30 tablas con sus columnas, las 45 llaves foráneas (las compuestas en rojo) y los `UNIQUE`, índices únicos filtrados y dominios `CHECK` de cada tabla. El color del encabezado indica el módulo. También está en PNG: [`diagrama/diagrama_er.png`](diagrama/diagrama_er.png).
 
 La misma estructura en PlantUML:
 
@@ -450,6 +452,22 @@ package "Cupones" {
 
 ' ============ Pedidos ============
 package "Pedidos" {
+  entity Sucursal {
+    * IDSucursal : INT <<PK>>
+    --
+    * Nombre : NVARCHAR(100) <<UQ>>
+    * Telefono : NVARCHAR(20)
+    * Linea1 : NVARCHAR(200)
+    Linea2 : NVARCHAR(200)
+    * Municipio : NVARCHAR(100)
+    * Departamento : NVARCHAR(100)
+    CodigoPostal : NVARCHAR(10)
+    Horario : NVARCHAR(200)
+    * Activo : BIT
+    * FechaCreacion : DATETIME2
+    * FechaModificacion : DATETIME2
+  }
+
   entity MetodoEnvio {
     * IDMetodoEnvio : INT <<PK>>
     --
@@ -457,6 +475,8 @@ package "Pedidos" {
     * Costo : DECIMAL(12,2)
     * DiasEstimados : TINYINT
     * Activo : BIT
+    * RequiereSucursal : BIT
+    .. UQ (IDMetodoEnvio, RequiereSucursal) ..
   }
 
   entity EstadoPedido {
@@ -485,7 +505,9 @@ package "Pedidos" {
     * HuellaSolicitud : CHAR(64)
     * IDUsuario : INT <<FK>>
     * IDEstadoPedido : INT <<FK>>
-    * IDDireccion : INT <<FK>>
+    IDDireccion : INT <<FK>>
+    IDSucursal : INT <<FK>>
+    * RetiroEnSucursal : BIT
     * IDMetodoEnvio : INT <<FK>>
     IDCupon : INT <<FK>>
     * DireccionEntrega : NVARCHAR(800)
@@ -497,7 +519,9 @@ package "Pedidos" {
     * FechaCreacion : DATETIME2
     .. CHECK Total = Subtotal - Descuento + CostoEnvio >= 0 ..
     .. CHECK sin cupón, Descuento = 0 ..
+    .. CHECK domicilio con dirección o retiro con sucursal ..
     .. FK (IDDireccion, IDUsuario) → Direccion ..
+    .. FK (IDMetodoEnvio, RetiroEnSucursal) → MetodoEnvio ..
     .. UQ (IDPedido, IDUsuario, IDCupon) ..
   }
 
@@ -631,7 +655,8 @@ Pedido ||--o| UsoCupon
 
 Usuario ||--o{ Pedido
 EstadoPedido ||--o{ Pedido
-Direccion ||--o{ Pedido
+Direccion |o--o{ Pedido
+Sucursal |o--o{ Pedido
 MetodoEnvio ||--o{ Pedido
 Cupon |o--o{ Pedido
 Pedido ||--|{ PedidoDetalle
@@ -708,7 +733,10 @@ DEVUELTO --> [*]
 | Kardex consistente | Todo cambio de existencia inserta un `MovimientoInventario` con existencia anterior y nueva; un `CHECK` exige que no sean negativas y que `ExistenciaNueva = ExistenciaAnterior + Signo * Cantidad`, con el `Signo` del tipo copiado por una FK compuesta, así que una salida nunca suma existencia; el trigger `TR_Inventario_ImpedirCambiosKardex` impide editar o borrar movimientos |
 | Pedido sin duplicados | `UNIQUE (ClaveIdempotencia)` en `Pedido`; `HuellaSolicitud` (SHA-256 del carrito) detecta la misma clave con otro contenido |
 | Precio congelado | `PedidoDetalle` guarda SKU, nombre, precio y descuento del momento de la compra |
-| Dirección del propio cliente | FK compuesta `(IDDireccion, IDUsuario)` de `Pedido` a `Direccion` |
+| Dirección del propio cliente | FK compuesta `(IDDireccion, IDUsuario)` de `Pedido` a `Direccion` (con `IDDireccion` NULL no se evalúa) |
+| Un solo destino por pedido | `CK_Pedido_Entrega`: a domicilio (`RetiroEnSucursal = 0`) lleva `IDDireccion` y no `IDSucursal`; con retiro (`RetiroEnSucursal = 1`) lleva `IDSucursal` y no `IDDireccion`. `FK_Pedido_Sucursal` apunta a `Sucursal` |
+| El retiro coincide con el método de envío | FK compuesta `(IDMetodoEnvio, RetiroEnSucursal)` de `Pedido` a `MetodoEnvio (IDMetodoEnvio, RequiereSucursal)`: solo un método que requiere sucursal admite una sucursal, y a domicilio solo uno que no la requiere |
+| Sucursales sin duplicar | `UQ_Sucursal_Nombre`: un nombre repetido da `DUPLICADO` (2627, sin THROW propio). Una sucursal con pedidos no se elimina (50051); se desactiva |
 | Tarjeta sin datos sensibles | `TarjetaGuardada` solo tiene titular, marca, tipo y `Ultimos4`; `CHECK (Ultimos4 LIKE '[0-9][0-9][0-9][0-9]')`, `CHECK` de tipo (`CREDITO`/`DEBITO`) y de marca (`VISA`/`MASTERCARD`/`AMEX`/`OTRA`) |
 | Tarjeta sin duplicar | `UQ_TarjetaGuardada_Tarjeta (IDUsuario, Marca, Tipo, Ultimos4)`: la misma tarjeta repetida da `DUPLICADO` (2627, sin THROW propio, igual que el correo de usuario) |
 | Una tarjeta predeterminada por cliente | Índice único filtrado `UX_TarjetaGuardada_Predeterminada (IDUsuario) WHERE Predeterminada = 1` |
@@ -731,11 +759,11 @@ DEVUELTO --> [*]
 
 ## Normalización
 
-De las 29 tablas, 23 están en BCNF: en cada una, todo determinante es una clave, ya sea la PK o una clave natural declarada con `UNIQUE` (`Usuario.Correo`, `Variante.SKU`, `CarritoDetalle (IDCarrito, IDVariante)`…). Las otras seis tienen dependencias aceptadas a propósito, que se explican abajo:
+De las 30 tablas, 24 están en BCNF: en cada una, todo determinante es una clave, ya sea la PK o una clave natural declarada con `UNIQUE` (`Usuario.Correo`, `Variante.SKU`, `CarritoDetalle (IDCarrito, IDVariante)`…). Las otras seis tienen dependencias aceptadas a propósito, que se explican abajo:
 
 | Tabla | Forma normal | Dependencia que la rompe | Se explica en |
 | :--- | :--- | :--- | :--- |
-| `Pedido` | 2FN | `IDDireccion → IDUsuario`; `Subtotal, Descuento, CostoEnvio → Total` | Columnas repetidas; Totales derivados |
+| `Pedido` | 2FN | `IDDireccion → IDUsuario`; `IDMetodoEnvio → RetiroEnSucursal`; `Subtotal, Descuento, CostoEnvio → Total` | Columnas repetidas; Totales derivados |
 | `PedidoDetalle` | 2FN | `PrecioUnitario, Cantidad, DescuentoLinea → Subtotal` | Totales derivados |
 | `VarianteValorAtributo` | 3FN | `IDValorAtributo → IDAtributo` | Columnas repetidas |
 | `DevolucionDetalle` | 1FN | `IDDevolucion → IDPedido`, que depende de una parte de la clave `(IDDevolucion, IDPedidoDetalle)` | Columnas repetidas |
@@ -757,7 +785,7 @@ No son redundancia: guardan el dato tal como estaba al momento de la compra, que
 | Columna | Copia de | Motivo |
 | :--- | :--- | :--- |
 | `PedidoDetalle.SKU`, `NombreProducto`, `DescripcionVariante`, `PrecioUnitario` | `Variante`, `Producto`, `ValorAtributo` | Precio congelado: un cambio posterior en el catálogo no altera el pedido |
-| `Pedido.DireccionEntrega` | `Direccion` | La dirección puede editarse o darse de baja y el pedido conserva a dónde se envió. Se guarda como texto formateado porque solo se muestra; ningún reporte filtra por ella |
+| `Pedido.DireccionEntrega` | `Direccion` o `Sucursal` | La dirección (o la sucursal, que se guarda como "Recoger en <nombre>: …") puede editarse o darse de baja y el pedido conserva a dónde se envió. Se guarda como texto formateado porque solo se muestra; ningún reporte filtra por ella |
 | `Pedido.CostoEnvio` | `MetodoEnvio.Costo` | El costo del método de envío puede cambiar |
 | `Pedido.MontoIVA` | `Configuracion.PorcentajeIVA` | Desglose calculado con la tasa vigente al pagar |
 
@@ -805,11 +833,12 @@ El cupón de un pedido aparece en `Pedido` (`IDCupon`, `Descuento`) y en `UsoCup
 
 ### Columnas repetidas para proteger reglas entre tablas
 
-Cinco columnas repiten un dato que ya se deduce de otra columna de la misma fila. Se aceptan porque permiten declarar en la base una regla que cruza tablas: la FK compuesta garantiza que la copia sea siempre igual al dato original. No hay anomalías de actualización: el dato original no cambia y, como la FK no tiene `ON UPDATE CASCADE`, la base impide cambiarlo mientras esté referenciado.
+Seis columnas repiten un dato que ya se deduce de otra columna de la misma fila. Se aceptan porque permiten declarar en la base una regla que cruza tablas: la FK compuesta garantiza que la copia sea siempre igual al dato original. No hay anomalías de actualización: el dato original no cambia y, como la FK no tiene `ON UPDATE CASCADE`, la base impide cambiarlo mientras esté referenciado.
 
 | Columna | Dependencia que introduce | Forma normal que rompe | Regla que permite declarar |
 | :--- | :--- | :--- | :--- |
 | `Pedido.IDUsuario` | `IDDireccion → IDUsuario` (cada dirección es de un solo cliente) | 3FN | La dirección de entrega es del cliente del pedido. Además, el dueño del pedido se lee sin unir con `Direccion` y lo usa el índice de "Mis pedidos" |
+| `Pedido.RetiroEnSucursal` | `IDMetodoEnvio → RetiroEnSucursal` | 3FN | El pedido usa un método que requiere sucursal si y solo si lleva sucursal: FK compuesta `(IDMetodoEnvio, RetiroEnSucursal)` y `CK_Pedido_Entrega`, mismo patrón que `MovimientoInventario.Signo` |
 | `VarianteValorAtributo.IDAtributo` | `IDValorAtributo → IDAtributo` | Solo BCNF: `IDAtributo` es parte de la clave `(IDVariante, IDAtributo)`, así que la tabla sigue en 3FN | Un valor por atributo en cada variante, con `UNIQUE (IDVariante, IDAtributo)`. Una descomposición en BCNF no puede expresar esta regla con una restricción de una sola tabla |
 | `DevolucionDetalle.IDPedido` | `IDDevolucion → IDPedido` e `IDPedidoDetalle → IDPedido` | 2FN: depende de una parte de la clave `(IDDevolucion, IDPedidoDetalle)` | La línea devuelta es del pedido de la devolución |
 | `MovimientoInventario.IDPedido`, en los movimientos de una devolución | `IDDevolucion → IDPedido` | 3FN | El movimiento de una devolución apunta al pedido de esa devolución |
@@ -827,7 +856,8 @@ Las reglas que cruzan tablas se protegen con FK compuestas: la tabla referenciad
 
 | Regla | Restricción | Respuesta | Dónde se valida antes |
 | :--- | :--- | :--- | :--- |
-| La dirección es del cliente del pedido | `FK_Pedido_Direccion` | 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia`, `SP_Pedidos_CrearPedido` |
+| La dirección es del cliente del pedido | `FK_Pedido_Direccion` | 404 `NO_ENCONTRADO` | `SP_Checkout_ResolverEntrega` (desde `SP_Inventario_ReservarExistencia` y `SP_Pedidos_CrearPedido`) |
+| La sucursal existe y está activa; el retiro coincide con el método | `FK_Pedido_Sucursal`, `FK_Pedido_MetodoEnvio`, `CK_Pedido_Entrega` | 404 `NO_ENCONTRADO` / 400 `VALIDACION` | `SP_Checkout_ResolverEntrega` |
 | Un valor por atributo en cada variante | `UQ_VarianteValorAtributo_IDVariante_IDAtributo` | 400 `VALIDACION` | `SP_Productos_Crear`, `SP_Variantes_Crear`, `SP_Variantes_Actualizar` |
 | La línea devuelta es del pedido de la devolución | `FK_DevolucionDetalle_PedidoDetalle` | 400 `VALIDACION` | `SP_Pedidos_RegistrarDevolucion` |
 | El estado nuevo es distinto del actual | `CK_HistorialEstadoPedido_Estados` | 409 `TRANSICION_NO_PERMITIDA` | Servicio de pedidos y `SP_Pedidos_CambiarEstado` |
@@ -878,8 +908,9 @@ Convenciones de los SPs:
 - `SP_Configuracion_Actualizar` valida el valor según la clave (enteros solo con dígitos, IVA decimal 0–100 con hasta 2 decimales), lo guarda normalizado y registra `Modulo = 'Configuracion'`; un valor igual al actual no escribe nada.
 - Orden de bloqueo en checkout y pedidos: `Carrito` → `Cupon` → `Variante` → `ReservaExistencia`; con un pedido existente, `Pedido` → `PedidoDetalle` → `Cupon` → `Variante`. Las variantes se bloquean una por una en orden de `IDVariante`. `SP_Pedidos_CrearPedido` toma antes un bloqueo de aplicación (`sp_getapplock`) por `Idempotency-Key`: las peticiones simultáneas con la misma clave se serializan y las posteriores devuelven el pedido ya creado (`Repetido = 1`), sin depender de capturar el 2627.
 - Reservar (`SP_Inventario_ReservarExistencia`) reemplaza la reserva `ACTIVA` anterior del carrito y libera las vencidas de las variantes involucradas antes de comprobar la existencia, para que `CK_Variante_ExistenciaReservada` no rechace una reserva válida. Si falta existencia lanza 50030 con el detalle en el mensaje (`\nDETALLE=` y un arreglo JSON); todo se revierte. `SP_Checkout_ObtenerResumen` sin reserva vigente responde 50031; el método de envío no se guarda con la reserva, por eso recibe `@IDMetodoEnvio` opcional.
-- `SP_Pedidos_CrearPedido` calcula `HuellaSolicitud` (SHA-256 en hexadecimal) sobre dirección, método de envío, método de pago, últimos 4 dígitos, cupón y líneas `IDVariantexCantidad` ordenadas. `NumeroPedido` es `SC-<año>-<IDPedido a 6 dígitos>`. El pago simulado con tarjeta terminada en `0000` lanza 50020 antes de escribir, así que la reserva sigue vigente. El precio congelado es el vigente al pagar.
+- `SP_Pedidos_CrearPedido` calcula `HuellaSolicitud` (SHA-256 en hexadecimal) sobre dirección, método de envío, sucursal (si hay), método de pago, últimos 4 dígitos, cupón y líneas `IDVariantexCantidad` ordenadas. `NumeroPedido` es `SC-<año>-<IDPedido a 6 dígitos>`. El pago simulado con tarjeta terminada en `0000` lanza 50020 antes de escribir, así que la reserva sigue vigente. El precio congelado es el vigente al pagar.
 - `SP_Pedidos_CambiarEstado` no sirve para cancelar ni devolver (50040): `SP_Pedidos_Cancelar` reintegra existencia (`CANCELACION`), borra el `UsoCupon`, resta `UsosActuales` y deja el pago `REEMBOLSADO`; `SP_Pedidos_RegistrarDevolucion` reintegra por línea (`DEVOLUCION`), actualiza `CantidadDevuelta`, el estado y el pago. El rol del solicitante se busca en la base. Todos escriben bitácora `MODIFICAR` del pedido (`CREAR` al crearlo).
+- `SP_Checkout_ResolverEntrega` (sin endpoint) decide el destino del pedido: lo ejecutan `SP_Inventario_ReservarExistencia` y `SP_Pedidos_CrearPedido` dentro de su transacción, sin TRAN propio y sin bloquear nada (solo lee `MetodoEnvio`, `Sucursal` y `Direccion`), así que no cambia el orden de bloqueo. Con un método que requiere sucursal ignora `@IDDireccion`; con uno a domicilio ignora `@IDSucursal`. `CrearPedido` normaliza esos dos parámetros antes de calcular las huellas, leyendo el método sin filtrar `Activo`, y la huella agrega `;S=<IDSucursal>` solo cuando hay sucursal (la de un envío a domicilio no cambia). Las sucursales (`SP_Sucursales_*`, `016_sp_sucursales.sql`) siguen el patrón de las categorías y escriben bitácora con `Modulo = 'Sucursales'`.
 - Las direcciones se filtran siempre por `@IDUsuarioSolicitante` y `Activo = 1`: la de otro cliente, la inexistente y la dada de baja responden igual, 50004. La baja es lógica porque `Pedido` la referencia; no van a la bitácora.
 
 ## Vistas y funciones
@@ -929,7 +960,7 @@ Decisiones de los reportes:
 
 ## Pruebas de integridad
 
-`pruebas/integridad.sql` intenta romper cada regla de integridad sin pasar por los SPs (FK compuestas, `CHECK`, índices únicos filtrados y triggers) y comprueba qué restricción lo impide: 48 casos, 13 de ellos con datos válidos que la base debe aceptar. Trabaja dentro de una transacción que deshace al final (los casos que disparan un trigger van cada uno en su propia transacción), así que no deja datos; si un caso no da lo esperado, termina con `THROW 50099` y `sqlcmd` devuelve error.
+`pruebas/integridad.sql` intenta romper cada regla de integridad sin pasar por los SPs (FK compuestas, `CHECK`, índices únicos filtrados y triggers) y comprueba qué restricción lo impide: 58 casos, 15 de ellos con datos válidos que la base debe aceptar. Trabaja dentro de una transacción que deshace al final (los casos que disparan un trigger van cada uno en su propia transacción), así que no deja datos; si un caso no da lo esperado, termina con `THROW 50099` y `sqlcmd` devuelve error.
 
 ```bash
 DB_PRUEBAS=true docker compose run --rm db-init

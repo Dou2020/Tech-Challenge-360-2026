@@ -32,6 +32,8 @@ export function crearPedidoDetalle(parcial: Partial<PedidoDetalle> = {}): Pedido
     nombreEstado: 'Pagado',
     esFinal: false,
     direccion: { idDireccion: 5, entrega: 'Casa, 5a avenida 10-20, Mixco, Guatemala' },
+    retiroEnSucursal: false,
+    sucursal: null,
     metodoEnvio: { idMetodoEnvio: 1, nombre: 'Estándar', diasEstimados: 3 },
     cupon: null,
     subtotal: '298.00',

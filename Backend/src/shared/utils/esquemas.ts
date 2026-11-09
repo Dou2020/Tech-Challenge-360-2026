@@ -61,3 +61,14 @@ export const titularTarjeta = textoObligatorio(MAX_TITULAR_TARJETA);
 export const ultimos4Tarjeta = z
   .string({ error: 'Deben ser los 4 últimos dígitos de la tarjeta.' })
   .regex(/^\d{4}$/, 'Deben ser los 4 últimos dígitos de la tarjeta.');
+
+/** Teléfono obligatorio de una dirección o sucursal. Mismo formato que el teléfono del registro. */
+export const telefonoObligatorio = (maximo: number) =>
+  textoObligatorio(maximo).regex(/^\+?[\d\s-]{8,20}$/, 'Teléfono inválido.');
+
+/** Código postal de Guatemala: 5 dígitos (01001). Opcional. */
+export const codigoPostalOpcional = (maximo: number) =>
+  textoOpcional(maximo).refine(
+    (valor) => valor === null || /^\d{5}$/.test(valor),
+    'Debe tener 5 dígitos, por ejemplo 01001.',
+  );

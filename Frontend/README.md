@@ -115,15 +115,15 @@ src/
 ├── services/
 │   ├── http.ts           request(): Bearer en memoria, ApiError, renovación única compartida ante 401
 │   └── api/              una función por endpoint (sistema, auth, catálogo, carrito, checkout, pedidos, direcciones, perfil,
-│                         tarjetas, inventario, gestión del catálogo, reportes y administración)
+│                         tarjetas, sucursales, inventario, gestión del catálogo, reportes y administración)
 ├── auth/                 tokenStore (token en memoria), AuthProvider (fusiona el carrito de invitado al iniciar sesión), useAuth,
 │                         ProtectedRoute (sin sesión → /login?redirect=…, rol no permitido → /403)
 ├── hooks/                useServerTable, useSeleccionVariante, useTema, useCuentaRegresiva, useRangoFechas, useAgrupacion
-│                         (día/semana/mes en la URL) y queries/ (las de la tienda y la cuenta, más inventario, gestión,
+│                         (día/semana/mes en la URL) y queries/ (las de la tienda y la cuenta, más sucursales, inventario, gestión,
 │                         reportes, administración y estado del sistema)
 ├── config/               navegación por rol, estados de pedido, etiquetas de tarjetas y graficas (estilos de recharts
 │                         con las variables crudas del tema, p. ej. var(--primario))
-├── types/                api (ApiErrorBody, Page<T>), auth, catálogo, carrito, checkout, pedidos, direcciones, perfil, tarjetas,
+├── types/                api (ApiErrorBody, Page<T>), auth, catálogo, carrito, checkout, pedidos, direcciones, sucursales, perfil, tarjetas,
 │                         inventario, gestión, reportes y administración
 ├── utils/                formato GTQ/fechas, token del carrito de invitado, avisos, accesibilidad y clases de campos, chunks lazy,
 │                         variantes, tema, Idempotency-Key del checkout, errores de la API → campos del formulario,
@@ -149,6 +149,7 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | `/consola` | Dashboard: indicadores y gráficas (recharts, carga diferida) con rango de fechas y agrupación en la URL | Administrador |
 | `/consola/reportes` | Reportes en tablas y carritos abandonados paginados | Administrador |
 | `/consola/categorias` | Categorías: crear, editar, activar y eliminar | Administrador |
+| `/consola/sucursales` | Sucursales de retiro: lista con filtros `q`, `activo` y orden en la URL, crear, editar, activar/desactivar y eliminar (con `EN_USO` sugiere desactivar) | Administrador |
 | `/consola/productos`, `/consola/productos/nuevo`, `/consola/productos/:id` | Productos: lista, alta con variantes, edición (imágenes, variantes, cambio de precio, atributos) | Administrador |
 | `/consola/cupones`, `/consola/cupones/nuevo`, `/consola/cupones/:id` | Cupones: lista con estado, alta, edición, estado, baja y usos paginados | Administrador |
 | `/consola/usuarios` | Usuarios: alta de Operador o Administrador (sin contraseña, con invitación por correo), edición y activación | Administrador |

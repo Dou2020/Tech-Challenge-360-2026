@@ -28,6 +28,8 @@ const detalle: PedidoDetalle = {
   nombreEstado: 'Pagado',
   esFinal: false,
   direccion: { idDireccion: 5, entrega: 'Casa, 5a avenida 10-20, Mixco, Guatemala' },
+  retiroEnSucursal: false,
+  sucursal: null,
   metodoEnvio: { idMetodoEnvio: 1, nombre: 'Estándar', diasEstimados: 3 },
   cupon: null,
   subtotal: '298.00',
@@ -102,6 +104,24 @@ describe('PedidoDetallePage', () => {
     expect(screen.getAllByText('Q 323.00').length).toBeGreaterThan(0);
     expect(screen.getByText('Casa, 5a avenida 10-20, Mixco, Guatemala')).toBeInTheDocument();
     expect(await screen.findByRole('list', { name: 'Historial de estados' })).toBeInTheDocument();
+  });
+
+  it('pedido de retiro → muestra "Recoger en sucursal" con la copia de la entrega y sin dirección', async () => {
+    // Arrange
+    api.obtener.mockResolvedValue({
+      ...detalle,
+      retiroEnSucursal: true,
+      sucursal: { idSucursal: 3, nombre: 'Zona 10' },
+      direccion: { idDireccion: null, entrega: 'Recoger en Zona 10: 6a avenida 12-34, Guatemala' },
+    });
+
+    // Act
+    abrir();
+
+    // Assert
+    expect(await screen.findByRole('heading', { name: 'Recoger en sucursal' })).toBeInTheDocument();
+    expect(screen.getByText(/Recoger en Zona 10: 6a avenida 12-34/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Dirección de entrega' })).not.toBeInTheDocument();
   });
 
   it('ofrece cancelar solo si hay una transición con via CANCELAR', async () => {

@@ -54,6 +54,16 @@ export {
 } from './useTarjetas';
 export { useProductos } from './useProductos';
 export {
+  CLAVE_SUCURSALES_GESTION,
+  CLAVE_SUCURSALES_PUBLICAS,
+  useActualizarSucursal,
+  useCambiarEstadoSucursal,
+  useCrearSucursal,
+  useEliminarSucursal,
+  useSucursalesGestion,
+  useSucursalesPublicas,
+} from './useSucursales';
+export {
   CLAVE_ATRIBUTOS,
   CLAVE_CATEGORIAS_GESTION,
   CLAVE_PRODUCTOS_GESTION,

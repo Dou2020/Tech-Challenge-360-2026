@@ -13,6 +13,7 @@ describe('navigation', () => {
         '/consola',
         '/consola/operacion',
         '/consola/productos',
+        '/consola/sucursales',
         '/consola/reportes',
         '/consola/cupones',
         '/consola/usuarios',

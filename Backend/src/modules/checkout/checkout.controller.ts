@@ -15,7 +15,7 @@ function idCliente(req: Request): number {
 export const checkoutController = {
   iniciar: (async (req, res) => {
     const { body } = validado<{ body: IniciarBody }>(res);
-    res.json(await checkoutService.iniciar(idCliente(req), body.idDireccion, body.idMetodoEnvio));
+    res.json(await checkoutService.iniciar(idCliente(req), body));
   }) satisfies RequestHandler,
 
   obtenerResumen: (async (req, res) => {
@@ -32,6 +32,7 @@ export const checkoutController = {
     const { body } = validado<{ body: PagarBody }>(res);
     const { pedido, creado } = await checkoutService.pagar(idCliente(req), req.claveIdempotencia!, {
       idDireccion: body.idDireccion,
+      idSucursal: body.idSucursal,
       idMetodoEnvio: body.idMetodoEnvio,
       metodoPago: body.metodoPago,
       idTarjeta: 'idTarjeta' in body.datosPago ? body.datosPago.idTarjeta : null,

@@ -267,6 +267,7 @@ Backend/
 │   │   ├── direcciones/          # Direcciones de entrega del cliente
 │   │   ├── tarjetas/             # Tarjetas guardadas del cliente (titular, marca, tipo y últimos 4)
 │   │   ├── catalogo/             # Catálogo público, categorías, productos, variantes, atributos
+│   │   ├── sucursales/           # Sucursales de retiro: lista pública (/api/catalogo/sucursales) y gestión del Admin
 │   │   ├── inventario/           # Existencias, kardex, entradas y ajustes
 │   │   ├── carrito/              # Carrito de cliente e invitado, cupón aplicado
 │   │   ├── cupones/              # CRUD de cupones (Administrador)
@@ -353,7 +354,7 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Rate limit por IP | `ratelimit:login:{ip}`, `ratelimit:registro:{ip}` y `ratelimit:contrasena-{olvido\|verificar\|establecer}:{ip}` (store de `rate-limit-redis`, 10 por IP cada 15 min) | 15 min |
 | Caché del usuario | `usuario:{id}` → rol, estado, nombre y correo; la usan `refresh` y `/me` | 15 min |
 | Caché de reportes | `reportes:v{n}:{endpoint}:{hash de filtros}` | `CACHE_TTL_REPORTES_SEG` |
-| Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:metodos-envio` | `CACHE_TTL_CATALOGO_SEG` |
+| Caché del catálogo público | `catalogo:v{n}:categorias`, `catalogo:v{n}:metodos-envio`, `catalogo:v{n}:sucursales` | `CACHE_TTL_CATALOGO_SEG` |
 | Caché de la configuración | `configuracion` | 1 h |
 
 **Sesiones y tokens:**
@@ -370,7 +371,7 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Namespace | Se invalida al |
 | :--- | :--- |
 | `reportes` | Crear, cancelar o cambiar de estado un pedido, registrar una devolución, actualizar una categoría o un producto (la vista de ventas une su nombre y categoría actuales) y `PUT /api/configuracion/:clave` |
-| `catalogo` | Crear, modificar, activar/desactivar o eliminar categorías y productos; crear o activar/desactivar variantes (lo que cambia qué categorías y cuántos productos se ven). Precios, SKU, valores de atributo e imágenes no están en lo cacheado |
+| `catalogo` | Crear, modificar, activar/desactivar o eliminar categorías, productos y sucursales; crear o activar/desactivar variantes (lo que cambia qué categorías y cuántos productos se ven). Precios, SKU, valores de atributo e imágenes no están en lo cacheado |
 | `usuario:{id}` | Actualizar perfil, rol o estado del usuario |
 | `configuracion` | `PUT /api/configuracion/:clave` |
 
@@ -421,6 +422,8 @@ Backend/tests/
 │   ├── cupones.test.ts
 │   ├── checkout.concurrencia.test.ts
 │   ├── pedidos.test.ts
+│   ├── sucursales.test.ts        # CRUD de sucursales (roles, errores, bitácora, caché, listado) y retiro en el checkout
+│   ├── sucursales.retiro.test.ts # Retiro en sucursal: validaciones, detalle del pedido, idempotencia, ciclo de vida y concurrencia
 │   ├── inventario.test.ts
 │   ├── reportes.test.ts
 │   └── bitacora.test.ts
@@ -433,7 +436,7 @@ Backend/tests/
 | :--- | :--- | :--- |
 | Unitarias | Reglas de los servicios (validación y cálculo de cupones, transiciones de estado, armado de respuestas), `sqlErrorMapper` y los middlewares `authorize`, `validate` e `idempotencyKey` | No; los repositorios se simulan |
 | Integración | Los criterios de aceptación de punta a punta: petición HTTP → servicio → SP → SQL Server | Sí; SQL Server en Docker con los scripts y datos semilla |
-| Base de datos | Que cada restricción rechace los datos que rompen su regla, aunque no se pase por un SP: FK compuestas, `CHECK`, índices únicos y triggers (48 casos) | Sí; `Database/pruebas/integridad.sql`, que `globalSetup` ejecuta antes de la suite de integración ([detalle](../Database/README.md#pruebas-de-integridad)) |
+| Base de datos | Que cada restricción rechace los datos que rompen su regla, aunque no se pase por un SP: FK compuestas, `CHECK`, índices únicos y triggers (58 casos) | Sí; `Database/pruebas/integridad.sql`, que `globalSetup` ejecuta antes de la suite de integración ([detalle](../Database/README.md#pruebas-de-integridad)) |
 
 Casos de integración ligados a los criterios de aceptación:
 
@@ -448,6 +451,8 @@ Casos de integración ligados a los criterios de aceptación:
 | RF-07 | Transición no permitida → 409; cancelar antes del despacho reintegra la existencia con un movimiento `CANCELACION` y libera el uso del cupón; devolver más de lo vendido → 422; devolver una línea de otro pedido → 400; una reserva vencida se libera al correr el job |
 | RF-08 | Los reportes excluyen pedidos cancelados y descuentan devoluciones; una venta de las 20:00 hora de Guatemala (02:00 UTC del día siguiente) cuenta en el día local |
 | RF-09 | Un `UPDATE` o `DELETE` sobre la bitácora falla (lo prueba `Database/pruebas/integridad.sql`, porque ninguna ruta escribe en la bitácora) |
+| Retiro en sucursal | Retiro sin dirección → `201` y el detalle trae `retiroEnSucursal`, la sucursal y `direccion.idDireccion` null; retiro sin `idSucursal` → `400`; sucursal inactiva o inexistente → `404` (al iniciar y al pagar); domicilio sin `idDireccion` → `400`; `idDireccion` en un retiro y `idSucursal` en un domicilio se ignoran; `direccion.entrega` trae línea 2, horario y teléfono, y al renombrar la sucursal no cambia (`sucursal.nombre` sí); repetir la clave tras desactivar la sucursal → `200`; la misma clave con otra sucursal → `409 IDEMPOTENCIA_CONFLICTO`; cancelar o cambiar el estado de un retiro funciona; la última unidad con retiro entre dos clientes → un `201` y un `409 STOCK_INSUFICIENTE` |
+| Gestión de sucursales | Sin token `401`, Operador y Cliente `403`; `404` en `GET/PUT/PATCH/DELETE` de un id inexistente; `DUPLICADO` en `POST` y `PUT`; `EN_USO` al eliminar una con pedidos; cuerpo inválido (teléfono, código postal, longitudes, `activo` no booleano) → `400`; la bitácora registra `CREAR`, `MODIFICAR`, `ACTIVAR`/`DESACTIVAR` y `ELIMINAR` con `Modulo=Sucursales`; cada escritura invalida la caché del catálogo (`X-Cache` HIT → MISS en sucursales y categorías); una desactivada sale del endpoint público; filtros `activo` y `q`, orden por `cantidadPedidos` y paginación con `total` |
 
 Casos de integración de Redis:
 

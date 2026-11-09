@@ -57,6 +57,7 @@ describe('checkoutRepository.crearPedido', () => {
       { nombre: 'ClaveIdempotencia', tipo: sql.UniqueIdentifier, valor: CLAVE },
       { nombre: 'IDDireccion', tipo: sql.Int, valor: 3 },
       { nombre: 'IDMetodoEnvio', tipo: sql.Int, valor: 2 },
+      { nombre: 'IDSucursal', tipo: sql.Int, valor: null },
       { nombre: 'MetodoPago', tipo: sql.NVarChar(20), valor: 'TARJETA' },
       { nombre: 'TitularTarjeta', tipo: sql.NVarChar(150), valor: 'Ana López' },
       { nombre: 'UltimosTarjeta', tipo: sql.Char(4), valor: '4242' },
@@ -93,6 +94,40 @@ describe('checkoutRepository.crearPedido', () => {
     expect(valorDe('TipoTarjeta')).toBeNull();
     expect(valorDe('MarcaTarjeta')).toBeNull();
     expect(valorDe('GuardarTarjeta')).toBe(false);
+  });
+
+  it('un retiro en sucursal envía IDSucursal y IDDireccion en NULL', async () => {
+    // Arrange
+    const datos: DatosPago = {
+      ...BASE,
+      idDireccion: undefined,
+      idSucursal: 4,
+      titular: 'Ana',
+      ultimos4: '4242',
+    };
+
+    // Act
+    await checkoutRepository.crearPedido(5, CLAVE, datos);
+
+    // Assert
+    expect(valorDe('IDDireccion')).toBeNull();
+    expect(valorDe('IDSucursal')).toBe(4);
+  });
+
+  it('reservar manda NULL cuando falta la dirección o la sucursal', async () => {
+    // Arrange
+    const entrega = { idSucursal: 4, idMetodoEnvio: 3 };
+
+    // Act
+    await checkoutRepository.reservar(5, entrega);
+
+    // Assert
+    expect(executeSp).toHaveBeenCalledWith('SP_Inventario_ReservarExistencia', [
+      { nombre: 'IDUsuarioSolicitante', tipo: sql.Int, valor: 5 },
+      { nombre: 'IDDireccion', tipo: sql.Int, valor: null },
+      { nombre: 'IDMetodoEnvio', tipo: sql.Int, valor: 3 },
+      { nombre: 'IDSucursal', tipo: sql.Int, valor: 4 },
+    ]);
   });
 
   it('falla si el SP no devuelve el pedido', async () => {

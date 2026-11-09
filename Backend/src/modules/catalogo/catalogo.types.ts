@@ -75,6 +75,7 @@ export interface FilaMetodoEnvio {
   Nombre: string;
   Costo: number;
   DiasEstimados: number;
+  RequiereSucursal: boolean;
 }
 
 /** Forma CAT: SP_Categorias_*. */
@@ -269,6 +270,7 @@ export interface MetodoEnvio {
   nombre: string;
   costo: string;
   diasEstimados: number;
+  requiereSucursal: boolean;
 }
 
 export interface ProductoCatalogo {

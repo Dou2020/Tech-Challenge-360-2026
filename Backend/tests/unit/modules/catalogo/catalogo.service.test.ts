@@ -261,13 +261,25 @@ describe('catalogoService: catálogo público', () => {
 
   it('los métodos de envío se cachean con el costo como string', async () => {
     repo.listarMetodosEnvio.mockResolvedValue([
-      { IDMetodoEnvio: 1, Nombre: 'Estándar', Costo: 25, DiasEstimados: 3 },
+      {
+        IDMetodoEnvio: 1,
+        Nombre: 'Estándar',
+        Costo: 25,
+        DiasEstimados: 3,
+        RequiereSucursal: false,
+      },
     ]);
 
     const { valor: metodos } = await catalogoService.listarMetodosEnvio();
 
     expect(metodos).toEqual([
-      { idMetodoEnvio: 1, nombre: 'Estándar', costo: '25.00', diasEstimados: 3 },
+      {
+        idMetodoEnvio: 1,
+        nombre: 'Estándar',
+        costo: '25.00',
+        diasEstimados: 3,
+        requiereSucursal: false,
+      },
     ]);
     expect(cacheSimulada.claveVersionada).toHaveBeenCalledWith('catalogo', 'metodos-envio');
   });

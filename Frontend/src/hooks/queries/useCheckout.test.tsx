@@ -107,7 +107,7 @@ describe('useCheckout', () => {
     await waitFor(() =>
       expect(queryClient.getQueryData(['checkout', 'resumen', 2])).toEqual(resumen),
     );
-    expect(api.iniciar).toHaveBeenCalledWith(5, 2);
+    expect(api.iniciar).toHaveBeenCalledWith({ idDireccion: 5, idMetodoEnvio: 2 });
   });
 
   it('useLiberarReserva → libera y olvida los resúmenes guardados', async () => {

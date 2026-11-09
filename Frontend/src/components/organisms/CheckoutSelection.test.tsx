@@ -3,7 +3,9 @@ import { userEvent } from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalogoApi } from '../../services/api/catalogo';
 import { direccionesApi } from '../../services/api/direcciones';
+import { sucursalesPublicasApi } from '../../services/api/sucursales';
 import { ApiError } from '../../services/http';
+import { crearSucursalPublica } from '../../test/fixtures/sucursales';
 import { crearDireccion } from '../../test/fixtures/direcciones';
 import { renderizar } from '../../test/renderizar';
 import { CheckoutSelection } from './CheckoutSelection';
@@ -11,12 +13,26 @@ import { CheckoutSelection } from './CheckoutSelection';
 vi.mock('../../services/api/direcciones', () => ({
   direccionesApi: { listar: vi.fn(), crear: vi.fn() },
 }));
+vi.mock('../../services/api/sucursales', () => ({ sucursalesPublicasApi: { listar: vi.fn() } }));
 vi.mock('../../services/api/catalogo', () => ({ catalogoApi: { metodosEnvio: vi.fn() } }));
 const direcciones = vi.mocked(direccionesApi);
 const metodos = vi.mocked(catalogoApi.metodosEnvio);
+const sucursales = vi.mocked(sucursalesPublicasApi.listar);
 
-const estandar = { idMetodoEnvio: 1, nombre: 'Estándar', costo: '25.00', diasEstimados: 3 };
-const express = { idMetodoEnvio: 2, nombre: 'Express', costo: '45.00', diasEstimados: 1 };
+const estandar = {
+  idMetodoEnvio: 1,
+  nombre: 'Estándar',
+  costo: '25.00',
+  diasEstimados: 3,
+  requiereSucursal: false,
+};
+const express = {
+  idMetodoEnvio: 2,
+  nombre: 'Express',
+  costo: '45.00',
+  diasEstimados: 1,
+  requiereSucursal: false,
+};
 
 function mostrar(props: Partial<Parameters<typeof CheckoutSelection>[0]> = {}) {
   const onContinuar = vi.fn();
@@ -37,6 +53,7 @@ describe('CheckoutSelection', () => {
     direcciones.listar.mockReset().mockResolvedValue([crearDireccion()]);
     direcciones.crear.mockReset();
     metodos.mockReset().mockResolvedValue([estandar, express]);
+    sucursales.mockReset().mockResolvedValue([]);
   });
 
   it('cargando → muestra el estado de carga', () => {
@@ -108,7 +125,7 @@ describe('CheckoutSelection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Continuar al pago' }));
 
     // Assert
-    expect(onContinuar).toHaveBeenCalledWith(5, 2);
+    expect(onContinuar).toHaveBeenCalledWith({ idDireccion: 5, idMetodoEnvio: 2 });
   });
 
   it('iniciando → el botón queda deshabilitado', async () => {
@@ -168,5 +185,119 @@ describe('CheckoutSelection', () => {
     expect(direcciones.crear).toHaveBeenCalledWith(
       expect.objectContaining({ alias: 'Oficina', municipio: 'Mixco', departamento: 'Guatemala' }),
     );
+  });
+
+  describe('retiro en sucursal', () => {
+    const retiro = {
+      idMetodoEnvio: 4,
+      nombre: 'Recoger en sucursal',
+      costo: '0.00',
+      diasEstimados: 0,
+      requiereSucursal: true,
+    };
+
+    beforeEach(() => {
+      metodos.mockResolvedValue([estandar, retiro]);
+      sucursales.mockResolvedValue([
+        crearSucursalPublica(),
+        crearSucursalPublica({ idSucursal: 4, nombre: 'Mixco', horario: null }),
+      ]);
+    });
+
+    it('elegir el retiro → muestra las sucursales, oculta las direcciones y emite idSucursal', async () => {
+      // Arrange
+      const onContinuar = mostrar();
+      await userEvent.click(await screen.findByRole('radio', { name: /Recoger en sucursal/ }));
+
+      // Act
+      await userEvent.click(await screen.findByRole('radio', { name: /Zona 10/ }));
+      await userEvent.click(screen.getByRole('button', { name: 'Continuar al pago' }));
+
+      // Assert
+      expect(screen.getByText('Sucursal de retiro')).toBeInTheDocument();
+      expect(screen.getByText(/Lunes a viernes de 9:00 a 18:00/)).toBeInTheDocument();
+      expect(screen.queryByText('Dirección de entrega')).not.toBeInTheDocument();
+      expect(onContinuar).toHaveBeenCalledWith({ idMetodoEnvio: 4, idSucursal: 3 });
+    });
+
+    it('pasar de retiro a domicilio y volver → conserva dirección y sucursal y emite solo lo del método final', async () => {
+      // Arrange
+      const onContinuar = mostrar();
+      await userEvent.click(await screen.findByRole('radio', { name: /Estándar/ }));
+      await userEvent.click(screen.getByRole('radio', { name: /Casa/ }));
+      await userEvent.click(screen.getByRole('radio', { name: /Recoger en sucursal/ }));
+      await userEvent.click(await screen.findByRole('radio', { name: /Mixco/ }));
+      await userEvent.click(screen.getByRole('radio', { name: /Estándar/ }));
+      expect(screen.getByRole('radio', { name: /Casa/ })).toBeChecked();
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Continuar al pago' }));
+
+      // Assert
+      expect(onContinuar).toHaveBeenCalledTimes(1);
+      expect(onContinuar).toHaveBeenCalledWith({ idMetodoEnvio: 1, idDireccion: 5 });
+      expect(onContinuar.mock.calls[0]?.[0]).not.toHaveProperty('idSucursal');
+    });
+
+    it('volver al retiro tras pasar por domicilio → la sucursal elegida sigue marcada y no se emite dirección', async () => {
+      // Arrange
+      const onContinuar = mostrar();
+      await userEvent.click(await screen.findByRole('radio', { name: /Recoger en sucursal/ }));
+      await userEvent.click(await screen.findByRole('radio', { name: /Mixco/ }));
+      await userEvent.click(screen.getByRole('radio', { name: /Estándar/ }));
+      await userEvent.click(screen.getByRole('radio', { name: /Casa/ }));
+      await userEvent.click(screen.getByRole('radio', { name: /Recoger en sucursal/ }));
+      expect(await screen.findByRole('radio', { name: /Mixco/ })).toBeChecked();
+
+      // Act
+      await userEvent.click(screen.getByRole('button', { name: 'Continuar al pago' }));
+
+      // Assert
+      expect(onContinuar).toHaveBeenCalledWith({ idMetodoEnvio: 4, idSucursal: 4 });
+      expect(onContinuar.mock.calls[0]?.[0]).not.toHaveProperty('idDireccion');
+    });
+
+    it('retiro sin sucursal elegida → no se puede continuar', async () => {
+      // Act
+      mostrar({ idMetodoEnvioInicial: 4 });
+
+      // Assert
+      expect(await screen.findByRole('radio', { name: /Mixco/ })).not.toBeChecked();
+      expect(screen.getByRole('button', { name: 'Continuar al pago' })).toBeDisabled();
+    });
+
+    it('con idSucursalInicial → la sucursal viene marcada y se puede continuar', async () => {
+      // Act
+      mostrar({ idMetodoEnvioInicial: 4, idSucursalInicial: 4 });
+
+      // Assert
+      expect(await screen.findByRole('radio', { name: /Mixco/ })).toBeChecked();
+      expect(screen.getByRole('button', { name: 'Continuar al pago' })).toBeEnabled();
+    });
+
+    it('sin sucursales activas → la opción de retiro está deshabilitada con una nota', async () => {
+      // Arrange
+      sucursales.mockResolvedValue([]);
+
+      // Act
+      mostrar();
+
+      // Assert
+      expect(await screen.findByRole('radio', { name: /Recoger en sucursal/ })).toBeDisabled();
+      expect(screen.getByText('No hay sucursales disponibles por ahora.')).toBeInTheDocument();
+    });
+
+    it('error al cargar las sucursales → ErrorState con Reintentar', async () => {
+      // Arrange
+      sucursales.mockRejectedValueOnce(new ApiError(500, 'ERROR_INTERNO', 'Falla.', [], 'req-suc'));
+      mostrar({ idMetodoEnvioInicial: 4 });
+
+      // Act
+      expect(await screen.findByText('Referencia: req-suc')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+
+      // Assert
+      expect(await screen.findByRole('radio', { name: /Zona 10/ })).toBeInTheDocument();
+    });
   });
 });

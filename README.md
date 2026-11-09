@@ -165,15 +165,24 @@ Pedidos de ejemplo del cliente 6 (`cliente3@`), creados con los SPs reales y con
 | :---: | :--- | :--- | :--- |
 | 1 | hace 12 días, 15:30 | `ENTREGADO` | 2 × `CAM-BAS-NEG-M` + 1 × `PAN-JOG-GRI-M`, envío Estándar |
 | 2 | hace 9 días, **02:00** | `ENTREGADO` | `PAN-JEA-AZU-30` + `ACC-GOR-NEG-U`, Express. Son las 20:00 del día anterior en Guatemala: prueba la agrupación por fecha local |
-| 3 | hace 8 días, 14:00 | `CANCELADO` | 4 × `CAM-BAS-BLA-M` con `VERANO25` (la cancelación reintegró la existencia y liberó el cupón) |
+| 3 | hace 8 días, 14:00 | `CANCELADO` | 4 × `CAM-BAS-BLA-M` con `VERANO25`, recoger en Sucursal Zona 10 (la cancelación reintegró la existencia y liberó el cupón) |
 | 4 | hace 6 días, 16:00 | `ENTREGADO` | 4 × `CAM-BAS-BLA-M` + `ACC-GOR-ROJ-U` con `VERANO25` (deja `UsosActuales = 1`) |
 | 5 | hace 4 días, 18:00 | `DEVUELTO_PARCIAL` | 3 × `CAM-BAS-AZU-L` + 2 × `ACC-GOR-ROJ-U`; se devolvió 1 × `CAM-BAS-AZU-L` (Q95.00) |
 | 6 | hace 2 días, 09:00 | `EN_PREPARACION` | `PAN-JOG-NEG-L` + `PAN-JEA-NEG-34`, Express |
-| 7 | hace 1 día, 10:00 | `PAGADO` | `CAM-BAS-NEG-M` + `PAN-JEA-AZU-32`, recoger en tienda |
+| 7 | hace 1 día, 10:00 | `PAGADO` | `CAM-BAS-NEG-M` + `PAN-JEA-AZU-32`, recoger en Sucursal Zona 10 |
 
 Cómo la semilla reescribe las fechas y comprueba existencias y cupones: [Datos semilla](Database/README.md#datos-semilla).
 
 Catálogo de ejemplo: 4 categorías, atributos Talla y Color, 7 productos (uno inactivo, `Bufanda de lana`) y 16 variantes con su existencia inicial en el kardex. Variantes útiles para pruebas: `CAM-LIM-NEG-M` tiene una sola unidad (compra concurrente de la última unidad), `CAL-TEN-NEG-41` está inactiva con 5 unidades y `CAL-TEN-BLA-42` está agotada.
+
+Sucursales de retiro (método de envío "Recoger en sucursal", sin dirección del cliente; los pedidos 3 y 7 se recogen en Sucursal Zona 10):
+
+| IDSucursal | Nombre | Municipio, departamento | Estado |
+| :---: | :--- | :--- | :--- |
+| 1 | `Sucursal Zona 10` | Guatemala, Guatemala | activa |
+| 2 | `Sucursal Zona 1` | Guatemala, Guatemala | activa |
+| 3 | `Sucursal Mixco` | Mixco, Guatemala | activa |
+| 4 | `Sucursal Antigua` | Antigua Guatemala, Sacatepéquez | **inactiva** (no se ofrece en el checkout) |
 
 ---
 

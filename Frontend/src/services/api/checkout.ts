@@ -1,15 +1,17 @@
-import type { PedidoCreado, ResumenCheckout, SolicitudPago } from '../../types/checkout';
+import type {
+  EntregaCheckout,
+  PedidoCreado,
+  ResumenCheckout,
+  SolicitudPago,
+} from '../../types/checkout';
 import { request } from '../http';
 import { construirQuery } from './consulta';
 
 /** Endpoints de /api/checkout (solo Cliente). */
 export const checkoutApi = {
   /** Reserva la existencia 15 minutos y devuelve el resumen final. */
-  iniciar: (idDireccion: number, idMetodoEnvio: number) =>
-    request<ResumenCheckout>('/checkout/iniciar', {
-      method: 'POST',
-      body: { idDireccion, idMetodoEnvio },
-    }),
+  iniciar: (entrega: EntregaCheckout) =>
+    request<ResumenCheckout>('/checkout/iniciar', { method: 'POST', body: entrega }),
 
   /** Retoma el checkout tras recargar. Sin reserva vigente responde 409 RESERVA_VENCIDA. */
   obtenerResumen: (idMetodoEnvio: number) =>

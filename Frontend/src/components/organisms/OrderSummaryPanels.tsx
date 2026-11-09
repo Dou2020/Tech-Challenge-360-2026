@@ -56,7 +56,7 @@ export function OrderSummaryPanels({ pedido: p }: { pedido: PedidoDetalle }) {
 
       <section aria-labelledby="titulo-entrega" className="tarjeta p-5 text-sm">
         <h2 id="titulo-entrega" className="font-semibold tracking-tight text-texto">
-          Entrega
+          {p.retiroEnSucursal ? 'Recoger en sucursal' : 'Dirección de entrega'}
         </h2>
         <p className="mt-2 text-texto-suave">{p.direccion.entrega}</p>
         <p className="mt-1 text-texto-suave">

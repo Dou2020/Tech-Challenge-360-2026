@@ -79,6 +79,11 @@ export function armarDetalle({
     nombreEstado: p.NombreEstado,
     esFinal: Boolean(p.EsFinal),
     direccion: { idDireccion: p.IDDireccion, entrega: p.DireccionEntrega },
+    retiroEnSucursal: Boolean(p.RetiroEnSucursal),
+    sucursal:
+      p.IDSucursal === null || p.IDSucursal === undefined
+        ? null
+        : { idSucursal: p.IDSucursal, nombre: p.Sucursal ?? '' },
     metodoEnvio: {
       idMetodoEnvio: p.IDMetodoEnvio,
       nombre: p.MetodoEnvio,

@@ -39,6 +39,10 @@ import { bitacoraRoutes } from './modules/bitacora/bitacora.routes.js';
 import { configuracionRoutes } from './modules/configuracion/configuracion.routes.js';
 import { perfilRoutes } from './modules/perfil/perfil.routes.js';
 import { usuariosRoutes } from './modules/usuarios/usuarios.routes.js';
+import {
+  sucursalesPublicasRoutes,
+  sucursalesRoutes,
+} from './modules/sucursales/sucursales.routes.js';
 import { sistemaRoutes } from './modules/sistema/sistema.routes.js';
 
 // Funciona igual desde src/ (tsx, vitest) y desde dist/ (la imagen copia src/docs/openapi.yaml).
@@ -95,7 +99,9 @@ export function createApp(): Express {
   api.use(sistemaRoutes);
   api.use('/auth', authRoutes);
   api.use('/catalogo', catalogoPublicoRoutes);
+  api.use('/catalogo', sucursalesPublicasRoutes);
   api.use('/metodos-envio', metodosEnvioRoutes);
+  api.use('/sucursales', sucursalesRoutes);
   api.use('/categorias', categoriasRoutes);
   api.use('/productos', productosRoutes);
   api.use('/variantes', variantesRoutes);

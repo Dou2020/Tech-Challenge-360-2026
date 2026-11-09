@@ -23,6 +23,7 @@ La especificación formal está en `backend/src/docs/openapi.yaml` y se sirve en
    - [Tarjetas guardadas — `/api/tarjetas`](#tarjetas-guardadas--apitarjetas)
    - [Catálogo público — `/api/catalogo`](#catálogo-público--apicatalogo)
    - [Categorías — `/api/categorias`](#categorías--apicategorias)
+   - [Sucursales — `/api/sucursales`](#sucursales--apisucursales)
    - [Productos — `/api/productos`](#productos--apiproductos)
    - [Variantes — `/api/variantes`](#variantes--apivariantes)
    - [Atributos — `/api/atributos`](#atributos--apiatributos)
@@ -93,6 +94,7 @@ Algunos endpoints de lectura se sirven desde Redis cuando es posible (*cache-asi
 | :--- | :--- | :--- | :--- |
 | `GET /api/catalogo/categorias` | `shopcart:catalogo:v{n}:categorias` | `CACHE_TTL_CATALOGO_SEG` (600 s) | Crear, actualizar, activar/desactivar o eliminar una categoría; crear, actualizar, activar/desactivar o eliminar un producto; crear o activar/desactivar una variante |
 | `GET /api/metodos-envio` | `shopcart:catalogo:v{n}:metodos-envio` | `CACHE_TTL_CATALOGO_SEG` | Lo mismo (comparte el namespace `catalogo`) |
+| `GET /api/catalogo/sucursales` | `shopcart:catalogo:v{n}:sucursales` | `CACHE_TTL_CATALOGO_SEG` | Crear, actualizar, activar/desactivar o eliminar una sucursal. Invalida todo el namespace `catalogo` (también categorías y métodos de envío): son escrituras raras |
 | `GET /api/auth/me` | `shopcart:usuario:{id}` | 15 min | Cambio de perfil, rol o estado del usuario |
 | `GET /api/reportes/*` | `shopcart:reportes:v{n}:{endpoint}:{desde}:{hasta}:…` | `CACHE_TTL_REPORTES_SEG` (300 s) | Crear, cancelar o cambiar de estado un pedido y registrar una devolución (ver [Extras](#5-extras-opcionales)) |
 | `GET /api/configuracion` | `shopcart:configuracion` | 1 h | `PUT /api/configuracion/:clave` |
@@ -236,7 +238,8 @@ Solo muestra lo visible en la tienda: producto activo, de una categoría activa 
 | GET | `/api/catalogo/categorias` | Público | Categorías activas, por nombre: `idCategoria`, `nombre`, `descripcion`, `cantidadProductos` (productos visibles). Con caché (`X-Cache`) | `SP_Catalogo_ListarCategorias` |
 | GET | `/api/catalogo/productos` | Público | Búsqueda paginada. Filtros: `q` (nombre, descripción, categoría o SKU; máx. 150), `idCategoria`, `precioMin`, `precioMax` (sobre el precio mínimo del producto; `precioMin > precioMax` → 400), `disponible` (`true` con existencia disponible, `false` agotados, sin el filtro todos). `sort`: `precio` (precio mínimo), `nombre`, `fechaCreacion`; default `fechaCreacion:desc`. Cada item: `idProducto`, `nombre`, `descripcion`, `idCategoria`, `categoria`, `precioMinimo`, `precioMaximo`, `disponible`, `imagenPrincipal`, `fechaCreacion`. Sin caché | `SP_Catalogo_BuscarProductos` |
 | GET | `/api/catalogo/productos/:id` | Público | Detalle con `imagenes` (la principal primero) y `variantes` activas: `idVariante`, `sku`, `precio`, `existenciaDisponible`, `descripcion` ("Talla M / Color Negro") y `valores` (`idAtributo`, `atributo`, `idValorAtributo`, `valor`). Ver el [ejemplo](#detalle-público-de-un-producto). Sin caché | `SP_Catalogo_ObtenerProducto` |
-| GET | `/api/metodos-envio` | Público | Métodos de envío activos, por costo: `idMetodoEnvio`, `nombre`, `costo`, `diasEstimados`. Con caché (`X-Cache`) | `SP_Checkout_ListarMetodosEnvio` |
+| GET | `/api/catalogo/sucursales` | Público | Sucursales activas, por nombre: `idSucursal`, `nombre`, `telefono`, `linea1`, `linea2`, `municipio`, `departamento`, `codigoPostal`, `horario` (los opcionales son `null` si no se dieron). No lleva `activo`, `cantidadPedidos` ni fechas. Con caché (`X-Cache`) | `SP_Catalogo_ListarSucursales` |
+| GET | `/api/metodos-envio` | Público | Métodos de envío activos, por costo: `idMetodoEnvio`, `nombre`, `costo`, `diasEstimados`, `requiereSucursal` (`true` en "Recoger en sucursal": el checkout pide `idSucursal` en vez de `idDireccion`). Con caché (`X-Cache`) | `SP_Checkout_ListarMetodosEnvio` |
 
 ### Categorías — `/api/categorias`
 Una categoría se responde como `{ idCategoria, nombre, descripcion, activo, cantidadProductos, cantidadCupones }`.
@@ -249,6 +252,18 @@ Una categoría se responde como `{ idCategoria, nombre, descripcion, activo, can
 | PUT | `/api/categorias/:id` | Admin | Reemplaza nombre y descripción (omitir `descripcion` la borra) | `SP_Categorias_Actualizar` |
 | PATCH | `/api/categorias/:id/estado` | Admin | `{ "activo": false }` activa o desactiva. Desactivarla oculta sus productos del catálogo público | `SP_Categorias_CambiarEstado` |
 | DELETE | `/api/categorias/:id` | Admin | Elimina solo si no tiene productos (aunque estén inactivos) ni cupones; si los tiene, 409 `EN_USO`. Responde 204 | `SP_Categorias_Eliminar` |
+
+### Sucursales — `/api/sucursales`
+Solo Administrador (401 sin token, 403 con otro rol). Las sucursales activas se publican en `GET /api/catalogo/sucursales`. Una sucursal se responde como `{ idSucursal, nombre, telefono, linea1, linea2, municipio, departamento, codigoPostal, horario, activo, cantidadPedidos, fechaCreacion, fechaModificacion }`; `linea2`, `codigoPostal` y `horario` son `null` si no se dieron. Toda escritura invalida la caché `catalogo` después del SP.
+
+| Método | Ruta | Acceso | Descripción | SP |
+| :--- | :--- | :--- | :--- | :--- |
+| GET | `/api/sucursales` | Admin | Lista paginada, incluye inactivas. Filtros: `q` (nombre), `activo` (`true`/`false`). `sort`: `nombre`, `municipio`, `departamento`, `activo`, `cantidadPedidos`; default `nombre:asc` | `SP_Sucursales_Listar` |
+| GET | `/api/sucursales/:id` | Admin | Detalle. Inexistente: 404 | `SP_Sucursales_ObtenerPorId` |
+| POST | `/api/sucursales` | Admin | Crea una sucursal: `nombre` (único, máx. 100), `telefono` (8 a 20 dígitos), `linea1` (máx. 200), `linea2` (opcional), `municipio`, `departamento` (máx. 100), `codigoPostal` (opcional, 5 dígitos), `horario` (opcional, máx. 200). Responde 201. Nombre repetido: 409 `DUPLICADO` | `SP_Sucursales_Crear` |
+| PUT | `/api/sucursales/:id` | Admin | Reemplaza todos los campos (omitir un opcional lo borra). Nombre repetido: 409 `DUPLICADO` | `SP_Sucursales_Actualizar` |
+| PATCH | `/api/sucursales/:id/estado` | Admin | `{ "activo": false }` activa o desactiva. Una sucursal inactiva deja de ofrecerse en el checkout; los pedidos ya hechos la conservan | `SP_Sucursales_CambiarEstado` |
+| DELETE | `/api/sucursales/:id` | Admin | Elimina solo si no tiene pedidos; si los tiene, 409 `EN_USO`. Responde 204 | `SP_Sucursales_Eliminar` |
 
 ### Productos — `/api/productos`
 El detalle de gestión (`GET /:id` y las escrituras que no responden 204) es `{ idProducto, nombre, descripcion, idCategoria, categoria, categoriaActiva, activo, fechaCreacion, fechaModificacion, tieneVentas, puedeEliminarse, variantes, imagenes }`. Cada variante incluye las inactivas y trae `existenciaFisica`, `existenciaReservada` (solo reservas vigentes) y `existenciaDisponible`, además de los campos del catálogo público, `idProducto` y `activo`. `puedeEliminarse` es `true` solo si el producto no tiene ventas, kardex ni reservas.
@@ -340,10 +355,10 @@ Quién es el dueño: si la petición trae `Authorization`, manda el usuario del 
 ### Checkout — `/api/checkout`
 | Método | Ruta | Acceso | Descripción | SP |
 | :--- | :--- | :--- | :--- | :--- |
-| POST | `/api/checkout/iniciar` | Cliente | Recibe `idDireccion` e `idMetodoEnvio`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con `details` por variante afectada (`field: "idVariante:4"`, `message: "SKU: solicitado 2, disponible 1."`). Si el cupón del carrito ya no vale: 422 con su código. Si la dirección no existe, está dada de baja o es de otro cliente: 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia` |
+| POST | `/api/checkout/iniciar` | Cliente | Recibe `idMetodoEnvio` y, según el método, `idDireccion` (envío a domicilio) o `idSucursal` (método con `requiereSucursal`, ver [Sucursales](#sucursales--apisucursales)); el que no corresponde se ignora. Sin la dirección o la sucursal que el método exige: 400 `VALIDACION`. Revalida el cupón, reserva la existencia de cada línea por 15 minutos y devuelve el resumen final (subtotal, descuento, envío, IVA, total) con `reservaExpiraEn`. Si ya había una reserva activa, la reemplaza. Si falta existencia: 409 `STOCK_INSUFICIENTE` con `details` por variante afectada (`field: "idVariante:4"`, `message: "SKU: solicitado 2, disponible 1."`). Si el cupón del carrito ya no vale: 422 con su código. Si el método, la dirección (ajena o dada de baja) o la sucursal (inexistente o inactiva) no son válidos: 404 `NO_ENCONTRADO` | `SP_Inventario_ReservarExistencia` |
 | GET | `/api/checkout` | Cliente | Resumen y reserva vigente (para retomar el checkout tras recargar la página). Query opcional `idMetodoEnvio` (el método no se guarda en la reserva; sin él `costoEnvio` es `"0.00"`). Sin reserva vigente que cubra el carrito: 409 `RESERVA_VENCIDA` | `SP_Checkout_ObtenerResumen` |
 | DELETE | `/api/checkout/reserva` | Cliente | Libera la reserva (el cliente vuelve al carrito). Responde 204, también si no había reserva | `SP_Inventario_LiberarReserva` |
-| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Body `{ idDireccion, idMetodoEnvio, metodoPago: "TARJETA", datosPago }` donde `datosPago` es `{ idTarjeta }` (tarjeta guardada) o `{ titular, ultimos4, tipo?, marca?, guardar? }` (tarjeta nueva; con `guardar: true`, `tipo` y `marca` son obligatorios). Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. Responde 201 con el pedido nuevo o 200 con el mismo pedido si es una repetición, siempre con `Location: /api/pedidos/:id` y `idTarjetaGuardada` en el cuerpo. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
+| POST | `/api/checkout/pagar` | Cliente | Requiere `Idempotency-Key`. Body `{ idMetodoEnvio, idDireccion?, idSucursal?, metodoPago: "TARJETA", datosPago }` donde `datosPago` es `{ idTarjeta }` (tarjeta guardada) o `{ titular, ultimos4, tipo?, marca?, guardar? }` (tarjeta nueva; con `guardar: true`, `tipo` y `marca` son obligatorios). Procesa el pago (simulado) y crea el pedido de forma atómica: pedido, detalle con precios congelados, movimientos de kardex, uso del cupón y pago. Responde 201 con el pedido nuevo o 200 con el mismo pedido si es una repetición, siempre con `Location: /api/pedidos/:id` y `idTarjetaGuardada` en el cuerpo. Ver [Pago idempotente](#pago-idempotente) | `SP_Pedidos_CrearPedido` |
 
 ### Pedidos — `/api/pedidos`
 El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administrador ven todos.
@@ -352,7 +367,7 @@ El Cliente solo ve sus pedidos (el filtro sale del token). Operador y Administra
 | :--- | :--- | :--- | :--- | :--- |
 | GET | `/api/pedidos` | Cliente, Operador, Admin | Lista paginada. Filtros: `estado`, `idCliente` (solo personal), `desde`, `hasta`, `q` (número de pedido). `sort`: `fechaCreacion`, `total` | `SP_Pedidos_Listar` |
 | GET | `/api/pedidos/estados` | Autenticado | Estados del pedido y transiciones permitidas, para la interfaz | `SP_Pedidos_ListarTransiciones` |
-| GET | `/api/pedidos/:id` | Cliente (propio), Operador, Admin | Detalle: líneas con precios congelados, montos, dirección de entrega, pago y estado | `SP_Pedidos_ObtenerPorId` |
+| GET | `/api/pedidos/:id` | Cliente (propio), Operador, Admin | Detalle: líneas con precios congelados, montos, dirección de entrega (o sucursal de retiro), pago y estado | `SP_Pedidos_ObtenerPorId` |
 | GET | `/api/pedidos/:id/historial` | Cliente (propio), Operador, Admin | Cambios de estado: anterior, nuevo, usuario y fecha | `SP_Pedidos_ObtenerHistorialEstados` |
 | POST | `/api/pedidos/:id/cancelar` | Cliente (propio), Operador, Admin | Cancela si aún no se despachó (`motivo` opcional; sin body se acepta). Responde 200 con el detalle del pedido. Reintegra la existencia con movimientos de kardex y libera el uso del cupón. Si ya se despachó: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_Cancelar` |
 | PATCH | `/api/pedidos/:id/estado` | Operador, Admin | Avanza el estado (`estado` = código, `comentario` opcional). Responde 200 con el detalle del pedido. Cancelar y devolver tienen su endpoint: pedir `CANCELADO` o `DEVUELTO*` aquí es 409. Solo transiciones definidas en `TransicionEstadoPedido`; otra, o el mismo estado en que ya está: 409 `TRANSICION_NO_PERMITIDA` | `SP_Pedidos_CambiarEstado` |
@@ -683,6 +698,7 @@ Authorization: Bearer …
 
 { "idDireccion": 5, "idMetodoEnvio": 1 }
 ```
+Con "Recoger en sucursal" (`requiereSucursal: true`) se manda `{ "idMetodoEnvio": 3, "idSucursal": 1 }`, sin dirección.
 ```json
 {
   "idCarrito": 88,
@@ -768,6 +784,8 @@ Location: /api/pedidos/1503
   "idPedido": 1503, "numeroPedido": "SC-2026-001503", "idUsuario": 6, "cliente": "Ana López", "correoCliente": "ana@correo.gt",
   "estado": "PAGADO", "nombreEstado": "Pagado", "esFinal": false,
   "direccion": { "idDireccion": 5, "entrega": "…" },
+  "retiroEnSucursal": false,
+  "sucursal": null,
   "metodoEnvio": { "idMetodoEnvio": 1, "nombre": "Estándar", "diasEstimados": 3 },
   "cupon": { "idCupon": 1, "codigo": "BIENVENIDA10" },
   "subtotal": "298.00", "descuento": "29.80", "costoEnvio": "25.00", "montoIVA": "31.41", "total": "293.20", "montoReembolsado": "0.00",
@@ -779,7 +797,7 @@ Location: /api/pedidos/1503
   "transiciones": [ { "estado": "CANCELADO", "nombre": "Cancelado", "via": "CANCELAR" } ]
 }
 ```
-`transiciones` es lo que el rol de quien consulta puede hacer ahora, y `via` indica con qué endpoint (`ESTADO` → `PATCH /estado`, `CANCELAR` → `POST /cancelar`, `DEVOLUCION` → `POST /devoluciones`). `GET /api/pedidos/estados` responde `{ estados: [{ codigo, nombre, esFinal }], transiciones: [{ origen, destino, rol, permitida, via }] }`. El historial es un arreglo `[{ idHistorialEstadoPedido, idPedido, estadoAnterior: { codigo, nombre } | null, estadoNuevo, idUsuario, usuario, comentario, fecha }]` y las devoluciones, `[{ idDevolucion, tipo, motivo, montoReembolso, usuario, fecha, lineas: [{ idPedidoDetalle, sku, nombreProducto, cantidad, montoReembolso }] }]`.
+En un retiro en sucursal `retiroEnSucursal` es `true`, `sucursal` es `{ "idSucursal": 1, "nombre": "Sucursal Zona 10" }` (nombre actual), `direccion.idDireccion` es `null` y `direccion.entrega` es la copia textual que se guardó al pagar ("Recoger en Sucursal Zona 10: …"). `transiciones` es lo que el rol de quien consulta puede hacer ahora, y `via` indica con qué endpoint (`ESTADO` → `PATCH /estado`, `CANCELAR` → `POST /cancelar`, `DEVOLUCION` → `POST /devoluciones`). `GET /api/pedidos/estados` responde `{ estados: [{ codigo, nombre, esFinal }], transiciones: [{ origen, destino, rol, permitida, via }] }`. El historial es un arreglo `[{ idHistorialEstadoPedido, idPedido, estadoAnterior: { codigo, nombre } | null, estadoNuevo, idUsuario, usuario, comentario, fecha }]` y las devoluciones, `[{ idDevolucion, tipo, motivo, montoReembolso, usuario, fecha, lineas: [{ idPedidoDetalle, sku, nombreProducto, cantidad, montoReembolso }] }]`.
 
 ### Cambiar estado de un pedido
 ```http
@@ -929,3 +947,4 @@ El enunciado deja estos puntos abiertos; se resolvieron así:
 - **Ids `BIGINT` como `number`:** el kardex usa `BIGINT`; en JSON va como número porque no llegará a 2^53.
 - **Reportes por día local, sin envío:** `desde`/`hasta` en los reportes son solo `YYYY-MM-DD` (día de Guatemala). Las ventas netas son subtotal − descuento − reembolsos, sin envío (que va aparte en `envioCobrado`); un pedido `DEVUELTO` (todo reembolsado) no suma. Un pedido de las 20:00 en Guatemala cuenta en su día local aunque en UTC sea el siguiente.
 - **Reportes cacheados, también carritos abandonados:** no muestran existencia ni reservas, así que se sirven de Redis hasta `CACHE_TTL_REPORTES_SEG`. Un carrito que pasa a "abandonado" solo por el paso del tiempo aparece al vencer ese plazo; los eventos de pedidos invalidan la caché al instante.
+- **Recoger en sucursal:** el método de envío con `requiereSucursal` (costo 0) pide una sucursal activa en vez de una dirección. El pedido guarda `IDSucursal` y una copia textual de la sucursal en `DireccionEntrega`, así que renombrar o editar la sucursal después no cambia el pedido (el detalle además trae su nombre actual en `sucursal`). Un `idDireccion` enviado con un retiro, o un `idSucursal` con un envío a domicilio, se ignora. El pedido pasa por los mismos estados (`DESPACHADO` equivale a "listo para recoger"). La huella de idempotencia agrega la sucursal solo si la hay, así que las de los envíos a domicilio no cambian: la misma clave con otra sucursal es 409 `IDEMPOTENCIA_CONFLICTO`. Una sucursal con pedidos no se elimina (409 `EN_USO`): se desactiva.

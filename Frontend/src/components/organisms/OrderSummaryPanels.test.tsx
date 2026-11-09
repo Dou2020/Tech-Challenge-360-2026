@@ -53,4 +53,28 @@ describe('OrderSummaryPanels', () => {
     expect(screen.getByText('TARJETA · APROBADO')).toBeInTheDocument();
     expect(screen.getByText('Referencia SIM-1')).toBeInTheDocument();
   });
+
+  it('a domicilio → el título es "Dirección de entrega"', () => {
+    // Act
+    render(<OrderSummaryPanels pedido={crearPedidoDetalle()} />);
+
+    // Assert
+    expect(screen.getByRole('heading', { name: 'Dirección de entrega' })).toBeInTheDocument();
+  });
+
+  it('retiro en sucursal → el título es "Recoger en sucursal" y muestra la entrega', () => {
+    // Arrange
+    const pedido = crearPedidoDetalle({
+      retiroEnSucursal: true,
+      sucursal: { idSucursal: 3, nombre: 'Zona 10' },
+      direccion: { idDireccion: null, entrega: 'Recoger en Zona 10: 6a avenida 12-34, Guatemala' },
+    });
+
+    // Act
+    render(<OrderSummaryPanels pedido={pedido} />);
+
+    // Assert
+    expect(screen.getByRole('heading', { name: 'Recoger en sucursal' })).toBeInTheDocument();
+    expect(screen.getByText(/Recoger en Zona 10:/)).toBeInTheDocument();
+  });
 });

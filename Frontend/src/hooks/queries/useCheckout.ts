@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { checkoutApi } from '../../services/api/checkout';
 import { ApiError } from '../../services/http';
-import type { SolicitudPago } from '../../types/checkout';
+import type { EntregaCheckout, SolicitudPago } from '../../types/checkout';
 
 const claveResumen = (idMetodoEnvio: number | null) =>
   ['checkout', 'resumen', idMetodoEnvio] as const;
@@ -25,8 +25,7 @@ export function useResumenCheckout(idMetodoEnvio: number | null) {
 export function useIniciarCheckout() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ idDireccion, idMetodoEnvio }: { idDireccion: number; idMetodoEnvio: number }) =>
-      checkoutApi.iniciar(idDireccion, idMetodoEnvio),
+    mutationFn: (entrega: EntregaCheckout) => checkoutApi.iniciar(entrega),
     onSuccess: (resumen, { idMetodoEnvio }) =>
       queryClient.setQueryData(claveResumen(idMetodoEnvio), resumen),
   });

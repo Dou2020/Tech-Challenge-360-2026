@@ -92,6 +92,39 @@ describe('armarDetalle', () => {
       transiciones: [{ estado: 'EN_PREPARACION', via: 'ESTADO' }],
     });
   });
+
+  it('un retiro en sucursal trae la sucursal y la dirección en null', () => {
+    // Arrange
+    const retiro: ResultadoDetallePedidoSp = {
+      ...detalleSp,
+      pedido: {
+        ...detalleSp.pedido,
+        IDDireccion: null,
+        DireccionEntrega: 'Recoger en Sucursal Zona 10: 6a. avenida',
+        IDSucursal: 1,
+        Sucursal: 'Sucursal Zona 10',
+        RetiroEnSucursal: true,
+      },
+    };
+
+    // Act
+    const detalle = armarDetalle(retiro);
+
+    // Assert
+    expect(detalle).toMatchObject({
+      retiroEnSucursal: true,
+      sucursal: { idSucursal: 1, nombre: 'Sucursal Zona 10' },
+      direccion: { idDireccion: null, entrega: 'Recoger en Sucursal Zona 10: 6a. avenida' },
+    });
+  });
+
+  it('un envío a domicilio no es retiro y no tiene sucursal', () => {
+    // Act
+    const detalle = armarDetalle(detalleSp);
+
+    // Assert
+    expect(detalle).toMatchObject({ retiroEnSucursal: false, sucursal: null });
+  });
 });
 
 describe('pedidosService', () => {

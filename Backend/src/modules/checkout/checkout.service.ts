@@ -7,6 +7,7 @@ import { aMonto } from '../../shared/utils/montos.js';
 import { checkoutRepository } from './checkout.repository.js';
 import type {
   CuponResumen,
+  DatosEntrega,
   DatosPago,
   FilaLineaCheckout,
   LiberacionReserva,
@@ -115,13 +116,9 @@ export function armarResumen({ encabezado: e, lineas }: ResultadoResumenSp): Res
 }
 
 export const checkoutService = {
-  async iniciar(
-    idUsuario: number,
-    idDireccion: number,
-    idMetodoEnvio: number,
-  ): Promise<ResumenCheckout> {
+  async iniciar(idUsuario: number, entrega: DatosEntrega): Promise<ResumenCheckout> {
     try {
-      return armarResumen(await checkoutRepository.reservar(idUsuario, idDireccion, idMetodoEnvio));
+      return armarResumen(await checkoutRepository.reservar(idUsuario, entrega));
     } catch (error) {
       throw separarDetalleStock(error);
     }

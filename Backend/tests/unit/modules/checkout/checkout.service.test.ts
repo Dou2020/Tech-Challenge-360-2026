@@ -141,7 +141,7 @@ describe('checkoutService.iniciar', () => {
     );
 
     // Act
-    const accion = checkoutService.iniciar(1, 5, 1);
+    const accion = checkoutService.iniciar(1, { idDireccion: 5, idMetodoEnvio: 1 });
 
     // Assert
     await expect(accion).rejects.toMatchObject({

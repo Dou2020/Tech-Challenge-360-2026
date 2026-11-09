@@ -231,6 +231,7 @@ describe('Caché del catálogo público', () => {
       nombre: expect.any(String),
       costo: expect.stringMatching(/^\d+\.\d{2}$/),
       diasEstimados: expect.any(Number),
+      requiereSucursal: expect.any(Boolean),
     });
     expect(segunda.body).toEqual(primera.body);
   });

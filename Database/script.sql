@@ -4,7 +4,7 @@
     los triggers, las funciones, las vistas, los stored procedures, el login de la aplicación
     (solo permiso EXECUTE), los catálogos y los datos semilla.
 
-    Se generó copiando, en orden y sin cambios, los 18 scripts de Database/scripts/ (001 a 090)
+    Se generó copiando, en orden y sin cambios, los 19 scripts de Database/scripts/ (001 a 090)
     en el commit b14e7b5. Los scripts numerados son la fuente de verdad: si alguno cambia, este
     archivo queda desactualizado. docker-init.sh y las pruebas usan los scripts numerados, no este.
     No incluye Database/pruebas/integridad.sql.
@@ -332,14 +332,39 @@ GO
    Pedidos
    ========================================================= */
 
+-- Sucursal donde el cliente puede recoger su pedido (método de envío con RequiereSucursal = 1).
+-- Se desactiva en lugar de borrarse cuando ya tiene pedidos; el pedido guarda además una copia textual
+-- de su dirección en DireccionEntrega.
+CREATE TABLE dbo.Sucursal (
+    IDSucursal        INT IDENTITY(1,1) NOT NULL,
+    Nombre            NVARCHAR(100)     NOT NULL,
+    Telefono          NVARCHAR(20)      NOT NULL,
+    Linea1            NVARCHAR(200)     NOT NULL,
+    Linea2            NVARCHAR(200)     NULL,
+    Municipio         NVARCHAR(100)     NOT NULL,
+    Departamento      NVARCHAR(100)     NOT NULL,
+    CodigoPostal      NVARCHAR(10)      NULL,
+    Horario           NVARCHAR(200)     NULL,
+    Activo            BIT               NOT NULL CONSTRAINT DF_Sucursal_Activo DEFAULT (1),
+    FechaCreacion     DATETIME2(3)      NOT NULL CONSTRAINT DF_Sucursal_FechaCreacion DEFAULT (SYSUTCDATETIME()),
+    FechaModificacion DATETIME2(3)      NOT NULL CONSTRAINT DF_Sucursal_FechaModificacion DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_Sucursal PRIMARY KEY (IDSucursal),
+    CONSTRAINT UQ_Sucursal_Nombre UNIQUE (Nombre)
+);
+GO
+
 CREATE TABLE dbo.MetodoEnvio (
     IDMetodoEnvio INT IDENTITY(1,1) NOT NULL,
     Nombre        NVARCHAR(100)     NOT NULL,
     Costo         DECIMAL(12,2)     NOT NULL,
     DiasEstimados TINYINT           NOT NULL,
     Activo        BIT               NOT NULL CONSTRAINT DF_MetodoEnvio_Activo DEFAULT (1),
+    -- 1 = el cliente recoge el pedido en una sucursal y no necesita dirección de entrega.
+    RequiereSucursal BIT            NOT NULL CONSTRAINT DF_MetodoEnvio_RequiereSucursal DEFAULT (0),
     CONSTRAINT PK_MetodoEnvio PRIMARY KEY (IDMetodoEnvio),
     CONSTRAINT UQ_MetodoEnvio_Nombre UNIQUE (Nombre),
+    -- Destino de la FK compuesta de Pedido: RetiroEnSucursal siempre coincide con el método elegido.
+    CONSTRAINT UQ_MetodoEnvio_IDMetodoEnvio_RequiereSucursal UNIQUE (IDMetodoEnvio, RequiereSucursal),
     CONSTRAINT CK_MetodoEnvio_Costo CHECK (Costo >= 0)
 );
 GO
@@ -376,10 +401,12 @@ CREATE TABLE dbo.Pedido (
     HuellaSolicitud   CHAR(64)          NOT NULL,  -- SHA-256 del contenido del carrito; detecta misma clave con otro carrito
     IDUsuario         INT               NOT NULL,
     IDEstadoPedido    INT               NOT NULL,
-    IDDireccion       INT               NOT NULL,
+    IDDireccion       INT               NULL,      -- NULL cuando el cliente recoge en sucursal
+    IDSucursal        INT               NULL,      -- NULL cuando el pedido es a domicilio
+    RetiroEnSucursal  BIT               NOT NULL,  -- copia de MetodoEnvio.RequiereSucursal (FK compuesta)
     IDMetodoEnvio     INT               NOT NULL,
     IDCupon           INT               NULL,
-    DireccionEntrega  NVARCHAR(800)     NOT NULL,  -- copia de la dirección al momento de la compra
+    DireccionEntrega  NVARCHAR(800)     NOT NULL,  -- copia de la dirección (o de la sucursal) al momento de la compra
     Subtotal          DECIMAL(12,2)     NOT NULL,
     Descuento         DECIMAL(12,2)     NOT NULL CONSTRAINT DF_Pedido_Descuento DEFAULT (0),
     CostoEnvio        DECIMAL(12,2)     NOT NULL CONSTRAINT DF_Pedido_CostoEnvio DEFAULT (0),
@@ -391,12 +418,18 @@ CREATE TABLE dbo.Pedido (
     CONSTRAINT FK_Pedido_EstadoPedido FOREIGN KEY (IDEstadoPedido) REFERENCES dbo.EstadoPedido (IDEstadoPedido),
     -- La dirección de entrega es del mismo cliente del pedido.
     CONSTRAINT FK_Pedido_Direccion FOREIGN KEY (IDDireccion, IDUsuario) REFERENCES dbo.Direccion (IDDireccion, IDUsuario),
-    CONSTRAINT FK_Pedido_MetodoEnvio FOREIGN KEY (IDMetodoEnvio) REFERENCES dbo.MetodoEnvio (IDMetodoEnvio),
+    -- Con una sucursal el pedido usa un método que la requiere, y a domicilio uno que no.
+    CONSTRAINT FK_Pedido_MetodoEnvio FOREIGN KEY (IDMetodoEnvio, RetiroEnSucursal) REFERENCES dbo.MetodoEnvio (IDMetodoEnvio, RequiereSucursal),
+    CONSTRAINT FK_Pedido_Sucursal FOREIGN KEY (IDSucursal) REFERENCES dbo.Sucursal (IDSucursal),
     CONSTRAINT FK_Pedido_Cupon FOREIGN KEY (IDCupon) REFERENCES dbo.Cupon (IDCupon),
     CONSTRAINT UQ_Pedido_NumeroPedido UNIQUE (NumeroPedido),
     CONSTRAINT UQ_Pedido_ClaveIdempotencia UNIQUE (ClaveIdempotencia),
     -- Destino de la FK compuesta de UsoCupon: el uso es del mismo cliente y cupón del pedido.
     CONSTRAINT UQ_Pedido_IDPedido_IDUsuario_IDCupon UNIQUE (IDPedido, IDUsuario, IDCupon),
+    -- Exactamente un destino: dirección del cliente (domicilio) o sucursal (retiro).
+    CONSTRAINT CK_Pedido_Entrega CHECK (
+        (RetiroEnSucursal = 0 AND IDDireccion IS NOT NULL AND IDSucursal IS NULL)
+        OR (RetiroEnSucursal = 1 AND IDSucursal IS NOT NULL AND IDDireccion IS NULL)),
     CONSTRAINT CK_Pedido_Montos CHECK (Subtotal >= 0 AND Descuento >= 0 AND CostoEnvio >= 0 AND MontoIVA >= 0),
     CONSTRAINT CK_Pedido_Descuento CHECK (Descuento <= Subtotal),
     -- El único descuento del pedido es el del cupón.
@@ -670,6 +703,7 @@ CREATE INDEX IX_Pedido_IDUsuario_FechaCreacion ON dbo.Pedido (IDUsuario, FechaCr
 CREATE INDEX IX_Pedido_IDEstadoPedido_FechaCreacion ON dbo.Pedido (IDEstadoPedido, FechaCreacion) INCLUDE (Total);
 CREATE INDEX IX_Pedido_FechaCreacion ON dbo.Pedido (FechaCreacion) INCLUDE (IDEstadoPedido, Total);
 CREATE INDEX IX_Pedido_IDCupon ON dbo.Pedido (IDCupon) WHERE IDCupon IS NOT NULL;
+CREATE INDEX IX_Pedido_IDSucursal ON dbo.Pedido (IDSucursal) WHERE IDSucursal IS NOT NULL;
 CREATE INDEX IX_PedidoDetalle_IDVariante ON dbo.PedidoDetalle (IDVariante);
 CREATE INDEX IX_HistorialEstadoPedido_IDPedido ON dbo.HistorialEstadoPedido (IDPedido, Fecha);
 CREATE INDEX IX_Devolucion_IDPedido ON dbo.Devolucion (IDPedido);
@@ -5191,9 +5225,13 @@ GO
 
 -- POST /api/checkout/iniciar: reserva la existencia de cada línea del carrito del cliente por
 -- Configuracion.MinutosReserva (15 si falta o no es un entero entre 1 y 1440) y devuelve el resumen.
---   @IDDireccion    dirección del propio cliente y activa; si no, 50004
 --   @IDMetodoEnvio  método de envío activo; si no, 50004
--- Validaciones, en orden: solicitante (50004/50012), dirección y método (50004), carrito vacío (50001),
+--   @IDDireccion    con un método a domicilio: dirección del propio cliente y activa (falta → 50001; si no, 50004).
+--                   Con un método que requiere sucursal se ignora.
+--   @IDSucursal     con un método que requiere sucursal: sucursal activa (falta → 50001; si no, 50004).
+--                   Con un método a domicilio se ignora.
+-- Validaciones, en orden: solicitante (50004/50012), método y destino (SP_Checkout_ResolverEntrega: 50004/50001),
+-- carrito vacío (50001),
 -- línea no vendible (variante, producto o categoría inactivos → 50001), cupón del carrito
 -- (FU_Cupones_Validar → su código 50060–50067; el carrito conserva el cupón, el cliente lo quita) y
 -- existencia (50030).
@@ -5213,14 +5251,16 @@ GO
 -- el mismo @IDMetodoEnvio.
 CREATE OR ALTER PROCEDURE dbo.SP_Inventario_ReservarExistencia
     @IDUsuarioSolicitante INT,
-    @IDDireccion          INT,
-    @IDMetodoEnvio        INT
+    @IDDireccion          INT = NULL,
+    @IDMetodoEnvio        INT,
+    @IDSucursal           INT = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
     DECLARE @Ahora DATETIME2(3);
+    DECLARE @RequiereSucursal BIT, @CostoEnvio DECIMAL(12,2), @DireccionEntrega NVARCHAR(800);
     DECLARE @IDCarrito INT, @IDCupon INT, @IDVariante INT, @Minutos INT, @Error INT, @Bloqueada INT;
     DECLARE @Mensaje NVARCHAR(2048), @Detalle NVARCHAR(MAX), @Skus NVARCHAR(MAX);
     DECLARE @Linea TABLE (
@@ -5244,14 +5284,9 @@ BEGIN
         -- 1. Validar
         EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
 
-        IF NOT EXISTS (
-            SELECT 1 FROM dbo.Direccion
-            WHERE IDDireccion = @IDDireccion AND IDUsuario = @IDUsuarioSolicitante AND Activo = 1
-        )
-            THROW 50004, N'La dirección no existe.', 1;
-
-        IF NOT EXISTS (SELECT 1 FROM dbo.MetodoEnvio WHERE IDMetodoEnvio = @IDMetodoEnvio AND Activo = 1)
-            THROW 50004, N'El método de envío no existe o no está disponible.', 1;
+        EXEC dbo.SP_Checkout_ResolverEntrega @IDUsuarioSolicitante, @IDMetodoEnvio, @IDDireccion OUTPUT,
+                                             @IDSucursal OUTPUT, @RequiereSucursal OUTPUT, @CostoEnvio OUTPUT,
+                                             @DireccionEntrega OUTPUT;
 
         -- 2. Bloquear el carrito (primero en el orden de bloqueo)
         EXEC dbo.SP_Carrito_BuscarActivo @IDUsuarioSolicitante, NULL, 1, @IDCarrito OUTPUT;
@@ -6928,6 +6963,8 @@ GO
    ========================================================= */
 
 -- GET /api/metodos-envio: métodos de envío activos, del más barato al más caro.
+-- Fila: IDMetodoEnvio INT, Nombre NVARCHAR(100), Costo DECIMAL(12,2), DiasEstimados TINYINT, RequiereSucursal BIT
+-- (1 = el cliente elige una sucursal en lugar de una dirección).
 CREATE OR ALTER PROCEDURE dbo.SP_Checkout_ListarMetodosEnvio
 AS
 BEGIN
@@ -6937,10 +6974,83 @@ BEGIN
         IDMetodoEnvio,
         Nombre,
         Costo,
-        DiasEstimados
+        DiasEstimados,
+        RequiereSucursal
     FROM dbo.MetodoEnvio
     WHERE Activo = 1
     ORDER BY Costo, Nombre;
+END;
+GO
+
+-- Sin endpoint: decide a dónde se entrega un pedido y cuánto cuesta el envío. Lo llaman
+-- SP_Inventario_ReservarExistencia y SP_Pedidos_CrearPedido dentro de su transacción (sin TRAN propio, como
+-- SP_Usuarios_ValidarSolicitante). No escribe ni bloquea: solo lee MetodoEnvio, Sucursal y Direccion.
+--   @IDMetodoEnvio   método de envío activo; si no, 50004
+--   @IDDireccion     OUTPUT. Con método a domicilio: dirección activa del solicitante (NULL → 50001; ajena,
+--                    inactiva o inexistente → 50004). Con retiro en sucursal se ignora y sale NULL.
+--   @IDSucursal      OUTPUT. Con retiro en sucursal: sucursal activa (NULL → 50001; inexistente o inactiva → 50004).
+--                    Con envío a domicilio se ignora y sale NULL.
+--   @RequiereSucursal, @CostoEnvio  OUTPUT: los del método.
+--   @DireccionEntrega OUTPUT: copia textual (máx. 800).
+--       domicilio: "Nombre, línea 1, línea 2, municipio, departamento CP. Tel: … Ref: …"
+--       retiro:    "Recoger en <sucursal>: línea 1, línea 2, municipio, departamento CP. Tel: … Horario: …"
+CREATE OR ALTER PROCEDURE dbo.SP_Checkout_ResolverEntrega
+    @IDUsuarioSolicitante INT,
+    @IDMetodoEnvio        INT,
+    @IDDireccion          INT           OUTPUT,
+    @IDSucursal           INT           OUTPUT,
+    @RequiereSucursal     BIT           OUTPUT,
+    @CostoEnvio           DECIMAL(12,2) OUTPUT,
+    @DireccionEntrega     NVARCHAR(800) OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SET @RequiereSucursal = NULL;
+    SET @CostoEnvio = NULL;
+    SET @DireccionEntrega = NULL;
+
+    SELECT @RequiereSucursal = RequiereSucursal, @CostoEnvio = Costo
+    FROM dbo.MetodoEnvio
+    WHERE IDMetodoEnvio = @IDMetodoEnvio AND Activo = 1;
+
+    IF @RequiereSucursal IS NULL
+        THROW 50004, N'El método de envío no existe o no está disponible.', 1;
+
+    IF @RequiereSucursal = 1
+    BEGIN
+        SET @IDDireccion = NULL;
+
+        IF @IDSucursal IS NULL
+            THROW 50001, N'Elige la sucursal donde recogerás tu pedido.', 1;
+
+        SELECT @DireccionEntrega = LEFT(CONCAT(
+                   N'Recoger en ', s.Nombre, N': ', s.Linea1, ISNULL(N', ' + s.Linea2, N''), N', ', s.Municipio, N', ',
+                   s.Departamento, ISNULL(N' ' + s.CodigoPostal, N''), N'. Tel: ', s.Telefono,
+                   ISNULL(N'. Horario: ' + s.Horario, N'')), 800)
+        FROM dbo.Sucursal AS s
+        WHERE s.IDSucursal = @IDSucursal AND s.Activo = 1;
+
+        IF @DireccionEntrega IS NULL
+            THROW 50004, N'La sucursal no existe o no está disponible.', 1;
+    END
+    ELSE
+    BEGIN
+        SET @IDSucursal = NULL;
+
+        IF @IDDireccion IS NULL
+            THROW 50001, N'Elige una dirección de entrega.', 1;
+
+        SELECT @DireccionEntrega = LEFT(CONCAT(
+                   d.NombreDestinatario, N', ', d.Linea1, ISNULL(N', ' + d.Linea2, N''), N', ', d.Municipio, N', ',
+                   d.Departamento, ISNULL(N' ' + d.CodigoPostal, N''), N'. Tel: ', d.Telefono,
+                   ISNULL(N'. Ref: ' + d.Referencias, N'')), 800)
+        FROM dbo.Direccion AS d
+        WHERE d.IDDireccion = @IDDireccion AND d.IDUsuario = @IDUsuarioSolicitante AND d.Activo = 1;
+
+        IF @DireccionEntrega IS NULL
+            THROW 50004, N'La dirección no existe.', 1;
+    END;
 END;
 GO
 
@@ -7061,7 +7171,12 @@ GO
 
 -- POST /api/checkout/pagar: pago simulado y creación atómica del pedido.
 --   @ClaveIdempotencia  header Idempotency-Key (UUID)
---   @IDDireccion, @IDMetodoEnvio  los elegidos en "iniciar" (no se guardan en la reserva; el body de pagar los lleva)
+--   @IDDireccion, @IDSucursal, @IDMetodoEnvio  los elegidos en "iniciar" (no se guardan en la reserva; el body de pagar
+--                       los lleva). Con un método que requiere sucursal (MetodoEnvio.RequiereSucursal = 1) solo cuenta
+--                       @IDSucursal y @IDDireccion se ignora (el pedido queda con IDDireccion NULL); con un método a
+--                       domicilio ocurre lo contrario. Se normaliza ANTES de calcular las huellas, leyendo el método
+--                       sin filtrar Activo (así una repetición sigue siendo válida si luego se desactiva el método).
+--                       Falta lo que corresponde → 50001; sucursal o dirección inválida → 50004 (SP_Checkout_ResolverEntrega).
 --   @MetodoPago         solo 'TARJETA' (si no, 50001)
 --   @TitularTarjeta     obligatorio; la tabla Pago no guarda datos de tarjeta (solo TarjetaGuardada, si se pide)
 --   @UltimosTarjeta     4 dígitos; '0000' es el rechazo simulado (50020)
@@ -7076,7 +7191,8 @@ GO
 --                       Bitácora CREAR de la tarjeta (Modulo 'Tarjetas').
 --   La huella no incluye tarjeta guardada, tipo, marca ni guardar (sigue siendo T=<ultimos4>).
 -- Idempotencia: HuellaSolicitud = SHA-256 en hexadecimal (mayúsculas) de un texto canónico calculado aquí:
---   D=<IDDireccion>;E=<IDMetodoEnvio>;P=<MetodoPago>;T=<UltimosTarjeta>;C=<IDCupon o vacío>;L=<IDVariante>x<Cantidad>,…
+--   D=<IDDireccion>;E=<IDMetodoEnvio>[;S=<IDSucursal>];P=<MetodoPago>;T=<UltimosTarjeta>;C=<IDCupon o vacío>;L=<IDVariante>x<Cantidad>,…
+-- (";S=<IDSucursal>" solo aparece cuando hay sucursal, así la huella de un envío a domicilio no cambia)
 -- con las líneas ordenadas por IDVariante. Un bloqueo de aplicación exclusivo por clave (sp_getapplock,
 -- al inicio de la transacción) serializa las peticiones simultáneas con la misma clave: la segunda espera,
 -- ve el pedido ya confirmado y lo devuelve; no depende de capturar el 2627 de UQ_Pedido_ClaveIdempotencia.
@@ -7090,7 +7206,8 @@ GO
 -- bajo bloqueo del cupón (50060–50067, incluido 50065 por cliente); tarjeta 0000 → 50020 antes de escribir nada,
 -- por lo que la reserva sigue vigente (todo se revierte).
 -- En una transacción: Pedido (NumeroPedido SC-<año>-<IDPedido a 6 dígitos>, DireccionEntrega = copia textual
--- "Nombre, línea 1, línea 2, municipio, departamento CP. Tel: … Ref: …", máx. 800), PedidoDetalle con SKU,
+-- "Nombre, línea 1, línea 2, municipio, departamento CP. Tel: … Ref: …" o, con retiro, "Recoger en <sucursal>: …"
+-- (máx. 800), IDSucursal y RetiroEnSucursal, PedidoDetalle con SKU,
 -- nombre, descripción, precio unitario y descuento de línea congelados, kardex SALIDA_VENTA por línea (baja
 -- ExistenciaFisica y ExistenciaReservada), reservas CONFIRMADA, UsoCupon y UsosActuales + 1 (UPDATE condicional;
 -- 0 filas → 50064), Pago APROBADO (referencia simulada SIM-<hex>), HistorialEstadoPedido inicial (PAGADO) a nombre
@@ -7102,7 +7219,7 @@ GO
 CREATE OR ALTER PROCEDURE dbo.SP_Pedidos_CrearPedido
     @IDUsuarioSolicitante INT,
     @ClaveIdempotencia    UNIQUEIDENTIFIER,
-    @IDDireccion          INT,
+    @IDDireccion          INT           = NULL,
     @IDMetodoEnvio        INT,
     @MetodoPago           NVARCHAR(20),
     @TitularTarjeta       NVARCHAR(150),
@@ -7110,7 +7227,8 @@ CREATE OR ALTER PROCEDURE dbo.SP_Pedidos_CrearPedido
     @IDTarjetaGuardada    INT           = NULL,
     @TipoTarjeta          NVARCHAR(10)  = NULL,
     @MarcaTarjeta         NVARCHAR(20)  = NULL,
-    @GuardarTarjeta       BIT           = 0
+    @GuardarTarjeta       BIT           = 0,
+    @IDSucursal           INT           = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -7124,7 +7242,7 @@ BEGIN
     DECLARE @Error INT, @Mensaje NVARCHAR(2048), @Skus NVARCHAR(MAX);
     DECLARE @Lineas NVARCHAR(MAX), @Huella CHAR(64);
     DECLARE @IDVariante INT, @Bloqueada INT;
-    DECLARE @CostoEnvio DECIMAL(12,2);
+    DECLARE @CostoEnvio DECIMAL(12,2), @RequiereSucursal BIT;
     DECLARE @Subtotal DECIMAL(12,2), @Descuento DECIMAL(12,2), @Total DECIMAL(12,2), @MontoIVA DECIMAL(12,2);
     DECLARE @IDEstadoPagado INT, @IDTipoVenta INT, @SignoVenta SMALLINT;
     DECLARE @NumeroPedido NVARCHAR(20), @Direccion NVARCHAR(800), @Nuevo NVARCHAR(MAX);
@@ -7200,6 +7318,15 @@ BEGIN
         IF @Resultado < 0
             THROW 50021, N'Otra petición con la misma Idempotency-Key sigue en curso; reintenta en unos segundos.', 1;
 
+        -- Normaliza el destino antes de las huellas: el método fija si cuenta la dirección o la sucursal.
+        -- No filtra Activo: una repetición debe seguir dando el pedido aunque el método ya se haya desactivado.
+        SELECT @RequiereSucursal = RequiereSucursal FROM dbo.MetodoEnvio WHERE IDMetodoEnvio = @IDMetodoEnvio;
+
+        IF @RequiereSucursal = 1
+            SET @IDDireccion = NULL;
+        ELSE IF @RequiereSucursal = 0
+            SET @IDSucursal = NULL;
+
         -- 3. ¿La clave ya se usó?
         SELECT @IDPedido = IDPedido, @IDUsuarioPedido = IDUsuario, @HuellaGuardada = HuellaSolicitud,
                @IDCuponPedido = IDCupon
@@ -7231,7 +7358,8 @@ BEGIN
             END;
 
             SET @Huella = CONVERT(CHAR(64), HASHBYTES('SHA2_256', CONCAT(
-                N'D=', @IDDireccion, N';E=', @IDMetodoEnvio, N';P=', @MetodoPago, N';T=', @UltimosTarjeta,
+                N'D=', @IDDireccion, N';E=', @IDMetodoEnvio,
+                CASE WHEN @IDSucursal IS NULL THEN N'' ELSE CONCAT(N';S=', @IDSucursal) END, N';P=', @MetodoPago, N';T=', @UltimosTarjeta,
                 N';C=', ISNULL(CONVERT(NVARCHAR(20), @IDCuponCarrito), N''), N';L=', @Lineas)), 2);
 
             IF @Huella <> @HuellaGuardada
@@ -7241,23 +7369,10 @@ BEGIN
         END
         ELSE
         BEGIN
-            -- 4. Dirección y método de envío
-            SELECT @Direccion = LEFT(CONCAT(
-                       d.NombreDestinatario, N', ', d.Linea1, ISNULL(N', ' + d.Linea2, N''), N', ', d.Municipio, N', ',
-                       d.Departamento, ISNULL(N' ' + d.CodigoPostal, N''), N'. Tel: ', d.Telefono,
-                       ISNULL(N'. Ref: ' + d.Referencias, N'')), 800)
-            FROM dbo.Direccion AS d
-            WHERE d.IDDireccion = @IDDireccion AND d.IDUsuario = @IDUsuarioSolicitante AND d.Activo = 1;
-
-            IF @Direccion IS NULL
-                THROW 50004, N'La dirección no existe.', 1;
-
-            SELECT @CostoEnvio = Costo
-            FROM dbo.MetodoEnvio
-            WHERE IDMetodoEnvio = @IDMetodoEnvio AND Activo = 1;
-
-            IF @CostoEnvio IS NULL
-                THROW 50004, N'El método de envío no existe o no está disponible.', 1;
+            -- 4. Destino y método de envío (domicilio o sucursal; da el costo y la copia de la dirección)
+            EXEC dbo.SP_Checkout_ResolverEntrega @IDUsuarioSolicitante, @IDMetodoEnvio, @IDDireccion OUTPUT,
+                                                 @IDSucursal OUTPUT, @RequiereSucursal OUTPUT, @CostoEnvio OUTPUT,
+                                                 @Direccion OUTPUT;
 
             -- 5. Bloquear el carrito, el cupón y las variantes (en ese orden)
             EXEC dbo.SP_Carrito_BuscarActivo @IDUsuarioSolicitante, NULL, 1, @IDCarrito OUTPUT;
@@ -7348,7 +7463,8 @@ BEGIN
             FROM @Linea;
 
             SET @Huella = CONVERT(CHAR(64), HASHBYTES('SHA2_256', CONCAT(
-                N'D=', @IDDireccion, N';E=', @IDMetodoEnvio, N';P=', @MetodoPago, N';T=', @UltimosTarjeta,
+                N'D=', @IDDireccion, N';E=', @IDMetodoEnvio,
+                CASE WHEN @IDSucursal IS NULL THEN N'' ELSE CONCAT(N';S=', @IDSucursal) END, N';P=', @MetodoPago, N';T=', @UltimosTarjeta,
                 N';C=', ISNULL(CONVERT(NVARCHAR(20), @IDCuponCarrito), N''), N';L=', @Lineas)), 2);
 
             SELECT @IDEstadoPagado = IDEstadoPedido FROM dbo.EstadoPedido WHERE Codigo = N'PAGADO';
@@ -7377,11 +7493,12 @@ BEGIN
             -- 11. Pedido y detalle. El número definitivo necesita el IDPedido: se inserta con uno provisional
             --     derivado de la clave (único) y se completa enseguida, dentro de la misma transacción.
             INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                                    IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega, Subtotal, Descuento,
-                                    CostoEnvio, MontoIVA, Total, FechaCreacion)
+                                    IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                                    Subtotal, Descuento, CostoEnvio, MontoIVA, Total, FechaCreacion)
             VALUES (LEFT(REPLACE(CONVERT(NVARCHAR(36), @ClaveIdempotencia), N'-', N''), 20), @ClaveIdempotencia,
-                    @Huella, @IDUsuarioSolicitante, @IDEstadoPagado, @IDDireccion, @IDMetodoEnvio, @IDCuponAplicado,
-                    @Direccion, @Subtotal, @Descuento, @CostoEnvio, @MontoIVA, @Total, @Ahora);
+                    @Huella, @IDUsuarioSolicitante, @IDEstadoPagado, @IDDireccion, @IDSucursal, @RequiereSucursal,
+                    @IDMetodoEnvio, @IDCuponAplicado, @Direccion, @Subtotal, @Descuento, @CostoEnvio, @MontoIVA,
+                    @Total, @Ahora);
 
             SET @IDPedido = SCOPE_IDENTITY();
 
@@ -7676,7 +7793,8 @@ GO
 -- También es el resultado de SP_Pedidos_CambiarEstado y SP_Pedidos_Cancelar. Tres result sets:
 --   1. Encabezado (una fila): IDPedido INT, NumeroPedido NVARCHAR(20), IDUsuario INT, Cliente NVARCHAR(201),
 --      CorreoCliente NVARCHAR(150), Estado NVARCHAR(30) (código), NombreEstado NVARCHAR(100), EsFinal BIT,
---      IDDireccion INT, DireccionEntrega NVARCHAR(800) (copia al momento de la compra), IDMetodoEnvio INT,
+--      IDDireccion INT NULL, IDSucursal INT NULL, Sucursal NVARCHAR(100) NULL (nombre actual), RetiroEnSucursal BIT,
+--      DireccionEntrega NVARCHAR(800) (copia al momento de la compra; con retiro empieza con "Recoger en"), IDMetodoEnvio INT,
 --      MetodoEnvio NVARCHAR(100), DiasEstimados TINYINT, IDCupon INT NULL, CodigoCupon NVARCHAR(30) NULL,
 --      Subtotal, Descuento, CostoEnvio, MontoIVA, Total, MontoReembolsado (DECIMAL(12,2)),
 --      IDPago INT, MetodoPago NVARCHAR(20), MontoPago DECIMAL(12,2), EstadoPago NVARCHAR(20),
@@ -7722,6 +7840,9 @@ BEGIN
         ep.Nombre AS NombreEstado,
         ep.EsFinal,
         p.IDDireccion,
+        p.IDSucursal,
+        s.Nombre AS Sucursal,
+        p.RetiroEnSucursal,
         p.DireccionEntrega,
         p.IDMetodoEnvio,
         me.Nombre AS MetodoEnvio,
@@ -7745,6 +7866,7 @@ BEGIN
     INNER JOIN dbo.Usuario AS u ON u.IDUsuario = p.IDUsuario
     INNER JOIN dbo.EstadoPedido AS ep ON ep.IDEstadoPedido = p.IDEstadoPedido
     INNER JOIN dbo.MetodoEnvio AS me ON me.IDMetodoEnvio = p.IDMetodoEnvio
+    LEFT JOIN dbo.Sucursal AS s ON s.IDSucursal = p.IDSucursal
     LEFT JOIN dbo.Cupon AS cu ON cu.IDCupon = p.IDCupon
     LEFT JOIN dbo.Pago AS pg ON pg.IDPedido = p.IDPedido
     OUTER APPLY (
@@ -9297,6 +9419,468 @@ BEGIN
 END;
 GO
 
+-- ===== 016_sp_sucursales.sql =====
+/*
+    016_sp_sucursales.sql
+    Stored procedures de las sucursales de retiro: catálogo público (SP_Catalogo_ListarSucursales) y
+    gestión del administrador (SP_Sucursales_*).
+
+    Una sucursal es el destino de un pedido con un método de envío que requiere sucursal
+    (MetodoEnvio.RequiereSucursal = 1, "Recoger en sucursal"). El pedido guarda IDSucursal y una copia
+    textual de su dirección en DireccionEntrega (SP_Checkout_ResolverEntrega, 012_sp_pedidos.sql), así que
+    editar o desactivar una sucursal no altera pedidos ya hechos.
+
+    Reglas:
+      * El catálogo público solo muestra sucursales activas. Una inactiva no se ofrece en el checkout.
+      * Los SPs que escriben reciben @IDUsuarioSolicitante (sale del JWT; el backend exige el rol
+        Administrador, igual que con las categorías), validan antes de escribir, bloquean la sucursal con
+        UPDLOCK, ROWLOCK y registran la Bitacora (Modulo 'Sucursales', Entidad 'Sucursal') en la misma
+        transacción.
+      * Un nombre repetido no tiene THROW propio: termina en 2627 (UQ_Sucursal_Nombre) → DUPLICADO,
+        como el nombre de categoría.
+      * Una sucursal con pedidos no se elimina (50051); se desactiva. Los pedidos nuevos no pueden
+        crearse contra una sucursal que se está eliminando porque CrearPedido solo lee Sucursal sin
+        bloquearla: la FK FK_Pedido_Sucursal rechazaría el INSERT (el pedido se revertiría completo).
+      * Orden de bloqueo: Sucursal (única tabla que bloquea). No toca variantes ni reservas.
+
+    Listado: @Pagina (desde 1), @TamanoPagina (1 a 100) y @Orden 'campo:asc|desc' sobre una lista blanca
+    con CASE (nunca concatenado). Devuelve las filas y luego un result set con Total.
+
+    Errores (ver Backend/API.md, catálogo de códigos):
+      50001  VALIDACION
+      50004  NO_ENCONTRADO
+      50012  USUARIO_INACTIVO (SP_Usuarios_ValidarSolicitante)
+      50051  EN_USO
+*/
+USE [$(DbName)];
+GO
+SET NOCOUNT ON;
+GO
+
+-- GET /api/catalogo/sucursales (público, sin solicitante): sucursales activas ordenadas por nombre.
+-- Fila: IDSucursal INT, Nombre NVARCHAR(100), Telefono NVARCHAR(20), Linea1 NVARCHAR(200),
+-- Linea2 NVARCHAR(200) NULL, Municipio NVARCHAR(100), Departamento NVARCHAR(100), CodigoPostal NVARCHAR(10) NULL,
+-- Horario NVARCHAR(200) NULL.
+CREATE OR ALTER PROCEDURE dbo.SP_Catalogo_ListarSucursales
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT
+        IDSucursal,
+        Nombre,
+        Telefono,
+        Linea1,
+        Linea2,
+        Municipio,
+        Departamento,
+        CodigoPostal,
+        Horario
+    FROM dbo.Sucursal
+    WHERE Activo = 1
+    ORDER BY Nombre, IDSucursal;
+END;
+GO
+
+-- GET /api/sucursales: lista paginada, incluye inactivas.
+--   @Q       busca en nombre, municipio y departamento (comodines de LIKE escapados)
+--   @Activo  filtra por estado
+--   @Orden   nombre | municipio | departamento | activo | cantidadPedidos, con :asc o :desc. Default nombre:asc.
+-- Result sets: 1. filas de la página; 2. Total INT.
+-- Fila: IDSucursal INT, Nombre, Telefono, Linea1, Linea2 NULL, Municipio, Departamento, CodigoPostal NULL,
+-- Horario NULL, Activo BIT, CantidadPedidos INT, FechaCreacion DATETIME2(3), FechaModificacion DATETIME2(3) (UTC).
+CREATE OR ALTER PROCEDURE dbo.SP_Sucursales_Listar
+    @IDUsuarioSolicitante INT,
+    @Q                    NVARCHAR(100) = NULL,
+    @Activo               BIT           = NULL,
+    @Pagina               INT           = 1,
+    @TamanoPagina         INT           = 20,
+    @Orden                NVARCHAR(50)  = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Patron NVARCHAR(400);
+    DECLARE @Mensaje NVARCHAR(2048);
+
+    SET @Orden = ISNULL(NULLIF(TRIM(@Orden), N''), N'nombre:asc');
+
+    EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
+
+    IF @Pagina IS NULL OR @Pagina < 1
+        THROW 50001, N'La página debe ser un número mayor o igual a 1.', 1;
+
+    IF @TamanoPagina IS NULL OR @TamanoPagina NOT BETWEEN 1 AND 100
+        THROW 50001, N'El tamaño de página debe estar entre 1 y 100.', 1;
+
+    IF @Orden NOT IN (N'nombre:asc', N'nombre:desc', N'municipio:asc', N'municipio:desc',
+                      N'departamento:asc', N'departamento:desc', N'activo:asc', N'activo:desc',
+                      N'cantidadPedidos:asc', N'cantidadPedidos:desc')
+    BEGIN
+        SET @Mensaje = CONCAT(N'Orden no permitido: ', @Orden,
+                              N'. Usa nombre, municipio, departamento, activo o cantidadPedidos con :asc o :desc.');
+        THROW 50001, @Mensaje, 1;
+    END;
+
+    SELECT @Patron = Patron FROM dbo.FU_Sistema_PatronBusqueda(@Q);
+
+    DECLARE @Fila TABLE (
+        IDSucursal        INT           NOT NULL PRIMARY KEY,
+        Nombre            NVARCHAR(100) NOT NULL,
+        Telefono          NVARCHAR(20)  NOT NULL,
+        Linea1            NVARCHAR(200) NOT NULL,
+        Linea2            NVARCHAR(200) NULL,
+        Municipio         NVARCHAR(100) NOT NULL,
+        Departamento      NVARCHAR(100) NOT NULL,
+        CodigoPostal      NVARCHAR(10)  NULL,
+        Horario           NVARCHAR(200) NULL,
+        Activo            BIT           NOT NULL,
+        CantidadPedidos   INT           NOT NULL,
+        FechaCreacion     DATETIME2(3)  NOT NULL,
+        FechaModificacion DATETIME2(3)  NOT NULL
+    );
+
+    INSERT INTO @Fila (IDSucursal, Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal, Horario,
+                       Activo, CantidadPedidos, FechaCreacion, FechaModificacion)
+    SELECT
+        s.IDSucursal, s.Nombre, s.Telefono, s.Linea1, s.Linea2, s.Municipio, s.Departamento, s.CodigoPostal,
+        s.Horario, s.Activo,
+        (SELECT COUNT(*) FROM dbo.Pedido AS p WHERE p.IDSucursal = s.IDSucursal),
+        s.FechaCreacion, s.FechaModificacion
+    FROM dbo.Sucursal AS s
+    WHERE (@Activo IS NULL OR s.Activo = @Activo)
+      AND (@Patron IS NULL OR s.Nombre LIKE @Patron OR s.Municipio LIKE @Patron OR s.Departamento LIKE @Patron)
+    OPTION (RECOMPILE);
+
+    SELECT IDSucursal, Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal, Horario, Activo,
+           CantidadPedidos, FechaCreacion, FechaModificacion
+    FROM @Fila
+    ORDER BY
+        CASE WHEN @Orden = N'nombre:asc'            THEN Nombre          END ASC,
+        CASE WHEN @Orden = N'nombre:desc'           THEN Nombre          END DESC,
+        CASE WHEN @Orden = N'municipio:asc'         THEN Municipio       END ASC,
+        CASE WHEN @Orden = N'municipio:desc'        THEN Municipio       END DESC,
+        CASE WHEN @Orden = N'departamento:asc'      THEN Departamento    END ASC,
+        CASE WHEN @Orden = N'departamento:desc'     THEN Departamento    END DESC,
+        CASE WHEN @Orden = N'activo:asc'            THEN Activo          END ASC,
+        CASE WHEN @Orden = N'activo:desc'           THEN Activo          END DESC,
+        CASE WHEN @Orden = N'cantidadPedidos:asc'   THEN CantidadPedidos END ASC,
+        CASE WHEN @Orden = N'cantidadPedidos:desc'  THEN CantidadPedidos END DESC,
+        Nombre ASC,
+        IDSucursal ASC
+    OFFSET (CONVERT(BIGINT, @Pagina) - 1) * @TamanoPagina ROWS
+    FETCH NEXT @TamanoPagina ROWS ONLY;
+
+    SELECT COUNT(*) AS Total FROM @Fila;
+END;
+GO
+
+-- GET /api/sucursales/:id. También es el resultado de los SPs que crean o modifican sucursales.
+-- Una fila con las columnas de SP_Sucursales_Listar. Inexistente → 50004.
+CREATE OR ALTER PROCEDURE dbo.SP_Sucursales_ObtenerPorId
+    @IDSucursal INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Sucursal WHERE IDSucursal = @IDSucursal)
+        THROW 50004, N'La sucursal no existe.', 1;
+
+    SELECT
+        s.IDSucursal,
+        s.Nombre,
+        s.Telefono,
+        s.Linea1,
+        s.Linea2,
+        s.Municipio,
+        s.Departamento,
+        s.CodigoPostal,
+        s.Horario,
+        s.Activo,
+        (SELECT COUNT(*) FROM dbo.Pedido AS p WHERE p.IDSucursal = s.IDSucursal) AS CantidadPedidos,
+        s.FechaCreacion,
+        s.FechaModificacion
+    FROM dbo.Sucursal AS s
+    WHERE s.IDSucursal = @IDSucursal;
+END;
+GO
+
+-- POST /api/sucursales: nombre, teléfono, línea 1, municipio y departamento son obligatorios (50001).
+-- Nombre repetido → 2627 (UQ_Sucursal_Nombre) → DUPLICADO. La sucursal nace activa. Devuelve el detalle.
+CREATE OR ALTER PROCEDURE dbo.SP_Sucursales_Crear
+    @IDUsuarioSolicitante INT,
+    @Nombre               NVARCHAR(100),
+    @Telefono             NVARCHAR(20),
+    @Linea1               NVARCHAR(200),
+    @Linea2               NVARCHAR(200) = NULL,
+    @Municipio            NVARCHAR(100),
+    @Departamento         NVARCHAR(100),
+    @CodigoPostal         NVARCHAR(10)  = NULL,
+    @Horario              NVARCHAR(200) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @IDSucursal INT;
+    DECLARE @Nuevo NVARCHAR(MAX);
+
+    SET @Nombre = NULLIF(TRIM(@Nombre), N'');
+    SET @Telefono = NULLIF(TRIM(@Telefono), N'');
+    SET @Linea1 = NULLIF(TRIM(@Linea1), N'');
+    SET @Linea2 = NULLIF(TRIM(@Linea2), N'');
+    SET @Municipio = NULLIF(TRIM(@Municipio), N'');
+    SET @Departamento = NULLIF(TRIM(@Departamento), N'');
+    SET @CodigoPostal = NULLIF(TRIM(@CodigoPostal), N'');
+    SET @Horario = NULLIF(TRIM(@Horario), N'');
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        -- 1. Validar
+        EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
+
+        IF @Nombre IS NULL
+            THROW 50001, N'El nombre de la sucursal es obligatorio.', 1;
+
+        IF @Telefono IS NULL
+            THROW 50001, N'El teléfono de la sucursal es obligatorio.', 1;
+
+        IF @Linea1 IS NULL
+            THROW 50001, N'La dirección de la sucursal es obligatoria.', 1;
+
+        IF @Municipio IS NULL
+            THROW 50001, N'El municipio de la sucursal es obligatorio.', 1;
+
+        IF @Departamento IS NULL
+            THROW 50001, N'El departamento de la sucursal es obligatorio.', 1;
+
+        -- 3. Escribir. Nombre repetido → 2627 → DUPLICADO.
+        INSERT INTO dbo.Sucursal (Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal, Horario, Activo)
+        VALUES (@Nombre, @Telefono, @Linea1, @Linea2, @Municipio, @Departamento, @CodigoPostal, @Horario, 1);
+
+        SET @IDSucursal = SCOPE_IDENTITY();
+
+        -- 4. Bitácora
+        SET @Nuevo = (SELECT IDSucursal, Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal,
+                             Horario, Activo
+                      FROM dbo.Sucursal WHERE IDSucursal = @IDSucursal
+                      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
+
+        INSERT INTO dbo.Bitacora (IDUsuario, Modulo, Entidad, IDRegistro, Accion, ValorAnterior, ValorNuevo)
+        VALUES (@IDUsuarioSolicitante, N'Sucursales', N'Sucursal', @IDSucursal, N'CREAR', NULL, @Nuevo);
+
+        COMMIT TRANSACTION;
+
+        -- 5. Resultado
+        EXEC dbo.SP_Sucursales_ObtenerPorId @IDSucursal = @IDSucursal;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
+
+-- PUT /api/sucursales/:id: reemplaza todos los campos editables (NULL borra Linea2, CodigoPostal y Horario).
+-- No cambia el estado (ver CambiarEstado). Inexistente → 50004; nombre repetido → 2627 → DUPLICADO.
+-- Devuelve el detalle.
+CREATE OR ALTER PROCEDURE dbo.SP_Sucursales_Actualizar
+    @IDUsuarioSolicitante INT,
+    @IDSucursal           INT,
+    @Nombre               NVARCHAR(100),
+    @Telefono             NVARCHAR(20),
+    @Linea1               NVARCHAR(200),
+    @Linea2               NVARCHAR(200) = NULL,
+    @Municipio            NVARCHAR(100),
+    @Departamento         NVARCHAR(100),
+    @CodigoPostal         NVARCHAR(10)  = NULL,
+    @Horario              NVARCHAR(200) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @Anterior NVARCHAR(MAX), @Nuevo NVARCHAR(MAX);
+
+    SET @Nombre = NULLIF(TRIM(@Nombre), N'');
+    SET @Telefono = NULLIF(TRIM(@Telefono), N'');
+    SET @Linea1 = NULLIF(TRIM(@Linea1), N'');
+    SET @Linea2 = NULLIF(TRIM(@Linea2), N'');
+    SET @Municipio = NULLIF(TRIM(@Municipio), N'');
+    SET @Departamento = NULLIF(TRIM(@Departamento), N'');
+    SET @CodigoPostal = NULLIF(TRIM(@CodigoPostal), N'');
+    SET @Horario = NULLIF(TRIM(@Horario), N'');
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
+
+        IF @Nombre IS NULL
+            THROW 50001, N'El nombre de la sucursal es obligatorio.', 1;
+
+        IF @Telefono IS NULL
+            THROW 50001, N'El teléfono de la sucursal es obligatorio.', 1;
+
+        IF @Linea1 IS NULL
+            THROW 50001, N'La dirección de la sucursal es obligatoria.', 1;
+
+        IF @Municipio IS NULL
+            THROW 50001, N'El municipio de la sucursal es obligatorio.', 1;
+
+        IF @Departamento IS NULL
+            THROW 50001, N'El departamento de la sucursal es obligatorio.', 1;
+
+        -- 2. Bloquear y leer el valor anterior
+        SET @Anterior = (SELECT IDSucursal, Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal,
+                                Horario, Activo
+                         FROM dbo.Sucursal WITH (UPDLOCK, ROWLOCK)
+                         WHERE IDSucursal = @IDSucursal
+                         FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
+
+        IF @Anterior IS NULL
+            THROW 50004, N'La sucursal no existe.', 1;
+
+        -- 3. Escribir. Nombre repetido → 2627 → DUPLICADO.
+        UPDATE dbo.Sucursal
+        SET Nombre = @Nombre,
+            Telefono = @Telefono,
+            Linea1 = @Linea1,
+            Linea2 = @Linea2,
+            Municipio = @Municipio,
+            Departamento = @Departamento,
+            CodigoPostal = @CodigoPostal,
+            Horario = @Horario,
+            FechaModificacion = SYSUTCDATETIME()
+        WHERE IDSucursal = @IDSucursal;
+
+        -- 4. Bitácora
+        SET @Nuevo = (SELECT IDSucursal, Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal,
+                             Horario, Activo
+                      FROM dbo.Sucursal WHERE IDSucursal = @IDSucursal
+                      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
+
+        INSERT INTO dbo.Bitacora (IDUsuario, Modulo, Entidad, IDRegistro, Accion, ValorAnterior, ValorNuevo)
+        VALUES (@IDUsuarioSolicitante, N'Sucursales', N'Sucursal', @IDSucursal, N'MODIFICAR', @Anterior, @Nuevo);
+
+        COMMIT TRANSACTION;
+
+        EXEC dbo.SP_Sucursales_ObtenerPorId @IDSucursal = @IDSucursal;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
+
+-- PATCH /api/sucursales/:id/estado. Desactivar la quita del checkout sin tocar los pedidos ya hechos.
+-- Si ya está en ese estado no escribe ni registra nada. @Activo NULL → 50001; inexistente → 50004.
+-- Devuelve el detalle.
+CREATE OR ALTER PROCEDURE dbo.SP_Sucursales_CambiarEstado
+    @IDUsuarioSolicitante INT,
+    @IDSucursal           INT,
+    @Activo               BIT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @ActivoActual BIT;
+    DECLARE @Anterior NVARCHAR(MAX), @Nuevo NVARCHAR(MAX);
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
+
+        IF @Activo IS NULL
+            THROW 50001, N'El estado (activo) es obligatorio.', 1;
+
+        SELECT @ActivoActual = Activo
+        FROM dbo.Sucursal WITH (UPDLOCK, ROWLOCK)
+        WHERE IDSucursal = @IDSucursal;
+
+        IF @ActivoActual IS NULL
+            THROW 50004, N'La sucursal no existe.', 1;
+
+        IF @ActivoActual <> @Activo
+        BEGIN
+            SET @Anterior = (SELECT IDSucursal, Nombre, Activo FROM dbo.Sucursal
+                             WHERE IDSucursal = @IDSucursal
+                             FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
+
+            UPDATE dbo.Sucursal
+            SET Activo = @Activo,
+                FechaModificacion = SYSUTCDATETIME()
+            WHERE IDSucursal = @IDSucursal;
+
+            SET @Nuevo = (SELECT IDSucursal, Nombre, Activo FROM dbo.Sucursal
+                          WHERE IDSucursal = @IDSucursal
+                          FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
+
+            INSERT INTO dbo.Bitacora (IDUsuario, Modulo, Entidad, IDRegistro, Accion, ValorAnterior, ValorNuevo)
+            VALUES (@IDUsuarioSolicitante, N'Sucursales', N'Sucursal', @IDSucursal,
+                    CASE WHEN @Activo = 1 THEN N'ACTIVAR' ELSE N'DESACTIVAR' END, @Anterior, @Nuevo);
+        END;
+
+        COMMIT TRANSACTION;
+
+        EXEC dbo.SP_Sucursales_ObtenerPorId @IDSucursal = @IDSucursal;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
+
+-- DELETE /api/sucursales/:id: borrado físico, solo si ningún pedido la usó → 50051 (desactívala en su lugar).
+-- La sucursal queda bloqueada con UPDLOCK. La comprobación lee con READCOMMITTEDLOCK: con
+-- READ_COMMITTED_SNAPSHOT una lectura normal no vería un pedido insertado por otra transacción aún sin
+-- confirmar. No devuelve result set.
+CREATE OR ALTER PROCEDURE dbo.SP_Sucursales_Eliminar
+    @IDUsuarioSolicitante INT,
+    @IDSucursal           INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @Anterior NVARCHAR(MAX);
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        EXEC dbo.SP_Usuarios_ValidarSolicitante @IDUsuarioSolicitante;
+
+        SET @Anterior = (SELECT IDSucursal, Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal,
+                                Horario, Activo
+                         FROM dbo.Sucursal WITH (UPDLOCK, ROWLOCK)
+                         WHERE IDSucursal = @IDSucursal
+                         FOR JSON PATH, WITHOUT_ARRAY_WRAPPER, INCLUDE_NULL_VALUES);
+
+        IF @Anterior IS NULL
+            THROW 50004, N'La sucursal no existe.', 1;
+
+        IF EXISTS (SELECT 1 FROM dbo.Pedido WITH (READCOMMITTEDLOCK) WHERE IDSucursal = @IDSucursal)
+            THROW 50051, N'La sucursal tiene pedidos y no puede eliminarse; desactívala.', 1;
+
+        DELETE FROM dbo.Sucursal WHERE IDSucursal = @IDSucursal;
+
+        INSERT INTO dbo.Bitacora (IDUsuario, Modulo, Entidad, IDRegistro, Accion, ValorAnterior, ValorNuevo)
+        VALUES (@IDUsuarioSolicitante, N'Sucursales', N'Sucursal', @IDSucursal, N'ELIMINAR', @Anterior, NULL);
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
+
 -- ===== 080_permisos.sql =====
 /*
     080_permisos.sql
@@ -9403,12 +9987,25 @@ VALUES
     (N'DEVOLUCION',         N'Devolución de cliente',       1),
     (N'CANCELACION',        N'Reintegro por cancelación',   1);
 
-/* Métodos de envío */
-INSERT INTO dbo.MetodoEnvio (Nombre, Costo, DiasEstimados)
+/* Métodos de envío (el que requiere sucursal no pide dirección: el cliente elige una sucursal) */
+INSERT INTO dbo.MetodoEnvio (Nombre, Costo, DiasEstimados, RequiereSucursal)
 VALUES
-    (N'Estándar',          25.00, 3),
-    (N'Express',           45.00, 1),
-    (N'Recoger en tienda',  0.00, 0);
+    (N'Estándar',            25.00, 3, 0),
+    (N'Express',             45.00, 1, 0),
+    (N'Recoger en sucursal',  0.00, 0, 1);
+
+/* Sucursales de retiro: departamento y municipio existen en el catálogo del frontend (guatemala-locations.json).
+   Sucursal Antigua está inactiva: no se ofrece en el checkout. */
+INSERT INTO dbo.Sucursal (Nombre, Telefono, Linea1, Linea2, Municipio, Departamento, CodigoPostal, Horario, Activo)
+VALUES
+    (N'Sucursal Zona 10', N'2400-1010', N'6a Avenida 12-34, Zona 10', N'Edificio Plaza Fontabella, local 5',
+     N'Guatemala', N'Guatemala', N'01010', N'Lunes a sábado de 9:00 a 19:00', 1),
+    (N'Sucursal Zona 1',  N'2400-1001', N'7a Avenida 8-25, Zona 1', NULL,
+     N'Guatemala', N'Guatemala', N'01001', N'Lunes a sábado de 9:00 a 18:00', 1),
+    (N'Sucursal Mixco',   N'2400-1020', N'Calzada Roosevelt 15-60, Zona 3 de Mixco', N'Centro Comercial Mixco, local 12',
+     N'Mixco', N'Guatemala', N'01057', N'Todos los días de 10:00 a 20:00', 1),
+    (N'Sucursal Antigua', N'2400-1030', N'4a Calle Poniente 14', NULL,
+     N'Antigua Guatemala', N'Sacatepéquez', N'03001', N'Lunes a viernes de 9:00 a 17:00', 0);
 
 /* Configuración */
 INSERT INTO dbo.Configuracion (Clave, Valor, Descripcion)
@@ -9726,7 +10323,8 @@ GO
      4  hace  6 días 16:00 UTC  ENTREGADO         4 x CAM-BAS-BLA-M + ACC-GOR-ROJ-U con VERANO25, Estándar
      5  hace  4 días 18:00 UTC  DEVUELTO_PARCIAL  3 x CAM-BAS-AZU-L + 2 x ACC-GOR-ROJ-U; devuelve 1 x CAM-BAS-AZU-L
      6  hace  2 días 09:00 UTC  EN_PREPARACION    PAN-JOG-NEG-L + PAN-JEA-NEG-34, Express
-     7  hace  1 día  10:00 UTC  PAGADO            CAM-BAS-NEG-M + PAN-JEA-AZU-32, Recoger en tienda
+     7  hace  1 día  10:00 UTC  PAGADO            CAM-BAS-NEG-M + PAN-JEA-AZU-32, Recoger en sucursal (Sucursal Zona 10)
+   Los pedidos 3 y 7 se recogen en sucursal: no llevan dirección y guardan la de la sucursal.
    Las fechas son relativas al día de ejecución. Cada pedido pasa por los SPs (carrito directo como sa; reservar,
    pagar, cambiar estado, cancelar y devolver por los SPs). Los result sets que devuelven los SPs salen en la
    consola de sqlcmd; no afectan los datos. */
@@ -9746,7 +10344,8 @@ DECLARE @Pedido TABLE (
     DiasAtras   INT           NOT NULL,
     MinutoDia   INT           NOT NULL,   -- minutos desde las 00:00 UTC
     Cupon       NVARCHAR(30)  NULL,
-    Envio       NVARCHAR(100) NOT NULL
+    Envio       NVARCHAR(100) NOT NULL,
+    Sucursal    NVARCHAR(100) NULL        -- solo con el método que requiere sucursal
 );
 DECLARE @Linea TABLE (
     Orden      INT          NOT NULL,
@@ -9766,14 +10365,14 @@ DECLARE @Paso TABLE (
     PRIMARY KEY (Orden, Secuencia)
 );
 
-INSERT INTO @Pedido (Orden, DiasAtras, MinutoDia, Cupon, Envio)
-VALUES (1, 12,  930, NULL,       N'Estándar'),
-       (2,  9,  120, NULL,       N'Express'),
-       (3,  8,  840, N'VERANO25', N'Recoger en tienda'),
-       (4,  6,  960, N'VERANO25', N'Estándar'),
-       (5,  4, 1080, NULL,       N'Estándar'),
-       (6,  2,  540, NULL,       N'Express'),
-       (7,  1,  600, NULL,       N'Recoger en tienda');
+INSERT INTO @Pedido (Orden, DiasAtras, MinutoDia, Cupon, Envio, Sucursal)
+VALUES (1, 12,  930, NULL,       N'Estándar',            NULL),
+       (2,  9,  120, NULL,       N'Express',             NULL),
+       (3,  8,  840, N'VERANO25', N'Recoger en sucursal', N'Sucursal Zona 10'),
+       (4,  6,  960, N'VERANO25', N'Estándar',            NULL),
+       (5,  4, 1080, NULL,       N'Estándar',            NULL),
+       (6,  2,  540, NULL,       N'Express',             NULL),
+       (7,  1,  600, NULL,       N'Recoger en sucursal', N'Sucursal Zona 10');
 
 INSERT INTO @Linea (Orden, SKU, Cantidad, Devolver)
 VALUES (1, N'CAM-BAS-NEG-M',  2, NULL),
@@ -9809,7 +10408,8 @@ VALUES (1, 1, N'ESTADO',   N'EN_PREPARACION', 180,  N'Pedido en preparación'),
 
 DECLARE @Orden INT = 0, @Secuencia INT;
 DECLARE @Fecha DATETIME2(3), @FechaPaso DATETIME2(3);
-DECLARE @Cupon NVARCHAR(30), @Envio NVARCHAR(100), @IDCupon INT, @IDEnvio INT, @IDCarrito INT, @IDPedido INT;
+DECLARE @Cupon NVARCHAR(30), @Envio NVARCHAR(100), @Sucursal NVARCHAR(100), @IDSucursal INT, @IDDir INT,
+        @IDCupon INT, @IDEnvio INT, @IDCarrito INT, @IDPedido INT;
 DECLARE @Clave UNIQUEIDENTIFIER, @Accion NVARCHAR(10), @Estado NVARCHAR(30), @Minutos INT, @Comentario NVARCHAR(300);
 DECLARE @Lineas NVARCHAR(MAX);
 DECLARE @MaxRes INT, @MaxHist INT, @MaxMov BIGINT, @MaxBit BIGINT, @MaxDev INT;
@@ -9818,7 +10418,7 @@ WHILE 1 = 1
 BEGIN
     SELECT TOP (1) @Orden = Orden,
            @Fecha = DATEADD(MINUTE, MinutoDia, DATEADD(DAY, -DiasAtras, @Hoy)),
-           @Cupon = Cupon, @Envio = Envio
+           @Cupon = Cupon, @Envio = Envio, @Sucursal = Sucursal
     FROM @Pedido
     WHERE Orden > @Orden
     ORDER BY Orden;
@@ -9829,8 +10429,11 @@ BEGIN
     SELECT @IDCupon = IDCupon FROM dbo.Cupon WHERE Codigo = @Cupon;
     SELECT @IDEnvio = IDMetodoEnvio FROM dbo.MetodoEnvio WHERE Nombre = @Envio;
 
-    IF @IDEnvio IS NULL OR (@Cupon IS NOT NULL AND @IDCupon IS NULL)
-        THROW 50000, N'Semilla: falta un método de envío o un cupón de los pedidos de ejemplo.', 1;
+    SET @IDSucursal = (SELECT IDSucursal FROM dbo.Sucursal WHERE Nombre = @Sucursal);
+    SET @IDDir = CASE WHEN @Sucursal IS NULL THEN @IDDireccion END;
+
+    IF @IDEnvio IS NULL OR (@Sucursal IS NOT NULL AND @IDSucursal IS NULL) OR (@Cupon IS NOT NULL AND @IDCupon IS NULL)
+        THROW 50000, N'Semilla: falta un método de envío, una sucursal o un cupón de los pedidos de ejemplo.', 1;
 
     SET @IDCupon = CASE WHEN @Cupon IS NULL THEN NULL ELSE @IDCupon END;
     SET @Clave = CONVERT(UNIQUEIDENTIFIER, CONCAT(N'5eed0000-0000-4000-8000-0000000000', RIGHT(CONCAT(N'00', @Orden), 2)));
@@ -9857,11 +10460,11 @@ BEGIN
     SELECT @MaxMov = ISNULL(MAX(IDMovimientoInventario), 0) FROM dbo.MovimientoInventario;
     SELECT @MaxBit = ISNULL(MAX(IDBitacora), 0) FROM dbo.Bitacora;
 
-    EXEC dbo.SP_Inventario_ReservarExistencia @IDUsuarioSolicitante = @IDCliente, @IDDireccion = @IDDireccion,
-                                              @IDMetodoEnvio = @IDEnvio;
+    EXEC dbo.SP_Inventario_ReservarExistencia @IDUsuarioSolicitante = @IDCliente, @IDDireccion = @IDDir,
+                                              @IDMetodoEnvio = @IDEnvio, @IDSucursal = @IDSucursal;
 
     EXEC dbo.SP_Pedidos_CrearPedido @IDUsuarioSolicitante = @IDCliente, @ClaveIdempotencia = @Clave,
-                                    @IDDireccion = @IDDireccion, @IDMetodoEnvio = @IDEnvio,
+                                    @IDDireccion = @IDDir, @IDMetodoEnvio = @IDEnvio, @IDSucursal = @IDSucursal,
                                     @MetodoPago = N'TARJETA', @TitularTarjeta = N'Diego Ramírez',
                                     @UltimosTarjeta = '4242';
 

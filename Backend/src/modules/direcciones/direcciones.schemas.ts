@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { textoObligatorio, textoOpcional } from '../../shared/utils/esquemas.js';
+import {
+  codigoPostalOpcional,
+  telefonoObligatorio,
+  textoObligatorio,
+  textoOpcional,
+} from '../../shared/utils/esquemas.js';
 
 /** Las longitudes coinciden con los parámetros de SP_Direcciones_Crear y _Actualizar. */
 const MAX_ALIAS = 50;
@@ -10,14 +15,8 @@ const MAX_LUGAR = 100;
 const MAX_CODIGO_POSTAL = 10;
 const MAX_REFERENCIAS = 300;
 
-/** Mismo formato que el teléfono del registro. */
-const telefono = textoObligatorio(MAX_TELEFONO).regex(/^\+?[\d\s-]{8,20}$/, 'Teléfono inválido.');
-
-/** Código postal de Guatemala: 5 dígitos (01001). Opcional. */
-const codigoPostal = textoOpcional(MAX_CODIGO_POSTAL).refine(
-  (valor) => valor === null || /^\d{5}$/.test(valor),
-  'Debe tener 5 dígitos, por ejemplo 01001.',
-);
+const telefono = telefonoObligatorio(MAX_TELEFONO);
+const codigoPostal = codigoPostalOpcional(MAX_CODIGO_POSTAL);
 
 /** POST y PUT (el PUT reemplaza todo: omitir un opcional lo borra). */
 export const direccionBody = z.object({

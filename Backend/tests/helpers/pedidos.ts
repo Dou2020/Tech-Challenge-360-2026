@@ -81,11 +81,29 @@ export async function nuevoCliente(app: Express): Promise<ClientePrueba> {
   };
 }
 
-/** Primer método de envío activo. */
-export async function metodoEnvio(app: Express): Promise<number> {
+async function metodosEnvio(
+  app: Express,
+): Promise<{ idMetodoEnvio: number; requiereSucursal: boolean }[]> {
   const respuesta = await request(app).get('/api/metodos-envio');
   expect(respuesta.status).toBe(200);
-  return (respuesta.body as { idMetodoEnvio: number }[])[0]!.idMetodoEnvio;
+  return respuesta.body as { idMetodoEnvio: number; requiereSucursal: boolean }[];
+}
+
+/** Primer método de envío a domicilio (el de retiro en sucursal es el más barato y no sirve aquí). */
+export async function metodoEnvio(app: Express): Promise<number> {
+  return (await metodosEnvio(app)).find((m) => !m.requiereSucursal)!.idMetodoEnvio;
+}
+
+/** Método "Recoger en sucursal" (`requiereSucursal`). */
+export async function metodoRetiro(app: Express): Promise<number> {
+  return (await metodosEnvio(app)).find((m) => m.requiereSucursal)!.idMetodoEnvio;
+}
+
+/** Primera sucursal activa del catálogo público. */
+export async function sucursalActiva(app: Express): Promise<number> {
+  const respuesta = await request(app).get('/api/catalogo/sucursales');
+  expect(respuesta.status).toBe(200);
+  return (respuesta.body as { idSucursal: number }[])[0]!.idSucursal;
 }
 
 export const agregarAlCarrito = (http: Http, idVariante: number, cantidad = 1) =>
@@ -173,4 +191,62 @@ export async function avanzarPedido(
     const r = await operador.patch(`/api/pedidos/${idPedido}/estado`).send({ estado });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
   }
+}
+
+/** Sucursal propia (nombre único, activa) creada como administrador, para no tocar la semilla. */
+export async function crearSucursal(
+  admin: Http,
+  cambios: Record<string, unknown> = {},
+): Promise<{ idSucursal: number; nombre: string }> {
+  const respuesta = await admin.post('/api/sucursales').send({
+    nombre: `Sucursal ${randomUUID().slice(0, 8)}`,
+    telefono: '2222-3333',
+    linea1: '5a. avenida 10-20, zona 1',
+    municipio: 'Guatemala',
+    departamento: 'Guatemala',
+    ...cambios,
+  });
+  expect(respuesta.status, JSON.stringify(respuesta.body)).toBe(201);
+  return respuesta.body as { idSucursal: number; nombre: string };
+}
+
+export const iniciarRetiro = (cliente: ClientePrueba, idMetodoEnvio: number, idSucursal: number) =>
+  cliente.http.post('/api/checkout/iniciar').send({ idMetodoEnvio, idSucursal });
+
+export const pagarRetiro = (
+  cliente: ClientePrueba,
+  idMetodoEnvio: number,
+  idSucursal: number,
+  clave: string = randomUUID(),
+) =>
+  cliente.http
+    .post('/api/checkout/pagar')
+    .set('Idempotency-Key', clave)
+    .send({
+      idMetodoEnvio,
+      idSucursal,
+      metodoPago: 'TARJETA',
+      datosPago: { titular: 'Cliente de Prueba', ultimos4: '4242' },
+    });
+
+/**
+ * Cliente nuevo con una variante propia en el carrito y el checkout de retiro ya iniciado
+ * (la existencia queda reservada), listo para `pagarRetiro`.
+ */
+export async function prepararRetiro(
+  app: Express,
+  admin: Http,
+  idSucursal: number,
+  existencia = 5,
+): Promise<{ cliente: ClientePrueba; variante: VariantePrueba; idMetodoEnvio: number }> {
+  const [cliente, variante, idMetodoEnvio] = await Promise.all([
+    nuevoCliente(app),
+    crearVariante(admin, existencia),
+    metodoRetiro(app),
+  ]);
+  const agregado = await agregarAlCarrito(cliente.http, variante.idVariante, 1);
+  expect(agregado.status, JSON.stringify(agregado.body)).toBe(200);
+  const inicio = await iniciarRetiro(cliente, idMetodoEnvio, idSucursal);
+  expect(inicio.status, JSON.stringify(inicio.body)).toBe(200);
+  return { cliente, variante, idMetodoEnvio };
 }

@@ -13,6 +13,8 @@ tags:
   - name: Catálogo público
   - name: Categorías
     description: Solo Administrador
+  - name: Sucursales
+    description: Solo Administrador (la lista pública está en /catalogo/sucursales)
   - name: Productos
     description: Solo Administrador
   - name: Variantes
@@ -358,6 +360,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /catalogo/sucursales:
+    get:
+      tags: [Catálogo público]
+      summary: Sucursales activas, por nombre (para el retiro en sucursal)
+      responses:
+        '200':
+          description: Arreglo de sucursales activas
+          headers:
+            X-Cache: { $ref: '#/components/headers/XCache' }
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SucursalPublica' }
   /metodos-envio:
     get:
       tags: [Catálogo público]
@@ -372,6 +388,146 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/MetodoEnvio' }
+  /sucursales:
+    get:
+      tags: [Sucursales]
+      summary: Lista paginada de sucursales, incluye inactivas
+      security:
+        - bearerAuth: []
+      parameters:
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { $ref: '#/components/parameters/Activo' }
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                nombre:asc,
+                nombre:desc,
+                municipio:asc,
+                municipio:desc,
+                departamento:asc,
+                departamento:desc,
+                activo:asc,
+                activo:desc,
+                cantidadPedidos:asc,
+                cantidadPedidos:desc,
+              ]
+            default: nombre:asc
+      responses:
+        '200':
+          description: Página de sucursales
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Page' }
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Sucursal' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Sucursales]
+      summary: Crea una sucursal
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SucursalEntrada' }
+      responses:
+        '201':
+          description: Sucursal creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sucursal' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409':
+          description: DUPLICADO (nombre repetido)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /sucursales/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Sucursales]
+      summary: Detalle de una sucursal
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Sucursal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sucursal' }
+        '404': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [Sucursales]
+      summary: Reemplaza todos los campos (omitir un opcional lo borra)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SucursalEntrada' }
+      responses:
+        '200':
+          description: Sucursal actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sucursal' }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Sucursales]
+      summary: Elimina una sucursal sin pedidos
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Eliminada
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: EN_USO (tiene pedidos; hay que desactivarla)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /sucursales/{id}/estado:
+    patch:
+      tags: [Sucursales]
+      summary: Activa o desactiva (una inactiva deja de ofrecerse en el checkout)
+      security:
+        - bearerAuth: []
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Estado' }
+      responses:
+        '200':
+          description: Sucursal actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sucursal' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /categorias:
     get:
       tags: [Categorías]
@@ -1652,9 +1808,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [idDireccion, idMetodoEnvio]
+              required: [idMetodoEnvio]
               properties:
-                idDireccion: { type: integer, minimum: 1 }
+                idDireccion:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: Envío a domicilio (se ignora en un retiro),
+                  }
+                idSucursal:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: Método con requiereSucursal (se ignora a domicilio),
+                  }
                 idMetodoEnvio: { type: integer, minimum: 1 }
       responses:
         '200':
@@ -1735,9 +1902,20 @@ paths:
           application/json:
             schema:
               type: object
-              required: [idDireccion, idMetodoEnvio, metodoPago, datosPago]
+              required: [idMetodoEnvio, metodoPago, datosPago]
               properties:
-                idDireccion: { type: integer, minimum: 1 }
+                idDireccion:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: Envío a domicilio (se ignora en un retiro),
+                  }
+                idSucursal:
+                  {
+                    type: integer,
+                    minimum: 1,
+                    description: Método con requiereSucursal (se ignora a domicilio),
+                  }
                 idMetodoEnvio: { type: integer, minimum: 1 }
                 metodoPago: { type: string, enum: [TARJETA] }
                 datosPago:
@@ -2728,6 +2906,24 @@ components:
         nombre: { type: string }
         costo: { $ref: '#/components/schemas/Monto' }
         diasEstimados: { type: integer }
+        requiereSucursal:
+          {
+            type: boolean,
+            description: true en "Recoger en sucursal" (pide idSucursal,
+            no idDireccion),
+          }
+    SucursalPublica:
+      type: object
+      properties:
+        idSucursal: { type: integer }
+        nombre: { type: string }
+        telefono: { type: string }
+        linea1: { type: string }
+        linea2: { type: [string, 'null'] }
+        municipio: { type: string }
+        departamento: { type: string }
+        codigoPostal: { type: [string, 'null'] }
+        horario: { type: [string, 'null'] }
     ProductoCatalogo:
       type: object
       properties:
@@ -2782,6 +2978,27 @@ components:
       properties:
         nombre: { type: string, minLength: 1, maxLength: 100 }
         descripcion: { type: [string, 'null'], maxLength: 500 }
+    SucursalEntrada:
+      type: object
+      required: [nombre, telefono, linea1, municipio, departamento]
+      properties:
+        nombre: { type: string, minLength: 1, maxLength: 100 }
+        telefono: { type: string, maxLength: 20, pattern: '^\+?[\d\s-]{8,20}$' }
+        linea1: { type: string, minLength: 1, maxLength: 200 }
+        linea2: { type: [string, 'null'], maxLength: 200 }
+        municipio: { type: string, minLength: 1, maxLength: 100 }
+        departamento: { type: string, minLength: 1, maxLength: 100 }
+        codigoPostal: { type: [string, 'null'], pattern: '^\d{5}$' }
+        horario: { type: [string, 'null'], maxLength: 200 }
+    Sucursal:
+      allOf:
+        - { $ref: '#/components/schemas/SucursalPublica' }
+        - type: object
+          properties:
+            activo: { type: boolean }
+            cantidadPedidos: { type: integer }
+            fechaCreacion: { type: string, format: date-time }
+            fechaModificacion: { type: string, format: date-time }
     Categoria:
       type: object
       properties:
@@ -3342,8 +3559,16 @@ components:
         direccion:
           type: object
           properties:
-            idDireccion: { type: integer }
-            entrega: { type: string, description: Copia de la dirección al comprar }
+            idDireccion: { type: [integer, 'null'], description: null en un retiro en sucursal }
+            entrega:
+              { type: string, description: Copia de la dirección (o de la sucursal) al comprar }
+        retiroEnSucursal: { type: boolean }
+        sucursal:
+          type: [object, 'null']
+          description: Sucursal de retiro (nombre actual); null a domicilio
+          properties:
+            idSucursal: { type: integer }
+            nombre: { type: string }
         metodoEnvio:
           type: object
           properties:

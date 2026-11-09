@@ -56,7 +56,10 @@ export interface PedidoDetalle {
   estado: string;
   nombreEstado: string;
   esFinal: boolean;
-  direccion: { idDireccion: number; entrega: string };
+  /** `idDireccion` es null en un retiro; entonces `entrega` empieza con "Recoger en <Nombre>:". */
+  direccion: { idDireccion: number | null; entrega: string };
+  retiroEnSucursal: boolean;
+  sucursal: { idSucursal: number; nombre: string } | null;
   metodoEnvio: { idMetodoEnvio: number; nombre: string; diasEstimados: number };
   cupon: { idCupon: number; codigo: string } | null;
   subtotal: string;

@@ -89,6 +89,10 @@ export const rutas: RouteObject[] = [
               { index: true, lazy: pagina(() => import('./pages/consola/DashboardPage')) },
               { path: 'reportes', lazy: pagina(() => import('./pages/consola/ReportesPage')) },
               { path: 'categorias', lazy: pagina(() => import('./pages/consola/CategoriasPage')) },
+              {
+                path: 'sucursales',
+                lazy: pagina(() => import('./pages/consola/SucursalesPage')),
+              },
               { path: 'productos', lazy: pagina(() => import('./pages/consola/ProductosPage')) },
               {
                 path: 'productos/nuevo',

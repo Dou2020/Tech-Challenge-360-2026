@@ -40,13 +40,14 @@ DECLARE @IDEntregado   INT = (SELECT IDEstadoPedido FROM dbo.EstadoPedido WHERE 
 DECLARE @IDTipoInicial INT = (SELECT IDTipoMovimientoInventario FROM dbo.TipoMovimientoInventario WHERE Codigo = N'INVENTARIO_INICIAL');
 DECLARE @IDTipoDevolucion INT = (SELECT IDTipoMovimientoInventario FROM dbo.TipoMovimientoInventario WHERE Codigo = N'DEVOLUCION');
 DECLARE @IDTipoSalida  INT = (SELECT IDTipoMovimientoInventario FROM dbo.TipoMovimientoInventario WHERE Codigo = N'SALIDA_VENTA');
-DECLARE @IDMetodoEnvio INT = (SELECT IDMetodoEnvio FROM dbo.MetodoEnvio WHERE Nombre = N'Recoger en tienda');
+DECLARE @IDMetodoEnvio INT = (SELECT IDMetodoEnvio FROM dbo.MetodoEnvio WHERE Nombre = N'Estándar');  -- a domicilio
+DECLARE @IDMetodoRetiro INT = (SELECT IDMetodoEnvio FROM dbo.MetodoEnvio WHERE Nombre = N'Recoger en sucursal');
 
 DECLARE
     @IDUsuarioA INT, @IDUsuarioB INT, @IDDireccionA INT, @IDDireccionB INT,
     @IDCategoria INT, @IDProducto INT, @IDVariante1 INT, @IDVariante2 INT,
     @IDTalla INT, @IDColor INT, @IDTallaS INT, @IDTallaM INT, @IDColorRojo INT,
-    @IDCupon1 INT, @IDCupon2 INT, @IDCarritoA INT,
+    @IDCupon1 INT, @IDCupon2 INT, @IDCarritoA INT, @IDSucursalA INT,
     @IDPedidoA INT, @IDPedidoB INT, @IDLineaA INT, @IDLineaB INT, @IDDevolucionA INT,
     @IDBitacora BIGINT;
 
@@ -75,6 +76,10 @@ BEGIN TRY
     INSERT INTO dbo.Direccion (IDUsuario, Alias, NombreDestinatario, Telefono, Linea1, Municipio, Departamento)
     VALUES (@IDUsuarioB, N'Casa', N'Prueba B', N'55550002', N'Calle B', N'Guatemala', N'Guatemala');
     SET @IDDireccionB = SCOPE_IDENTITY();
+
+    INSERT INTO dbo.Sucursal (Nombre, Telefono, Linea1, Municipio, Departamento)
+    VALUES (N'Sucursal de prueba', N'55550003', N'Calle S', N'Guatemala', N'Guatemala');
+    SET @IDSucursalA = SCOPE_IDENTITY();
 
     INSERT INTO dbo.Categoria (Nombre) VALUES (N'Prueba de integridad');
     SET @IDCategoria = SCOPE_IDENTITY();
@@ -114,18 +119,18 @@ BEGIN TRY
     SET @IDCupon2 = SCOPE_IDENTITY();
 
     INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                            IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            IDDireccion, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
                             Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
     VALUES (N'PRUEBA-A', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
-            @IDDireccionA, @IDMetodoEnvio, @IDCupon1, N'Calle A, Guatemala',
+            @IDDireccionA, 0, @IDMetodoEnvio, @IDCupon1, N'Calle A, Guatemala',
             200.00, 20.00, 0.00, 19.29, 180.00);
     SET @IDPedidoA = SCOPE_IDENTITY();
 
     INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                            IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            IDDireccion, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
                             Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
     VALUES (N'PRUEBA-B', NEWID(), REPLICATE('0', 64), @IDUsuarioB, @IDPagado,
-            @IDDireccionB, @IDMetodoEnvio, NULL, N'Calle B, Guatemala',
+            @IDDireccionB, 0, @IDMetodoEnvio, NULL, N'Calle B, Guatemala',
             100.00, 0.00, 0.00, 10.71, 100.00);
     SET @IDPedidoB = SCOPE_IDENTITY();
 
@@ -154,14 +159,128 @@ END CATCH;
 
 BEGIN TRY
     INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                            IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            IDDireccion, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
                             Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
     VALUES (N'PRUEBA-C', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
-            @IDDireccionB, @IDMetodoEnvio, NULL, N'Calle B, Guatemala',
+            @IDDireccionB, 0, @IDMetodoEnvio, NULL, N'Calle B, Guatemala',
             100.00, 0.00, 0.00, 10.71, 100.00);
     SELECT @Error = 0, @Mensaje = NULL;
 END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
 INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Pedido con la dirección de otro cliente', 547, N'FK_Pedido_Direccion', @Error, @Mensaje);
+
+/* Entrega del pedido: domicilio o sucursal */
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S1', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            NULL, @IDSucursalA, 1, @IDMetodoRetiro, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Pedido para recoger en una sucursal activa, sin dirección (válido)', 0, NULL, @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S2', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            NULL, NULL, 1, @IDMetodoRetiro, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Retiro en sucursal sin sucursal ni dirección', 547, N'CK_Pedido_Entrega', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S3', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            @IDDireccionA, @IDSucursalA, 1, @IDMetodoRetiro, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Retiro en sucursal con dirección y sucursal', 547, N'CK_Pedido_Entrega', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S4', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            NULL, NULL, 0, @IDMetodoEnvio, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Pedido a domicilio sin dirección', 547, N'CK_Pedido_Entrega', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S5', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            @IDDireccionA, @IDSucursalA, 0, @IDMetodoEnvio, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Pedido a domicilio con dirección y sucursal', 547, N'CK_Pedido_Entrega', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S6', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            NULL, @IDSucursalA, 1, @IDMetodoEnvio, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Retiro en sucursal con un método a domicilio', 547, N'FK_Pedido_MetodoEnvio', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S7', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            @IDDireccionA, NULL, 0, @IDMetodoRetiro, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Pedido a domicilio con el método de retiro en sucursal', 547, N'FK_Pedido_MetodoEnvio', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
+                            IDDireccion, IDSucursal, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
+    VALUES (N'PRUEBA-S8', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
+            NULL, 2147483647, 1, @IDMetodoRetiro, NULL, N'Entrega de prueba',
+            100.00, 0.00, 0.00, 10.71, 100.00);
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Retiro en una sucursal que no existe', 547, N'FK_Pedido_Sucursal', @Error, @Mensaje);
+
+BEGIN TRY
+    INSERT INTO dbo.Sucursal (Nombre, Telefono, Linea1, Municipio, Departamento)
+    VALUES (N'sucursal DE PRUEBA', N'55550004', N'Calle T', N'Guatemala', N'Guatemala');
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Sucursal con el nombre de otra (sin distinguir mayúsculas)', 2627, N'UQ_Sucursal_Nombre', @Error, @Mensaje);
+
+-- Valores por defecto: la sucursal nace activa y el método de envío no requiere sucursal.
+BEGIN TRY
+    INSERT INTO dbo.Sucursal (Nombre, Telefono, Linea1, Municipio, Departamento)
+    VALUES (N'Sucursal con valores por defecto', N'55550005', N'Calle U', N'Guatemala', N'Guatemala');
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Sucursal WHERE Nombre = N'Sucursal con valores por defecto' AND Activo = 1)
+        THROW 50098, N'DF_Sucursal_Activo no dejó la sucursal activa.', 1;
+
+    INSERT INTO dbo.MetodoEnvio (Nombre, Costo, DiasEstimados) VALUES (N'Método de prueba', 0.00, 0);
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.MetodoEnvio WHERE Nombre = N'Método de prueba' AND RequiereSucursal = 0)
+        THROW 50098, N'DF_MetodoEnvio_RequiereSucursal no dejó el método a domicilio.', 1;
+
+    SELECT @Error = 0, @Mensaje = NULL;
+END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
+INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (N'Sucursal activa y método a domicilio por defecto (válido)', 0, NULL, @Error, @Mensaje);
 
 /* Atributos de la variante */
 
@@ -360,10 +479,10 @@ INSERT INTO @Resultado (Caso, Esperado, Restriccion, Obtenido, Mensaje) VALUES (
 
 BEGIN TRY
     INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                            IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            IDDireccion, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
                             Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
     VALUES (N'PRUEBA-D', NEWID(), REPLICATE('0', 64), @IDUsuarioB, @IDPagado,
-            @IDDireccionB, @IDMetodoEnvio, NULL, N'Calle B, Guatemala',
+            @IDDireccionB, 0, @IDMetodoEnvio, NULL, N'Calle B, Guatemala',
             100.00, 10.00, 0.00, 9.64, 90.00);
     SELECT @Error = 0, @Mensaje = NULL;
 END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
@@ -484,10 +603,10 @@ BEGIN TRY
     SET @IDDireccionA = SCOPE_IDENTITY();
 
     INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                            IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            IDDireccion, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
                             Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
     VALUES (N'PRUEBA-E', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDEntregado,
-            @IDDireccionA, @IDMetodoEnvio, NULL, N'Calle A, Guatemala',
+            @IDDireccionA, 0, @IDMetodoEnvio, NULL, N'Calle A, Guatemala',
             100.00, 0.00, 0.00, 10.71, 100.00);
     SELECT @Error = 0, @Mensaje = NULL;
 END TRY BEGIN CATCH SELECT @Error = ERROR_NUMBER(), @Mensaje = ERROR_MESSAGE(); END CATCH;
@@ -505,10 +624,10 @@ BEGIN TRY
     SET @IDDireccionA = SCOPE_IDENTITY();
 
     INSERT INTO dbo.Pedido (NumeroPedido, ClaveIdempotencia, HuellaSolicitud, IDUsuario, IDEstadoPedido,
-                            IDDireccion, IDMetodoEnvio, IDCupon, DireccionEntrega,
+                            IDDireccion, RetiroEnSucursal, IDMetodoEnvio, IDCupon, DireccionEntrega,
                             Subtotal, Descuento, CostoEnvio, MontoIVA, Total)
     VALUES (N'PRUEBA-F', NEWID(), REPLICATE('0', 64), @IDUsuarioA, @IDPagado,
-            @IDDireccionA, @IDMetodoEnvio, NULL, N'Calle A, Guatemala',
+            @IDDireccionA, 0, @IDMetodoEnvio, NULL, N'Calle A, Guatemala',
             100.00, 0.00, 0.00, 10.71, 100.00);
     SET @IDPedidoA = SCOPE_IDENTITY();
 

@@ -273,6 +273,7 @@ export const catalogoService = {
         nombre: fila.Nombre,
         costo: aMonto(fila.Costo),
         diasEstimados: fila.DiasEstimados,
+        requiereSucursal: Boolean(fila.RequiereSucursal),
       })),
     );
   },

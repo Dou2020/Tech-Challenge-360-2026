@@ -26,6 +26,13 @@ export interface CuponResumen {
   mensajeError: string | null;
 }
 
+/** Entrega elegida: dirección (domicilio) o sucursal (retiro), según el método de envío. */
+export interface EntregaCheckout {
+  idMetodoEnvio: number;
+  idDireccion?: number;
+  idSucursal?: number;
+}
+
 /** Resumen con los montos finales calculados por el backend, más la reserva vigente. */
 export interface ResumenCheckout {
   idCarrito: number;
@@ -63,7 +70,10 @@ export type DatosPago = DatosPagoGuardada | DatosPagoNueva;
 
 /** Body de POST /checkout/pagar. */
 export interface SolicitudPago {
-  idDireccion: number;
+  /** Envío a domicilio. */
+  idDireccion?: number;
+  /** Retiro en sucursal. */
+  idSucursal?: number;
   idMetodoEnvio: number;
   metodoPago: 'TARJETA';
   datosPago: DatosPago;

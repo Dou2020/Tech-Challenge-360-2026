@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pagarBody } from '../../../../src/modules/checkout/checkout.schemas.js';
+import { iniciarBody, pagarBody } from '../../../../src/modules/checkout/checkout.schemas.js';
 
 describe('pagarBody', () => {
   const valido = {
@@ -17,11 +17,23 @@ describe('pagarBody', () => {
     expect(resultado.success).toBe(true);
   });
 
+  it('acepta un retiro sin dirección con idSucursal', () => {
+    // Arrange
+    const retiro = { ...valido, idDireccion: undefined, idSucursal: 2 };
+
+    // Act
+    const resultado = pagarBody.safeParse(retiro);
+
+    // Assert
+    expect(resultado.success).toBe(true);
+  });
+
   it.each([
     ['otro método de pago', { ...valido, metodoPago: 'EFECTIVO' }],
     ['últimos 4 con letras', { ...valido, datosPago: { titular: 'Ana', ultimos4: '42a2' } }],
     ['titular vacío', { ...valido, datosPago: { titular: ' ', ultimos4: '4242' } }],
-    ['sin dirección', { ...valido, idDireccion: undefined }],
+    ['sin método de envío', { ...valido, idMetodoEnvio: undefined }],
+    ['idSucursal inválido', { ...valido, idSucursal: 0 }],
   ])('rechaza %s', (_caso, cuerpo) => {
     // Act
     const resultado = pagarBody.safeParse(cuerpo);
@@ -91,5 +103,37 @@ describe('pagarBody', () => {
       // Assert
       expect(resultado.success).toBe(false);
     });
+  });
+});
+
+describe('iniciarBody', () => {
+  it.each([
+    ['a domicilio con idDireccion', { idMetodoEnvio: 1, idDireccion: 5 }],
+    ['retiro con idSucursal', { idMetodoEnvio: 3, idSucursal: 2 }],
+    ['sin dirección ni sucursal (lo decide el SP)', { idMetodoEnvio: 1 }],
+    [
+      'con idDireccion e idSucursal (el SP ignora el que sobra)',
+      { idMetodoEnvio: 3, idDireccion: 5, idSucursal: 2 },
+    ],
+  ])('acepta %s', (_caso, cuerpo) => {
+    // Act
+    const resultado = iniciarBody.safeParse(cuerpo);
+
+    // Assert
+    expect(resultado.success).toBe(true);
+    expect(resultado.data).toEqual(cuerpo);
+  });
+
+  it.each([
+    ['sin método de envío', { idDireccion: 5 }],
+    ['idSucursal en 0', { idMetodoEnvio: 3, idSucursal: 0 }],
+    ['idSucursal no numérico', { idMetodoEnvio: 3, idSucursal: 'x' }],
+    ['idDireccion negativo', { idMetodoEnvio: 1, idDireccion: -1 }],
+  ])('rechaza %s', (_caso, cuerpo) => {
+    // Act
+    const resultado = iniciarBody.safeParse(cuerpo);
+
+    // Assert
+    expect(resultado.success).toBe(false);
   });
 });

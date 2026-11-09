@@ -7,10 +7,17 @@ import {
   ultimos4Tarjeta,
 } from '../../shared/utils/esquemas.js';
 
-export const iniciarBody = z.object({
-  idDireccion: esquemaId,
+/**
+ * `idDireccion` (envío a domicilio) e `idSucursal` (retiro en sucursal) son opcionales aquí: el SP
+ * decide cuál es obligatorio según el método e ignora el que no corresponde.
+ */
+const entrega = {
+  idDireccion: esquemaId.optional(),
+  idSucursal: esquemaId.optional(),
   idMetodoEnvio: esquemaId,
-});
+};
+
+export const iniciarBody = z.object(entrega);
 
 /** Opcional: sin método el costo de envío del resumen es 0. */
 export const resumenQuery = z.object({ idMetodoEnvio: esquemaId.optional() });
@@ -72,8 +79,7 @@ const datosPago = z.unknown().transform((valor, ctx): DatosPagoBody => {
 });
 
 export const pagarBody = z.object({
-  idDireccion: esquemaId,
-  idMetodoEnvio: esquemaId,
+  ...entrega,
   /** El pago es simulado: solo TARJETA (la tabla Pago lo restringe con un CHECK). */
   metodoPago: z.literal('TARJETA', { error: 'Solo se acepta TARJETA.' }),
   datosPago: datosPago,

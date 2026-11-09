@@ -58,9 +58,14 @@ export interface FilaPedidoCreado {
   IDTarjetaGuardada: number | null;
 }
 
-export interface DatosPago {
-  idDireccion: number;
+/** Entrega del pedido: domicilio (idDireccion) o retiro (idSucursal); el SP decide cuál exige. */
+export interface DatosEntrega {
+  idDireccion?: number | undefined;
+  idSucursal?: number | undefined;
   idMetodoEnvio: number;
+}
+
+export interface DatosPago extends DatosEntrega {
   metodoPago: 'TARJETA';
   /** Pago con una tarjeta guardada: titular y últimos 4 salen de ella. */
   idTarjeta: number | null;

@@ -60,6 +60,29 @@ describe('PedidoGestionPage', () => {
     expect(await screen.findByText('El pedido pasó a "En preparación".')).toBeInTheDocument();
   });
 
+  it('pedido de retiro → muestra "Recoger en sucursal" y mantiene las acciones del estado', async () => {
+    // Arrange
+    api.obtener.mockResolvedValue(
+      crearPedidoDetalle({
+        retiroEnSucursal: true,
+        sucursal: { idSucursal: 3, nombre: 'Zona 10' },
+        direccion: {
+          idDireccion: null,
+          entrega: 'Recoger en Zona 10: 6a avenida 12-34, Guatemala',
+        },
+        transiciones: [preparacion],
+      }),
+    );
+
+    // Act
+    abrir();
+
+    // Assert
+    expect(await screen.findByRole('heading', { name: 'Recoger en sucursal' })).toBeInTheDocument();
+    expect(screen.getByText(/Recoger en Zona 10: 6a avenida 12-34/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pasar a En preparación' })).toBeInTheDocument();
+  });
+
   it('un 409 TRANSICION_NO_PERMITIDA muestra un mensaje claro', async () => {
     // Arrange
     api.cambiarEstado.mockRejectedValue(

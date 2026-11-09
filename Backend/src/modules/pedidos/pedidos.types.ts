@@ -26,8 +26,13 @@ export interface FilaPedido {
   Estado: string;
   NombreEstado: string;
   EsFinal: boolean;
-  IDDireccion: number;
+  /** NULL en un retiro en sucursal. */
+  IDDireccion: number | null;
   DireccionEntrega: string;
+  /** Solo en el detalle (SP_Pedidos_ObtenerPorId). IDSucursal y Sucursal son NULL con envío a domicilio. */
+  IDSucursal?: number | null;
+  Sucursal?: string | null;
+  RetiroEnSucursal?: boolean;
   IDMetodoEnvio: number;
   MetodoEnvio: string;
   DiasEstimados: number;
@@ -197,7 +202,10 @@ export interface PedidoDetalle {
   estado: string;
   nombreEstado: string;
   esFinal: boolean;
-  direccion: { idDireccion: number; entrega: string };
+  /** En un retiro en sucursal `idDireccion` es null y `entrega` describe la sucursal. */
+  direccion: { idDireccion: number | null; entrega: string };
+  retiroEnSucursal: boolean;
+  sucursal: { idSucursal: number; nombre: string } | null;
   metodoEnvio: { idMetodoEnvio: number; nombre: string; diasEstimados: number };
   cupon: { idCupon: number; codigo: string } | null;
   subtotal: string;
