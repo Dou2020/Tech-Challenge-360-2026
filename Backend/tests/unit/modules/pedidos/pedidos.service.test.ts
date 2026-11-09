@@ -184,7 +184,7 @@ describe('pedidosService', () => {
     expect(r.idPedido).toBe(3);
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
     expect(eventos.publicar).toHaveBeenCalledWith(
-      expect.objectContaining({ tipo, idPedido: 3, estado: detalleSp.pedido.Estado }),
+      expect.objectContaining({ tipo, idPedido: 3, idUsuario: 6, estado: detalleSp.pedido.Estado }),
     );
     expect(vi.mocked(cache.invalidar).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(eventos.publicar).mock.invocationCallOrder[0]!,
@@ -193,6 +193,7 @@ describe('pedidosService', () => {
 
   it('registrarDevolucion invalida reportes y da forma camelCase', async () => {
     // Arrange
+    repo.obtenerPorId.mockResolvedValue(detalleSp);
     repo.registrarDevolucion.mockResolvedValue({
       IDDevolucion: 77,
       IDPedido: 3,
@@ -216,9 +217,71 @@ describe('pedidosService', () => {
     });
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
     expect(eventos.publicar).toHaveBeenCalledWith(
-      expect.objectContaining({ tipo: 'DEVOLUCION', estado: 'DEVUELTO_PARCIAL' }),
+      expect.objectContaining({
+        tipo: 'DEVOLUCION',
+        idPedido: 3,
+        idUsuario: 6,
+        estado: 'DEVUELTO_PARCIAL',
+      }),
     );
+    expect(repo.obtenerPorId).toHaveBeenCalledWith(2, 3);
   });
+
+  it('registrarDevolucion: si no se puede leer el dueño, responde igual y no publica', async () => {
+    // Arrange
+    repo.obtenerPorId.mockRejectedValue(new Error('SQL caído'));
+    repo.registrarDevolucion.mockResolvedValue({
+      IDDevolucion: 78,
+      IDPedido: 3,
+      Tipo: 'TOTAL',
+      MontoReembolso: 10,
+      Motivo: 'Defecto',
+      EstadoPedido: 'DEVUELTO',
+      Fecha: FECHA,
+    });
+
+    // Act
+    const r = await pedidosService.registrarDevolucion(2, 3, 'Defecto', [
+      { idPedidoDetalle: 10, cantidad: 1 },
+    ]);
+
+    // Assert
+    expect(r.idDevolucion).toBe(78);
+    expect(cache.invalidar).toHaveBeenCalledWith('reportes');
+    expect(eventos.publicar).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Cliente', 6, true],
+    ['Cliente', 7, false],
+    ['Operador', 7, true],
+    ['Administrador', 7, true],
+  ] as const)(
+    'filtroEventos: %s con idUsuario %i ve el evento de un pedido del usuario 6 → %s',
+    (rol, idUsuario, esperado) => {
+      // Arrange
+      const filtro = pedidosService.filtroEventos({
+        idUsuario,
+        rol,
+        jti: 'j',
+        sid: 's',
+        iat: 1,
+        exp: 2,
+      });
+
+      // Act
+      const visto = filtro({
+        tipo: 'ESTADO',
+        idPedido: 3,
+        idUsuario: 6,
+        estado: 'EN_PREPARACION',
+        fecha: '2026-11-08T12:00:00.000Z',
+      });
+
+      // Assert
+      expect(visto).toBe(esperado);
+    },
+  );
 
   it('si el SP falla (409) no invalida la caché', async () => {
     // Arrange

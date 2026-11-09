@@ -3,8 +3,8 @@ import { closePool } from './config/database.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeRedis, connectRedis } from './config/redis.js';
-import { cerrarConexionesStream } from './modules/reportes/reportes.stream.js';
 import { eventos } from './shared/eventos/eventos.js';
+import { cerrarConexionesStream } from './shared/eventos/stream.js';
 import {
   detenerJobLiberarReservas,
   iniciarJobLiberarReservas,

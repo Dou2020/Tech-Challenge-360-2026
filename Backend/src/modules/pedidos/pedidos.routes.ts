@@ -21,8 +21,9 @@ const cualquierRol = authorize('Cliente', 'Operador', 'Administrador');
 const personal = authorize('Operador', 'Administrador');
 
 pedidosRoutes.use(authenticate);
-// /estados va antes de /:id para que no se lea "estados" como un id.
+// /estados y /stream van antes de /:id para que no se lean como un id.
 pedidosRoutes.get('/estados', c.estados);
+pedidosRoutes.get('/stream', cualquierRol, c.stream);
 pedidosRoutes.get('/', cualquierRol, validate({ query: listarPedidosQuery }), c.listar);
 pedidosRoutes.get('/:id', cualquierRol, validate({ params: paramsPedido }), c.obtener);
 pedidosRoutes.get('/:id/historial', cualquierRol, validate({ params: paramsPedido }), c.historial);

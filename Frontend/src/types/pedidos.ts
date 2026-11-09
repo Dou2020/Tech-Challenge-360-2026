@@ -137,3 +137,16 @@ export interface DevolucionRegistrada {
   montoReembolso: string;
   estadoPedido: string;
 }
+
+/**
+ * Aviso de `GET /api/pedidos/stream`: un pedido se creó, canceló, cambió de estado o tuvo una
+ * devolución. No lleva montos; quien lo recibe vuelve a consultar.
+ */
+export interface EventoPedido {
+  tipo: 'CREADO' | 'CANCELADO' | 'ESTADO' | 'DEVOLUCION';
+  idPedido: number;
+  /** Dueño del pedido. */
+  idUsuario: number;
+  estado: string;
+  fecha: string;
+}

@@ -4,6 +4,7 @@ import { useAuth } from '../auth/useAuth';
 import { Logo } from '../components/atoms';
 import { SearchBox, ThemeToggle } from '../components/molecules';
 import { AccountMenu, CartButton } from '../components/organisms';
+import { useTiempoRealPedidos } from '../hooks/useTiempoRealPedidos';
 
 /** Tienda pública: buscador, carrito, menú de cuenta (o acceso al login) y pie con el tema. */
 export function StoreLayout() {
@@ -12,6 +13,8 @@ export function StoreLayout() {
   const [params] = useSearchParams();
   // Operador y Administrador no tienen carrito.
   const tieneCarrito = !usuario || usuario.rol === 'Cliente';
+  // "Mis pedidos" al día cuando el personal cambia un pedido del Cliente (stream SSE).
+  useTiempoRealPedidos(usuario?.rol === 'Cliente');
 
   return (
     <div className="flex min-h-dvh flex-col">

@@ -7,10 +7,15 @@ import { AppError } from '../errors/AppError.js';
 /** Qué ocurrió con el pedido; coincide con los puntos que invalidan la caché de reportes. */
 export type TipoEventoPedido = 'CREADO' | 'CANCELADO' | 'ESTADO' | 'DEVOLUCION';
 
-/** Aviso de que los reportes cambiaron. No lleva montos: el dashboard vuelve a pedirlos. */
+/**
+ * Aviso de que un pedido cambió. No lleva montos: quien lo recibe vuelve a pedir los datos
+ * (reportes, listas y detalle de pedidos).
+ */
 export interface EventoPedido {
   tipo: TipoEventoPedido;
   idPedido: number;
+  /** Dueño del pedido (no quien hizo el cambio): el stream de pedidos filtra por él al Cliente. */
+  idUsuario: number;
   estado: string;
   /** ISO 8601 UTC. */
   fecha: string;

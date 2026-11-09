@@ -2094,6 +2094,35 @@ paths:
                         permitida: { type: boolean, description: Para el rol del solicitante }
                         via: { type: string, enum: [ESTADO, CANCELAR, DEVOLUCION] }
         '401': { $ref: '#/components/responses/Error' }
+  /pedidos/stream:
+    get:
+      tags: [Pedidos]
+      summary: Stream de cambios en los pedidos (Server-Sent Events)
+      description: |
+        Mismo protocolo que `/reportes/stream` (`conectado`, `pedido`, `fin`, latido `: ping`
+        cada 25 s), para los tres roles. El Cliente solo recibe los eventos de sus pedidos
+        (`idUsuario` igual al suyo); Operador y Administrador, todos. Se lee con `fetch` y
+        `Authorization: Bearer`. Máximo 5 conexiones por usuario, sumando los dos streams.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Flujo `text/event-stream`
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: |
+                  retry: 5000
+
+                  event: conectado
+                  data: {"fecha":"2026-11-08T20:15:00.000Z"}
+
+                  event: pedido
+                  data: {"tipo":"ESTADO","idPedido":123,"idUsuario":6,"estado":"EN_PREPARACION","fecha":"2026-11-08T20:16:00.000Z"}
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /pedidos/{id}:
     parameters:
       - { $ref: '#/components/parameters/Id' }
@@ -2495,9 +2524,10 @@ paths:
         Avisa que los reportes cambiaron; no lleva montos. Al recibir un `pedido`, el cliente
         vuelve a pedir `/api/reportes/*`. Se lee con `fetch` y `Authorization: Bearer`
         (`EventSource` no permite headers). Eventos: `conectado`, `pedido`
-        (`{ tipo: CREADO|CANCELADO|ESTADO|DEVOLUCION, idPedido, estado, fecha }`) y `fin`
+        (`{ tipo: CREADO|CANCELADO|ESTADO|DEVOLUCION, idPedido, idUsuario, estado, fecha }`,
+        donde `idUsuario` es el dueño del pedido) y `fin`
         (`{ motivo: REVOCADO|TOKEN_EXPIRADO|SERVIDOR_DETENIDO }`). Latido `: ping` cada 25 s.
-        Máximo 5 conexiones simultáneas por usuario.
+        Máximo 5 conexiones simultáneas por usuario, sumando este stream y `/pedidos/stream`.
       security:
         - bearerAuth: []
       responses:
@@ -2514,7 +2544,7 @@ paths:
                   data: {"fecha":"2026-11-02T20:15:00.000Z"}
 
                   event: pedido
-                  data: {"tipo":"CREADO","idPedido":123,"estado":"PAGADO","fecha":"2026-11-02T20:15:00.000Z"}
+                  data: {"tipo":"CREADO","idPedido":123,"idUsuario":6,"estado":"PAGADO","fecha":"2026-11-02T20:15:00.000Z"}
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }

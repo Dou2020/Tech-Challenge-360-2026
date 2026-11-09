@@ -182,7 +182,7 @@ describe('checkoutService.pagar', () => {
     expect(repo.crearPedido).toHaveBeenCalledWith(7, CLAVE, DATOS);
     expect(cache.invalidar).toHaveBeenCalledWith('reportes');
     expect(eventos.publicar).toHaveBeenCalledWith(
-      expect.objectContaining({ tipo: 'CREADO', idPedido: 9, estado: 'PAGADO' }),
+      expect.objectContaining({ tipo: 'CREADO', idPedido: 9, idUsuario: 7, estado: 'PAGADO' }),
     );
     expect(vi.mocked(cache.invalidar).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(eventos.publicar).mock.invocationCallOrder[0]!,

@@ -1,12 +1,17 @@
 import { logger } from '../../config/logger.js';
-import { AppError } from '../../shared/errors/AppError.js';
-import type { EventoPedido, OyenteEvento } from '../../shared/eventos/eventos.js';
-import type { UsuarioAutenticado } from '../../shared/types/express.js';
-import { revocacionStore } from '../auth/revocacion.store.js';
+import { revocacionStore } from '../../modules/auth/revocacion.store.js';
+import { AppError } from '../errors/AppError.js';
+import type { UsuarioAutenticado } from '../types/express.js';
+import type { EventoPedido, OyenteEvento } from './eventos.js';
+
+/*
+ * Streams SSE de eventos de pedidos: GET /api/reportes/stream (Admin) y GET /api/pedidos/stream
+ * (todos los roles, con filtro por dueño para el Cliente). Comparten el límite de conexiones.
+ */
 
 /** Intervalo del latido. Menor que el `proxy_read_timeout` de nginx (60 s). */
 export const LATIDO_MS = 25_000;
-/** Conexiones simultáneas del stream por usuario. */
+/** Conexiones simultáneas por usuario, sumando los dos streams. */
 export const MAX_CONEXIONES_POR_USUARIO = 5;
 /** Espera del cliente antes de reconectar (campo `retry` de SSE). */
 const REINTENTO_CLIENTE_MS = 5_000;
@@ -21,6 +26,9 @@ export interface SalidaStream {
   escribir(texto: string): void;
   terminar(): void;
 }
+
+/** Decide si un evento se reenvía a esta conexión (p. ej. solo los pedidos del Cliente). */
+export type FiltroEvento = (evento: EventoPedido) => boolean;
 
 export interface ConexionStream {
   /** Libera la conexión (el cliente se desconectó); no escribe nada. */
@@ -40,11 +48,13 @@ export function formatearEvento(nombre: string, datos: unknown): string {
  * headers y programa el latido (con revisión de revocación) y el cierre al vencer el token.
  *  - Más de `MAX_CONEXIONES_POR_USUARIO` → 429 DEMASIADAS_SOLICITUDES.
  *  - Si `suscribir` falla se propaga su error antes de escribir nada (503).
+ *  - Con `filtro`, solo se escriben los eventos que acepta.
  */
 export async function abrirStream(
   usuario: UsuarioAutenticado,
   salida: SalidaStream,
   suscribir: (oyente: OyenteEvento) => Promise<() => void>,
+  filtro: FiltroEvento = () => true,
 ): Promise<ConexionStream> {
   const abiertas = conexionesPorUsuario.get(usuario.idUsuario) ?? 0;
   if (abiertas >= MAX_CONEXIONES_POR_USUARIO) {
@@ -59,7 +69,7 @@ export async function abrirStream(
   let cancelarSuscripcion: () => void;
   try {
     cancelarSuscripcion = await suscribir((evento: EventoPedido) => {
-      escribirSeguro(formatearEvento('pedido', evento));
+      if (filtro(evento)) escribirSeguro(formatearEvento('pedido', evento));
     });
   } catch (error) {
     bajarContador(usuario.idUsuario);
@@ -74,7 +84,7 @@ export async function abrirStream(
     try {
       salida.escribir(texto);
     } catch (error) {
-      logger.warn({ err: error }, 'No se pudo escribir en el stream de reportes');
+      logger.warn({ err: error }, 'No se pudo escribir en el stream de eventos');
       liberar();
     }
   }
@@ -95,7 +105,7 @@ export async function abrirStream(
       salida.escribir(formatearEvento('fin', { motivo }));
       salida.terminar();
     } catch (error) {
-      logger.warn({ err: error }, 'No se pudo cerrar el stream de reportes');
+      logger.warn({ err: error }, 'No se pudo cerrar el stream de eventos');
     }
     liberar();
   }

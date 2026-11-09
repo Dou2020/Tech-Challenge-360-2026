@@ -388,7 +388,7 @@ Todas las claves llevan el prefijo `shopcart:`.
 | Caché | *Fail-open*: se registra el error y se lee de la base |
 | `GET /api/health` | Reporta `redis: "down"` |
 
-**Eventos en tiempo real (pub/sub):** `POST` de pago, cancelación, cambio de estado y devolución publican un aviso en el canal `shopcart:eventos:reportes` después de invalidar la caché de reportes; `GET /api/reportes/stream` (SSE, solo Administrador) lo reenvía a los dashboards abiertos. El mensaje no guarda datos de negocio (solo `tipo`, `idPedido`, `estado` y `fecha`) y Redis no lo conserva. El publicador es *fail-open*: si Redis falla se registra el error y la escritura, ya confirmada en SQL Server, no falla. El suscriptor es una conexión dedicada (`duplicate()`) que se abre en la primera suscripción; si no conecta, el stream responde `503 SERVICIO_NO_DISPONIBLE`.
+**Eventos en tiempo real (pub/sub):** `POST` de pago, cancelación, cambio de estado y devolución publican un aviso en el canal `shopcart:eventos:reportes` después de invalidar la caché de reportes; `GET /api/reportes/stream` (SSE, solo Administrador) y `GET /api/pedidos/stream` (SSE, los tres roles; al Cliente solo le llegan sus pedidos) lo reenvían a las vistas abiertas. Los dos usan `shared/eventos/stream.ts` (`abrirStream` con un filtro opcional) y `shared/eventos/transmitir.ts`. El mensaje no guarda datos de negocio (solo `tipo`, `idPedido`, `idUsuario` del dueño, `estado` y `fecha`) y Redis no lo conserva. La devolución lee el dueño con `SP_Pedidos_ObtenerPorId` después del commit, porque su SP no lo devuelve; si esa lectura falla, solo se omite el aviso. El publicador es *fail-open*: si Redis falla se registra el error y la escritura, ya confirmada en SQL Server, no falla. El suscriptor es una conexión dedicada (`duplicate()`) que se abre en la primera suscripción; si no conecta, el stream responde `503 SERVICIO_NO_DISPONIBLE`.
 
 **Configuración del servidor** (en `docker-compose.yml`): persistencia AOF (`appendonly yes`, `appendfsync everysec`) para no perder sesiones al reiniciar, y `maxmemory 256mb` con `maxmemory-policy noeviction` para que Redis nunca expulse sesiones. Si la memoria se llena, fallan las escrituras de caché (que es fail-open) y no las sesiones existentes.
 
@@ -422,10 +422,12 @@ Backend/tests/
 │   ├── cupones.test.ts
 │   ├── checkout.concurrencia.test.ts
 │   ├── pedidos.test.ts
+│   ├── pedidos.stream.test.ts    # SSE de pedidos: 401, el personal recibe todo y el Cliente solo sus pedidos
 │   ├── sucursales.test.ts        # CRUD de sucursales (roles, errores, bitácora, caché, listado) y retiro en el checkout
 │   ├── sucursales.retiro.test.ts # Retiro en sucursal: validaciones, detalle del pedido, idempotencia, ciclo de vida y concurrencia
 │   ├── inventario.test.ts
 │   ├── reportes.test.ts
+│   ├── reportes.stream.test.ts   # SSE del dashboard: roles, headers, eventos por escritura, 429
 │   └── bitacora.test.ts
 ├── helpers/                      # Datos de prueba, login por rol y cliente HTTP autenticado
 └── setup/

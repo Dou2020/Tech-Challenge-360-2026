@@ -4,6 +4,7 @@ import { crearEventos, type EventoPedido } from '../../../../src/shared/eventos/
 const EVENTO: EventoPedido = {
   tipo: 'CREADO',
   idPedido: 5,
+  idUsuario: 6,
   estado: 'PAGADO',
   fecha: '2026-11-02T20:15:00.000Z',
 };

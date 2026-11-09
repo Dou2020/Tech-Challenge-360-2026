@@ -1,4 +1,5 @@
 import type { Request, RequestHandler, Response } from 'express';
+import { transmitirEventos } from '../../shared/eventos/transmitir.js';
 import type {
   CambiarEstadoBody,
   CancelarBody,
@@ -27,6 +28,11 @@ export const pedidosController = {
 
   estados: (async (req, res) => {
     res.json(await pedidosService.listarEstados(idSolicitante(req)));
+  }) satisfies RequestHandler,
+
+  /** Stream SSE de cambios en los pedidos; el Cliente solo recibe los de sus pedidos. */
+  stream: (async (req, res) => {
+    await transmitirEventos(req, res, pedidosService.filtroEventos(req.usuario!));
   }) satisfies RequestHandler,
 
   obtener: (async (req, res) => {

@@ -9,7 +9,7 @@ import { closePool } from '../../src/config/database.js';
 import { env } from '../../src/config/env.js';
 import { closeRedis, connectRedis } from '../../src/config/redis.js';
 import { AUDIENCIA_TOKEN, EMISOR_TOKEN } from '../../src/modules/auth/tokens.js';
-import { cerrarConexionesStream } from '../../src/modules/reportes/reportes.stream.js';
+import { cerrarConexionesStream } from '../../src/shared/eventos/stream.js';
 import { eventos } from '../../src/shared/eventos/eventos.js';
 import { clienteComo, iniciarSesionComo } from '../helpers/auth.js';
 import {
@@ -96,7 +96,9 @@ async function abrirStream(token?: string): Promise<Lector> {
 }
 
 /** Extrae los datos JSON de los eventos `pedido` recibidos. */
-function eventosPedido(texto: string): { tipo: string; idPedido: number; estado: string }[] {
+function eventosPedido(
+  texto: string,
+): { tipo: string; idPedido: number; idUsuario: number; estado: string }[] {
   return [...texto.matchAll(/event: pedido\ndata: (.+)\n\n/g)].map((m) => JSON.parse(m[1]!));
 }
 
@@ -180,6 +182,7 @@ describe('GET /api/reportes/stream', () => {
     expect(eventosPedido(texto).find((e) => e.idPedido === idPedido)).toEqual({
       tipo: 'CREADO',
       idPedido,
+      idUsuario: cliente.idUsuario,
       estado: 'PAGADO',
       fecha: expect.any(String),
     });
@@ -202,7 +205,13 @@ describe('GET /api/reportes/stream', () => {
       eventosPedido(t).some((e) => e.idPedido === idPedido),
     );
     expect(eventosPedido(texto)).toEqual([
-      { tipo: 'CANCELADO', idPedido, estado: 'CANCELADO', fecha: expect.any(String) },
+      {
+        tipo: 'CANCELADO',
+        idPedido,
+        idUsuario: cliente.idUsuario,
+        estado: 'CANCELADO',
+        fecha: expect.any(String),
+      },
     ]);
   });
 
@@ -259,7 +268,13 @@ describe('GET /api/reportes/stream', () => {
       eventosPedido(t).some((e) => e.idPedido === idPedido),
     );
     expect(eventosPedido(texto)).toEqual([
-      { tipo: 'ESTADO', idPedido, estado: 'EN_PREPARACION', fecha: expect.any(String) },
+      {
+        tipo: 'ESTADO',
+        idPedido,
+        idUsuario: cliente.idUsuario,
+        estado: 'EN_PREPARACION',
+        fecha: expect.any(String),
+      },
     ]);
   });
 
@@ -283,7 +298,13 @@ describe('GET /api/reportes/stream', () => {
       eventosPedido(t).some((e) => e.idPedido === idPedido),
     );
     expect(eventosPedido(texto)).toEqual([
-      { tipo: 'DEVOLUCION', idPedido, estado: 'DEVUELTO_PARCIAL', fecha: expect.any(String) },
+      {
+        tipo: 'DEVOLUCION',
+        idPedido,
+        idUsuario: cliente.idUsuario,
+        estado: 'DEVUELTO_PARCIAL',
+        fecha: expect.any(String),
+      },
     ]);
   });
 

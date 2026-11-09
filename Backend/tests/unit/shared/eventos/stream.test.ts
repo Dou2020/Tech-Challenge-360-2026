@@ -7,7 +7,7 @@ import {
   LATIDO_MS,
   MAX_CONEXIONES_POR_USUARIO,
   type SalidaStream,
-} from '../../../../src/modules/reportes/reportes.stream.js';
+} from '../../../../src/shared/eventos/stream.js';
 import type { EventoPedido, OyenteEvento } from '../../../../src/shared/eventos/eventos.js';
 import type { UsuarioAutenticado } from '../../../../src/shared/types/express.js';
 
@@ -20,6 +20,7 @@ const AHORA = new Date('2026-11-02T20:00:00.000Z');
 const EVENTO: EventoPedido = {
   tipo: 'CREADO',
   idPedido: 5,
+  idUsuario: 6,
   estado: 'PAGADO',
   fecha: '2026-11-02T20:15:00.000Z',
 };
@@ -259,6 +260,33 @@ describe('abrirStream', () => {
 
     // Assert
     await expect(nueva).resolves.toBeDefined();
+  });
+});
+
+describe('abrirStream con filtro', () => {
+  it('el filtro acepta el evento → se escribe', async () => {
+    // Arrange
+    const e = entorno();
+    await abrirStream(usuario(), e.salida, e.suscribir, (ev) => ev.idUsuario === 6);
+
+    // Act
+    e.emitir(EVENTO);
+
+    // Assert
+    expect(e.escrito.at(-1)).toBe(`event: pedido\ndata: ${JSON.stringify(EVENTO)}\n\n`);
+  });
+
+  it('el filtro rechaza el evento → no se escribe nada', async () => {
+    // Arrange
+    const e = entorno();
+    await abrirStream(usuario(), e.salida, e.suscribir, (ev) => ev.idUsuario === 7);
+    const antes = e.escrito.length;
+
+    // Act
+    e.emitir(EVENTO);
+
+    // Assert
+    expect(e.escrito).toHaveLength(antes);
   });
 });
 

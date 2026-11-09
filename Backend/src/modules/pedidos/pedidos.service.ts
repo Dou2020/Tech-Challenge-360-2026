@@ -1,5 +1,8 @@
+import { logger } from '../../config/logger.js';
 import { cache } from '../../shared/cache/cache.js';
 import { eventos, type TipoEventoPedido } from '../../shared/eventos/eventos.js';
+import type { FiltroEvento } from '../../shared/eventos/stream.js';
+import type { UsuarioAutenticado } from '../../shared/types/express.js';
 import { aIso, rangoFechas } from '../../shared/utils/fechas.js';
 import { aMonto } from '../../shared/utils/montos.js';
 import {
@@ -47,10 +50,10 @@ function aResumen(f: FilaPedidoListado): PedidoResumen {
 
 /** Ensambla los 3 result sets: pedido, líneas congeladas y transiciones posibles. */
 /**
- * Invalida los reportes y avisa a los dashboards abiertos, en ese orden: así la petición
- * que dispare el aviso responde MISS con datos frescos. Devuelve el mismo `pedido`.
+ * Invalida los reportes y avisa a las vistas abiertas (dashboard, pedidos), en ese orden: así
+ * la petición que dispare el aviso responde MISS con datos frescos. Devuelve el mismo `pedido`.
  */
-async function invalidarYAvisar<T extends { idPedido: number; estado: string }>(
+async function invalidarYAvisar<T extends { idPedido: number; idUsuario: number; estado: string }>(
   tipo: TipoEventoPedido,
   pedido: T,
 ): Promise<T> {
@@ -58,6 +61,7 @@ async function invalidarYAvisar<T extends { idPedido: number; estado: string }>(
   await eventos.publicar({
     tipo,
     idPedido: pedido.idPedido,
+    idUsuario: pedido.idUsuario,
     estado: pedido.estado,
     fecha: new Date().toISOString(),
   });
@@ -135,6 +139,15 @@ export interface FiltrosPedidos {
 }
 
 export const pedidosService = {
+  /**
+   * Qué eventos del stream de pedidos recibe el usuario: el Cliente, solo los de sus pedidos
+   * (igual que en las lecturas, uno ajeno no existe para él); el personal, todos.
+   */
+  filtroEventos(usuario: UsuarioAutenticado): FiltroEvento {
+    if (usuario.rol === 'Cliente') return (evento) => evento.idUsuario === usuario.idUsuario;
+    return () => true;
+  },
+
   /** Un Cliente solo ve los suyos: el SP ignora `idCliente` para ese rol. */
   async listar(
     idUsuario: number,
@@ -252,7 +265,21 @@ export const pedidosService = {
     lineas: LineaDevolucion[],
   ): Promise<DevolucionRegistrada> {
     const f = await pedidosRepository.registrarDevolucion(idUsuario, idPedido, motivo, lineas);
-    await invalidarYAvisar('DEVOLUCION', { idPedido: f.IDPedido, estado: f.EstadoPedido });
+    await cache.invalidar('reportes');
+    // El SP no devuelve el dueño del pedido, que el evento necesita: se lee después del commit.
+    // Si esa lectura falla, la devolución ya quedó registrada y solo se omite el aviso.
+    try {
+      const { pedido } = await pedidosRepository.obtenerPorId(idUsuario, f.IDPedido);
+      await eventos.publicar({
+        tipo: 'DEVOLUCION',
+        idPedido: f.IDPedido,
+        idUsuario: pedido.IDUsuario,
+        estado: f.EstadoPedido,
+        fecha: new Date().toISOString(),
+      });
+    } catch (error) {
+      logger.error({ err: error, idPedido: f.IDPedido }, 'No se pudo avisar la devolución');
+    }
     return {
       idDevolucion: f.IDDevolucion,
       idPedido: f.IDPedido,

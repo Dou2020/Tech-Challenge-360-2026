@@ -6,6 +6,7 @@ import { Button } from '../components/atoms/Button';
 import { Logo } from '../components/atoms/Logo';
 import { ThemeToggle } from '../components/molecules/ThemeToggle';
 import { menuPorRol } from '../config/navigation';
+import { useTiempoRealPedidos } from '../hooks/useTiempoRealPedidos';
 
 /** Hasta dos iniciales del nombre, para el avatar. */
 function iniciales(nombre: string): string {
@@ -22,6 +23,8 @@ function iniciales(nombre: string): string {
 export function ConsoleLayout() {
   const { usuario, cerrarSesion } = useAuth();
   const [menuAbierto, setMenuAbierto] = useState(false);
+  // Pedidos, inventario y reportes al día con los cambios de otros usuarios (stream SSE).
+  useTiempoRealPedidos(true);
   if (!usuario) return null; // ProtectedRoute garantiza la sesión.
 
   const menu = (

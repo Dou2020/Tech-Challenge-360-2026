@@ -18,6 +18,8 @@ export interface VariantePrueba {
 
 export interface ClientePrueba {
   http: Http;
+  /** Access token de la sesión (para leer los streams SSE con fetch). */
+  token: string;
   idUsuario: number;
   idDireccion: number;
 }
@@ -76,6 +78,7 @@ export async function nuevoCliente(app: Express): Promise<ClientePrueba> {
   expect(direccion.status, JSON.stringify(direccion.body)).toBe(201);
   return {
     http,
+    token: sesion.accessToken,
     idUsuario: sesion.usuario.idUsuario,
     idDireccion: direccion.body.idDireccion as number,
   };

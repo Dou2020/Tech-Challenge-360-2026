@@ -1,6 +1,7 @@
 import { screen } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useTiempoRealPedidos } from '../hooks/useTiempoRealPedidos';
 import { carritoApi } from '../services/api/carrito';
 import { crearCarrito } from '../test/fixtures/carrito';
 import { crearAdmin, crearCliente, crearOperador } from '../test/fixtures/usuarios';
@@ -11,6 +12,8 @@ vi.mock('../services/api/carrito', () => ({
   carritoApi: { obtener: vi.fn() },
 }));
 const api = vi.mocked(carritoApi);
+vi.mock('../hooks/useTiempoRealPedidos', () => ({ useTiempoRealPedidos: vi.fn() }));
+const tiempoReal = vi.mocked(useTiempoRealPedidos);
 
 describe('StoreLayout', () => {
   beforeEach(() => {
@@ -94,5 +97,23 @@ describe('StoreLayout', () => {
 
     // Assert
     expect(screen.getByRole('searchbox', { name: 'Buscar productos' })).toHaveValue('camisa');
+  });
+
+  it.each([
+    ['invitado', null, false],
+    ['Cliente', crearCliente(), true],
+    ['Operador', crearOperador(), false],
+    ['Administrador', crearAdmin(), false],
+  ] as const)('tiempo real de pedidos: %s → activo %s', (_rol, usuario, activo) => {
+    // Arrange
+    tiempoReal.mockClear();
+
+    // Act
+    renderizar(<StoreLayout />, {
+      auth: crearAuth({ usuario, estado: usuario ? 'autenticado' : 'anonimo' }),
+    });
+
+    // Assert
+    expect(tiempoReal).toHaveBeenLastCalledWith(activo);
   });
 });

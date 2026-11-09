@@ -148,6 +148,7 @@ export const checkoutService = {
       await eventos.publicar({
         tipo: 'CREADO',
         idPedido: fila.IDPedido,
+        idUsuario,
         estado: fila.Estado,
         fecha: new Date().toISOString(),
       });

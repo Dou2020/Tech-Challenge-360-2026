@@ -22,7 +22,8 @@ Aplicación React de ShopCart (Fase 2 del Tech Challenge 360). Tiene la **tienda
    - [En desarrollo](#en-desarrollo)
 4. [Estructura](#estructura)
 5. [Rutas de la consola](#rutas-de-la-consola)
-6. [Tema y tokens de diseño](#tema-y-tokens-de-diseño)
+6. [Tiempo real de pedidos](#tiempo-real-de-pedidos)
+7. [Tema y tokens de diseño](#tema-y-tokens-de-diseño)
 
 ---
 
@@ -165,6 +166,22 @@ Todas viven dentro de `ConsoleLayout`, con el menú filtrado por rol (`config/na
 | otra ruta de `/consola/…` | No encontrada, dentro del layout de la consola | Operador, Administrador |
 
 Todas las tablas de la consola usan el organismo `DataTable` (columnas declarativas, orden con `aria-sort`, página y estados de carga, vacío y error); el estado vive en la URL vía `useServerTable`. Los montos se muestran tal como los envía el backend, nunca se recalculan.
+
+## Tiempo real de pedidos
+
+Cuando alguien crea, cancela, cambia de estado o devuelve un pedido, las demás pestañas y los demás usuarios lo ven sin recargar.
+
+- `services/eventosPedidos.ts` lee `GET /api/pedidos/stream` (SSE) con `fetch` y el `Authorization` del `tokenStore` (`EventSource` no admite headers). Reconecta solo:
+  - `fin` `TOKEN_EXPIRADO` o 401: renueva con la renovación compartida de `http.ts` y reconecta.
+  - `REVOCADO` o 403: se detiene.
+  - Corte, 5xx o `SERVIDOR_DETENIDO`: backoff de 5 s a 60 s.
+  - 429 (más de 5 conexiones del usuario): espera 60 s.
+- `hooks/useTiempoRealPedidos.ts` abre una conexión por pestaña:
+  - Lo llaman `ConsoleLayout` (personal) y `StoreLayout` (solo con un Cliente).
+  - Con cada evento, agrupado en 300 ms, invalida `['pedidos']`: lista, tablero, detalle, historial, devoluciones y totales del panel de operación.
+  - Para el personal, también `['inventario']` si el evento mueve existencia (todo menos `ESTADO`). Para el Administrador, también `['reportes']`, así que el dashboard queda en vivo.
+  - Al reconectar refresca todo, porque el stream no repite los eventos perdidos.
+- El Cliente solo recibe eventos de sus pedidos (el backend filtra por el dueño).
 
 ## Tema y tokens de diseño
 

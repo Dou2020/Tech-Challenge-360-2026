@@ -1,9 +1,12 @@
 import { screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { useTiempoRealPedidos } from '../hooks/useTiempoRealPedidos';
 import { crearAdmin, crearOperador } from '../test/fixtures/usuarios';
 import { crearAuth, renderizar } from '../test/renderizar';
 import { ConsoleLayout } from './ConsoleLayout';
+
+vi.mock('../hooks/useTiempoRealPedidos', () => ({ useTiempoRealPedidos: vi.fn() }));
 
 function montar(usuario = crearAdmin(), cerrarSesion = vi.fn()) {
   return renderizar(<ConsoleLayout />, {
@@ -148,5 +151,16 @@ describe('ConsoleLayout', () => {
     for (const titulo of ['Configuración', 'Cupones', 'Usuarios', 'Bitácora']) {
       expect(screen.queryByRole('link', { name: titulo })).not.toBeInTheDocument();
     }
+  });
+
+  it('activa el tiempo real de pedidos para el personal', () => {
+    // Arrange
+    vi.mocked(useTiempoRealPedidos).mockClear();
+
+    // Act
+    montar(crearOperador());
+
+    // Assert
+    expect(useTiempoRealPedidos).toHaveBeenCalledWith(true);
   });
 });
