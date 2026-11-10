@@ -5,7 +5,7 @@
     (solo permiso EXECUTE), los catálogos y los datos semilla.
 
     Se generó copiando, en orden y sin cambios, los 21 scripts de Database/scripts/ (001 a 015, 080, 085, 090,
-    100 a 102) en el commit COMMIT_PENDIENTE. Los scripts numerados son la fuente de verdad: si alguno cambia, este
+    100 a 102) el 8 de noviembre de 2026. Los scripts numerados son la fuente de verdad: si alguno cambia, este
     archivo queda desactualizado. docker-init.sh y las pruebas usan los scripts numerados, no este.
     No incluye Database/pruebas/integridad.sql.
 

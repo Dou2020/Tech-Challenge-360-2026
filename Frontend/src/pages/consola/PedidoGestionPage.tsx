@@ -180,7 +180,8 @@ export default function PedidoGestionPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
-        <div className="space-y-6">
+        {/* `min-w-0`: sin él, el ancho mínimo de la tabla ensancha la columna y la página en móvil. */}
+        <div className="min-w-0 space-y-6">
           <OrderLinesTable lineas={p.lineas} />
 
           <section aria-labelledby="titulo-historial" className="tarjeta p-5">

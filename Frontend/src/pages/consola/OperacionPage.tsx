@@ -81,7 +81,7 @@ export default function OperacionPage() {
               </Link>
             </div>
             {bajoStock.data?.items.length ? (
-              <div className="tarjeta overflow-x-auto">
+              <div className="tarjeta relative overflow-x-auto">
                 <table className="w-full min-w-[32rem] text-left text-sm">
                   <caption className="sr-only">Variantes por agotarse</caption>
                   <thead className="border-b border-borde bg-superficie-suave/60 text-xs font-medium tracking-wide text-texto-tenue uppercase">

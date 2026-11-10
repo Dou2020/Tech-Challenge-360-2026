@@ -10,7 +10,7 @@ interface Props<T> {
 /** Tabla simple de un reporte que llega completo (sin paginación). Para listados paginados, DataTable. */
 export function ReportTable<T>({ titulo, columnas, filas, idFila }: Props<T>) {
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
       <table className="w-full min-w-[32rem] text-left text-sm">
         <caption className="sr-only">{titulo}</caption>
         <thead className="border-b border-borde text-xs tracking-wide text-texto-tenue uppercase">

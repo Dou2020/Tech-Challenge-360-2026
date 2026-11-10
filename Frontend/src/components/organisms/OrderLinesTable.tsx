@@ -8,7 +8,7 @@ export function OrderLinesTable({ lineas }: { lineas: LineaPedido[] }) {
       <h2 id="titulo-lineas" className="font-semibold tracking-tight text-texto">
         Productos
       </h2>
-      <div className="mt-3 overflow-x-auto">
+      <div className="relative mt-3 overflow-x-auto">
         <table className="w-full min-w-[32rem] text-left text-sm">
           <thead className="text-xs tracking-wide text-texto-tenue uppercase">
             <tr>

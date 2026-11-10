@@ -4,11 +4,11 @@ Plataforma web de ventas con catálogo, carrito de compras, cupones, checkout, g
 
 ## Ambiente en línea
 
-El proyecto está desplegado y en funcionamiento, publicado con un túnel de Cloudflare (ver [Integración y despliegue continuos](#integración-y-despliegue-continuos)):
+El proyecto está desplegado y en funcionamiento, publicado con un túnel de Cloudflare (ver [Integración continua y despliegue](#integración-continua-y-despliegue)):
 
 | Qué | URL |
 | :--- | :--- |
-| Aplicación web (Fase 2, en desarrollo) | <https://shopcart.dou2020.com/> |
+| Aplicación web | <https://shopcart.dou2020.com/> |
 | Documentación interactiva de la API (Swagger, permite probar los endpoints) | <https://api-shopcart.dou2020.com/api/docs/> |
 | Estado del servicio y de sus conexiones a SQL Server y Redis | <https://shopcart.dou2020.com/api/health> |
 
@@ -19,11 +19,13 @@ Para iniciar sesión usa los usuarios de [Credenciales de prueba](#credenciales-
 1. [Stack](#stack)
 2. [Estructura del repositorio](#estructura-del-repositorio)
 3. [Librerías](#librerías)
-4. [Inicializar y ejecutar el proyecto](#inicializar-y-ejecutar-el-proyecto)
-5. [Backend](#backend) (detalle en [Backend/README.md](Backend/README.md))
-6. [Frontend](#frontend) (detalle en [Frontend/README.md](Frontend/README.md))
-7. [Base de datos](#base-de-datos) (detalle en [Database/README.md](Database/README.md))
-8. [Documentación de la API](#documentación-de-la-api)
+4. [Decisiones técnicas y supuestos](#decisiones-técnicas-y-supuestos)
+5. [Ciclo de vida del pedido](#ciclo-de-vida-del-pedido)
+6. [Inicializar y ejecutar el proyecto](#inicializar-y-ejecutar-el-proyecto)
+7. [Backend](#backend) (detalle en [Backend/README.md](Backend/README.md))
+8. [Frontend](#frontend) (detalle en [Frontend/README.md](Frontend/README.md))
+9. [Base de datos](#base-de-datos) (detalle en [Database/README.md](Database/README.md))
+10. [Documentación de la API](#documentación-de-la-api)
 
 ---
 
@@ -65,6 +67,61 @@ Cada parte documenta sus librerías con la versión elegida y el motivo de cada 
 
 - [Backend](Backend/README.md#librerías): producción, desarrollo y pruebas
 - [Frontend](Frontend/README.md#librerías): aplicación, build y pruebas
+
+---
+
+## Decisiones técnicas y supuestos
+
+El enunciado deja varios puntos abiertos. Este es el resumen de las decisiones principales; el detalle de cada una está en el enlace.
+
+| Tema | Decisión | Detalle |
+| :--- | :--- | :--- |
+| Acceso a datos | El backend no tiene SQL: solo ejecuta stored procedures con parámetros tipados, también para leer. El login de la aplicación solo tiene permiso `EXECUTE`, así que la base rechaza cualquier consulta directa | [Resumen de la base](Database/README.md#resumen) |
+| Reglas críticas | Se validan dos veces: el SP valida y responde con un código de negocio, y la base las protege con `CHECK`, `UNIQUE`, llaves foráneas compuestas y triggers | [Reglas de integridad](Database/README.md#reglas-de-integridad-en-la-base) |
+| Sobreventa | Al iniciar el checkout se reserva la existencia por 15 minutos. Los SPs bloquean las variantes siempre en el mismo orden, y un proceso libera cada minuto las reservas vencidas | [Patrón de los SPs que escriben](Database/README.md#patrón-de-los-stored-procedures-que-escriben) |
+| Pago repetido | `POST /api/checkout/pagar` exige el header `Idempotency-Key`. Repetir la solicitud devuelve el mismo pedido; la misma clave con otro carrito responde 409 | [Decisiones de la API](Backend/API.md#7-decisiones-tomadas) |
+| Pago | Es simulado, sin pasarela real. Una tarjeta que termina en `0000` se rechaza, para poder probar el caso | [Decisiones de la API](Backend/API.md#7-decisiones-tomadas) |
+| Precios | El precio vive en la variante. El pedido guarda una copia del SKU, el nombre, el precio y el descuento del momento de la compra | [Copias históricas](Database/README.md#copias-históricas) |
+| Saldos guardados | La existencia, los usos del cupón y lo devuelto por línea se guardan como columnas, y solo los actualiza el SP que escribe el movimiento, en la misma transacción | [Saldos y contadores](Database/README.md#saldos-y-contadores) |
+| Sesiones | El access token dura 15 minutos. El refresh token va en una cookie `httpOnly` y rota en cada uso. Las sesiones y la revocación viven en Redis, no en SQL Server; si Redis cae, la autenticación responde 503 | [Redis](Backend/README.md#redis) |
+| Redis | No guarda datos de negocio. Existencias, reservas, idempotencia, cupones y pedidos están solo en SQL Server | [Redis](Backend/README.md#redis) |
+| Registro | El registro no pide contraseña: se crea con un enlace de un solo uso enviado por correo, y la respuesta es la misma para cualquier correo | [Decisiones de la API](Backend/API.md#7-decisiones-tomadas) |
+| Datos de otro cliente | El pedido, el carrito o la dirección de otro cliente responden 404, igual que si no existieran | [Decisiones de la API](Backend/API.md#7-decisiones-tomadas) |
+| Cancelación y devolución | El cliente puede cancelar su pedido antes del despacho. Las devoluciones las registra el Operador o el Administrador, por línea y solo sobre pedidos entregados | [Ciclo de vida del pedido](#ciclo-de-vida-del-pedido) |
+| Reportes | Solo cuentan pedidos completados, restan las devoluciones y no incluyen el envío. Se agrupan por fecha de Guatemala, no por fecha UTC | [Vistas y funciones](Database/README.md#vistas-y-funciones) |
+| Recoger en sucursal | Un método de envío sin costo que pide una sucursal activa en lugar de una dirección | [Decisiones de la API](Backend/API.md#7-decisiones-tomadas) |
+| Imágenes | Se guardan en el disco del servidor (un volumen de Docker), no en un almacenamiento externo | [Decisiones de la API](Backend/API.md#7-decisiones-tomadas) |
+
+Las librerías de cada parte, con el motivo de cada elección, están en [Librerías](#librerías).
+
+---
+
+## Ciclo de vida del pedido
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> PAGADO: pago aprobado
+    PAGADO --> EN_PREPARACION: Operador, Administrador
+    PAGADO --> CANCELADO: Cliente, Operador, Administrador
+    EN_PREPARACION --> DESPACHADO: Operador, Administrador
+    EN_PREPARACION --> CANCELADO: Cliente, Operador, Administrador
+    DESPACHADO --> ENTREGADO: Operador, Administrador
+    ENTREGADO --> DEVUELTO_PARCIAL: Operador, Administrador
+    ENTREGADO --> DEVUELTO: Operador, Administrador
+    DEVUELTO_PARCIAL --> DEVUELTO: Operador, Administrador
+    CANCELADO --> [*]
+    DEVUELTO --> [*]
+```
+
+Cada flecha indica qué roles pueden ejecutar la transición. Las transiciones permitidas están en la tabla `TransicionEstadoPedido` y se validan en el backend y en la base: el SP comprueba el rol y un trigger comprueba el par de estados.
+
+- El pedido nace en `PAGADO` cuando se aprueba el pago.
+- Se puede cancelar solo antes del despacho. Cancelar reintegra la existencia en el kardex y libera el uso del cupón.
+- Las devoluciones son por línea, sobre pedidos entregados, y nunca por más de lo vendido menos lo ya devuelto.
+- Cada cambio guarda usuario, fecha y hora, estado anterior y estado nuevo.
+
+El detalle está en [Ciclo de vida del pedido](Database/README.md#ciclo-de-vida-del-pedido) de `Database/README.md`.
 
 ---
 

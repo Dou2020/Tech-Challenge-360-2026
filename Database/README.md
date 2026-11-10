@@ -145,7 +145,7 @@ Cada script recibe el nombre de la base por la variable de sqlcmd `$(DbName)`, a
 
 ### Con `script.sql`
 
-`script.sql` reúne en un solo archivo los 21 scripts de `scripts/` (001 a 015, 080, 085, 090 y 100 a 102), copiados en orden y sin cambios en el commit `COMMIT_PENDIENTE`, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
+`script.sql` reúne en un solo archivo los 21 scripts de `scripts/` (001 a 015, 080, 085, 090 y 100 a 102), copiados en orden y sin cambios el 8 de noviembre de 2026, para crear la base sin `docker-init.sh`, por ejemplo desde SSMS. No incluye `pruebas/integridad.sql`, y ni `docker-init.sh` ni las pruebas lo usan: si cambia un script numerado, `script.sql` queda desactualizado.
 
 Se ejecuta en **modo SQLCMD**, con un login con rol `sysadmin`: usa las variables `DbName`, `AppLogin` y `AppPassword` (se cambian en sus líneas `:setvar`) y se detiene en el primer error. Sin modo SQLCMD se detiene al inicio con un aviso, sin crear nada.
 
@@ -234,9 +234,9 @@ Los SPs graban la fecha actual; la semilla reescribe las fechas como `sa`, con l
 
 [![Diagrama entidad-relación de ShopCart](diagrama/diagrama_er.svg)](diagrama/diagrama_er.svg)
 
-Las 30 tablas con sus columnas, las 45 llaves foráneas (las compuestas en rojo) y los `UNIQUE`, índices únicos filtrados y dominios `CHECK` de cada tabla. El color del encabezado indica el módulo. También está en PNG: [`diagrama/diagrama_er.png`](diagrama/diagrama_er.png).
+Las 30 tablas agrupadas por módulo, con sus columnas (`PK`, `FK` y `UQ` marcadas; las obligatorias llevan un punto), las relaciones entre ellas y, al pie de cada tabla, sus `UNIQUE` compuestos, índices únicos filtrados, `CHECK` y llaves foráneas compuestas. También está en PNG: [`diagrama/diagrama_er.png`](diagrama/diagrama_er.png).
 
-La misma estructura en PlantUML:
+La imagen se genera desde este bloque PlantUML:
 
 ```plantuml
 @startuml ShopCart_ER
@@ -712,6 +712,8 @@ Usuario ||--o{ Bitacora
 ```
 
 > Para visualizarlo: en VS Code con la extensión **PlantUML** (`jebbs.plantuml`), coloca el cursor dentro del bloque y presiona `Alt+D`. Se usa `!pragma layout smetana` para que se genere sin instalar Graphviz.
+>
+> Para regenerar las imágenes de `diagrama/`: guarda el bloque en `diagrama_er.puml` y ejecuta `java -jar plantuml.jar -tsvg diagrama_er.puml` y `java -DPLANTUML_LIMIT_SIZE=16384 -jar plantuml.jar -tpng diagrama_er.puml` (el PNG mide más de 4096 px de ancho, el límite por defecto). PlantUML nombra la salida `ShopCart_ER.*`; se renombra a `diagrama_er.*`.
 
 ## Estándar de nomenclatura
 
@@ -736,21 +738,20 @@ Usuario ||--o{ Bitacora
 
 Los estados y las transiciones permitidas están en `EstadoPedido` y `TransicionEstadoPedido` (`085_datos_catalogos.sql`); cada flecha indica qué roles pueden ejecutarla. El SP valida la transición y el rol, y el trigger `TR_Pedidos_ValidarTransicion` rechaza en la base cualquier otra transición y cualquier pedido que no nazca en `PAGADO`.
 
-```plantuml
-@startuml ShopCart_EstadosPedido
-hide empty description
-[*] --> PAGADO : pago aprobado
-PAGADO --> EN_PREPARACION : Operador, Administrador
-PAGADO --> CANCELADO : Cliente, Operador, Administrador
-EN_PREPARACION --> DESPACHADO : Operador, Administrador
-EN_PREPARACION --> CANCELADO : Cliente, Operador, Administrador
-DESPACHADO --> ENTREGADO : Operador, Administrador
-ENTREGADO --> DEVUELTO_PARCIAL : Operador, Administrador
-ENTREGADO --> DEVUELTO : Operador, Administrador
-DEVUELTO_PARCIAL --> DEVUELTO : Operador, Administrador
-CANCELADO --> [*]
-DEVUELTO --> [*]
-@enduml
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> PAGADO: pago aprobado
+    PAGADO --> EN_PREPARACION: Operador, Administrador
+    PAGADO --> CANCELADO: Cliente, Operador, Administrador
+    EN_PREPARACION --> DESPACHADO: Operador, Administrador
+    EN_PREPARACION --> CANCELADO: Cliente, Operador, Administrador
+    DESPACHADO --> ENTREGADO: Operador, Administrador
+    ENTREGADO --> DEVUELTO_PARCIAL: Operador, Administrador
+    ENTREGADO --> DEVUELTO: Operador, Administrador
+    DEVUELTO_PARCIAL --> DEVUELTO: Operador, Administrador
+    CANCELADO --> [*]
+    DEVUELTO --> [*]
 ```
 
 - El pedido nace en `PAGADO` cuando se aprueba el pago simulado; antes de eso solo existen el carrito y su reserva.
@@ -944,7 +945,7 @@ Convenciones de los SPs:
 - Reservar (`SP_Inventario_ReservarExistencia`) reemplaza la reserva `ACTIVA` anterior del carrito y libera las vencidas de las variantes involucradas antes de comprobar la existencia, para que `CK_Variante_ExistenciaReservada` no rechace una reserva válida. Si falta existencia lanza 50030 con el detalle en el mensaje (`\nDETALLE=` y un arreglo JSON); todo se revierte. `SP_Checkout_ObtenerResumen` sin reserva vigente responde 50031; el método de envío no se guarda con la reserva, por eso recibe `@IDMetodoEnvio` opcional.
 - `SP_Pedidos_CrearPedido` calcula `HuellaSolicitud` (SHA-256 en hexadecimal) sobre dirección, método de envío, sucursal (si hay), método de pago, últimos 4 dígitos, cupón y líneas `IDVariantexCantidad` ordenadas. `NumeroPedido` es `SC-<año>-<IDPedido a 6 dígitos>`. El pago simulado con tarjeta terminada en `0000` lanza 50020 antes de escribir, así que la reserva sigue vigente. El precio congelado es el vigente al pagar.
 - `SP_Pedidos_CambiarEstado` no sirve para cancelar ni devolver (50040): `SP_Pedidos_Cancelar` reintegra existencia (`CANCELACION`), borra el `UsoCupon`, resta `UsosActuales` y deja el pago `REEMBOLSADO`; `SP_Pedidos_RegistrarDevolucion` reintegra por línea (`DEVOLUCION`), actualiza `CantidadDevuelta`, el estado y el pago. El rol del solicitante se busca en la base. Todos escriben bitácora `MODIFICAR` del pedido (`CREAR` al crearlo).
-- `SP_Checkout_ResolverEntrega` (sin endpoint) decide el destino del pedido: lo ejecutan `SP_Inventario_ReservarExistencia` y `SP_Pedidos_CrearPedido` dentro de su transacción, sin TRAN propio y sin bloquear nada (solo lee `MetodoEnvio`, `Sucursal` y `Direccion`), así que no cambia el orden de bloqueo. Con un método que requiere sucursal ignora `@IDDireccion`; con uno a domicilio ignora `@IDSucursal`. `CrearPedido` normaliza esos dos parámetros antes de calcular las huellas, leyendo el método sin filtrar `Activo`, y la huella agrega `;S=<IDSucursal>` solo cuando hay sucursal (la de un envío a domicilio no cambia). Las sucursales (`SP_Sucursales_*`, `016_sp_sucursales.sql`) siguen el patrón de las categorías y escriben bitácora con `Modulo = 'Sucursales'`.
+- `SP_Checkout_ResolverEntrega` (sin endpoint) decide el destino del pedido: lo ejecutan `SP_Inventario_ReservarExistencia` y `SP_Pedidos_CrearPedido` dentro de su transacción, sin TRAN propio y sin bloquear nada (solo lee `MetodoEnvio`, `Sucursal` y `Direccion`), así que no cambia el orden de bloqueo. Con un método que requiere sucursal ignora `@IDDireccion`; con uno a domicilio ignora `@IDSucursal`. `CrearPedido` normaliza esos dos parámetros antes de calcular las huellas, leyendo el método sin filtrar `Activo`, y la huella agrega `;S=<IDSucursal>` solo cuando hay sucursal (la de un envío a domicilio no cambia). Las sucursales (`SP_Sucursales_*`, `101_sp_sucursales.sql`) siguen el patrón de las categorías y escriben bitácora con `Modulo = 'Sucursales'`.
 - Las direcciones se filtran siempre por `@IDUsuarioSolicitante` y `Activo = 1`: la de otro cliente, la inexistente y la dada de baja responden igual, 50004. La baja es lógica porque `Pedido` la referencia; no van a la bitácora.
 
 ## Vistas y funciones

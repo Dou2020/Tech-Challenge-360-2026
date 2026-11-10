@@ -97,7 +97,8 @@ export function DataTable<T>({
 
   return (
     <div aria-busy={consulta.isPlaceholderData} className="transition-opacity aria-busy:opacity-60">
-      <div className="tarjeta overflow-x-auto">
+      {/* `relative`: contiene los `sr-only` (absolutos) de la tabla para que el scroll los recorte. */}
+      <div className="tarjeta relative overflow-x-auto">
         <table className="w-full min-w-[40rem] text-left text-sm">
           <caption className="sr-only">{titulo}</caption>
           <thead className="border-b border-borde bg-superficie-suave/60 text-xs font-medium tracking-wide text-texto-tenue uppercase">

@@ -325,7 +325,9 @@ export function OrdersBoard({ columnas, destinos, bloqueado = false, onMover }: 
       onDragCancel={() => setActivo(null)}
       accessibility={{ announcements: anuncios, screenReaderInstructions: instrucciones }}
     >
-      <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
+      {/* `relative`: los textos `sr-only` de las columnas son absolutos; sin un ancestro posicionado
+          escapan del recorte del scroll y le dan scroll horizontal a toda la página. */}
+      <div className="relative -mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
         <div className="flex min-w-max items-start gap-4">
           {columnas.map((c, i) => (
             <Columna
